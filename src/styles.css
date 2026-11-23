@@ -2388,6 +2388,11 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 /* A one-line row's actions center in its highlight; end-aligned they sat on the row's bottom edge, below the title's midline. */
 .context-row-has-action:not(:has(.context-row-detail)) .context-row-action { align-self:center; }
 .context-row-has-action .context-row-detail { --context-row-action-inset:calc(var(--context-row-action-count, 1) * (var(--control-h-xs) + var(--space-1))); padding-right:var(--context-row-action-inset); }
+/* Rows without a top-right date align their action icons with the title line instead of the detail line. */
+.context-row-has-action:not(:has(.context-row-date)) { --context-row-action-inset:calc(var(--context-row-action-count, 1) * (var(--control-h-xs) + var(--space-1))); }
+.context-row-has-action:not(:has(.context-row-date)) .context-row-action { align-self:start; margin-top:var(--space-1); }
+.context-row-has-action:not(:has(.context-row-date)) .context-row-line { padding-right:var(--context-row-action-inset); }
+.context-row-has-action:not(:has(.context-row-date)) .context-row-detail { padding-right:0; }
 .context-row-trailing { grid-column:3; display:flex; align-self:center; align-items:center; gap:var(--space-1); margin-left:var(--space-1); }
 .context-task-checkbox { width:var(--check-size); height:var(--check-size); margin:0; accent-color:var(--accent); cursor:pointer; }
 .context-task-done .context-row-title { color:var(--muted); text-decoration:line-through; }
@@ -3815,6 +3820,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .meeting-prep-attendees li { max-width: 100%; padding: var(--space-0-5) var(--space-2); overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--hover); color: var(--secondary); font-size: var(--text-meta); line-height: var(--leading-normal); text-overflow: ellipsis; white-space: nowrap; }
 .meeting-prep-attendees li.meeting-prep-attendees-more { padding: var(--space-0-5) var(--space-1-5); border-color: transparent; background: transparent; color: var(--muted); }
 .meeting-prep-attendees li.meeting-prep-attendees-more .btn-link { font-size: var(--text-meta); }
+.meeting-prep-description { margin: var(--space-1) 0 0; color: var(--secondary); font-size: var(--text-meta); line-height: var(--leading-normal); white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.meeting-prep-unread .context-row-title { font-weight: var(--weight-semibold); }
+.meeting-prep-unread .context-row-icon { color: var(--accent); }
 .meeting-prep-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-1-5); }
 .today-column .context-row-main[aria-pressed="true"], .today-column .btn[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 13%, var(--surface)); }
 .meeting-preparation > .context-status { padding: var(--space-2) var(--context-row-inset) var(--space-2) calc(var(--context-row-inset) + var(--context-glyph-column)); }

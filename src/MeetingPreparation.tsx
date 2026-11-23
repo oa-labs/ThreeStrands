@@ -1,13 +1,17 @@
-import { CheckSquare, ClipboardCheck, ClipboardList, Mail, NotebookPen, NotebookText, X } from "lucide-react";
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { CheckSquare, ClipboardCheck, ClipboardList, Handshake, Mail, MessageSquareText, NotebookPen, NotebookText, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Modal } from "./AppChrome";
+import { AttachmentIcon } from "./AttachmentIcon";
 import { ContextRow, ContextSection, ContextSectionHeader } from "./ContextSections";
 import { formatEventTime } from "./calendarTime";
-import type { DraftHandoff, DraftHandoffRequest, FollowThroughSave, MeetingCommitment, MeetingConversation, MeetingNoteSource, MeetingOccurrence, MeetingSection, ScheduleEvent } from "./domain";
+import { mailClient } from "./data/client";
+import type { DraftHandoff, DraftHandoffRequest, FollowThroughSave, MeetingCommitment, MeetingConversation, MeetingFile, MeetingNoteSource, MeetingOccurrence, MeetingPromise, MeetingSection, ScheduleEvent } from "./domain";
+import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { noteReferenceHref, type NoteReference } from "./noteEntities";
+import { normalizeContactAddress, noteReferenceHref, type NoteReference } from "./noteEntities";
 import { notePlainText } from "./notePreview";
+import { formatAttachmentSize } from "./threadPresentation";
 import { useMeetingPreparation } from "./useMeetingPreparation";
 import { MeetingFollowThroughDialog, MeetingFollowUpDialog } from "./MeetingFollowThroughDialog";
 import { itemsFromSection, localDay } from "./meetingFollowThrough";
@@ -46,6 +50,7 @@ const CONVERSATION_REASON: Record<MeetingConversation["reason"], string> = {
 };
 const COMMITMENT_ORIGIN: Record<MeetingCommitment["origin"], string> = {
   meetingNote: "In this meeting's notes",
+  previousMeetingNote: "Carried over from an earlier meeting",
   originConversation: "On the invitation's conversation",
   titleConversation: "On a conversation about this meeting",
   attendeeConversation: "On a conversation with an attendee",
@@ -76,12 +81,14 @@ function noteTitle(source: MeetingNoteSource): string {
 
 /** Maximum attendees shown before collapsing the rest behind a "+N more" toggle. */
 const VISIBLE_ATTENDEE_LIMIT = 5;
+/** Maximum attendee addresses looked up against contacts for display names. */
+const MAX_ATTENDEE_NAME_LOOKUPS = 20;
 
 /**
  * Read-only preparation for one meeting: its own notes, earlier meetings in
- * its series, related mail, and open commitments, each opening its source.
- * Opening it reads only local data; nothing is written, and nothing takes
- * focus on its own.
+ * its series, related mail, files, open promises, and open commitments, each
+ * opening its source. Opening it reads only local data; nothing is written,
+ * and nothing takes focus on its own.
  */
 export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote, onOpenThread, onOpenTask, onClose, actions, onAddNote, ownAddresses = [], onFollowThroughSaved, onOpenFollowUp, today }: Props) {
   const reference = meetingEventReference(event);
@@ -90,11 +97,36 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
   const [reviewing, setReviewing] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [expandedAttendeesFor, setExpandedAttendeesFor] = useState<string | null>(null);
+  const [contactNames, setContactNames] = useState<Map<string, string>>(() => new Map());
+  const [fileError, setFileError] = useState<string | null>(null);
   const context = prep.context;
   const occurrenceHref = reference ? noteReferenceHref(reference) : undefined;
   const showAllAttendees = expandedAttendeesFor !== null && expandedAttendeesFor === (occurrenceHref ?? event.id);
   const openSource = (source: MeetingNoteSource, link?: NoteReference) =>
     onOpenNote(source.noteId, source.kind === "linkedNote" ? undefined : link ? noteReferenceHref(link) : occurrenceHref);
+
+  const attendees = useMemo(
+    () => (context ? (context.event?.attendees ?? []) : (event.attendees ?? [])),
+    [context, event.attendees],
+  );
+  const attendeeKey = attendees.join("\u0000");
+  useEffect(() => {
+    const list = attendees.slice(0, MAX_ATTENDEE_NAME_LOOKUPS);
+    if (!list.length) { setContactNames(new Map()); return; }
+    let active = true;
+    void Promise.all(list.map(async (address) => {
+      const normalized = normalizeContactAddress(address);
+      const profiles = await mailClient.listContactProfiles(normalized, 5).catch(() => []);
+      const match = profiles.find((profile) => profile.addresses.some((other) => normalizeContactAddress(other) === normalized));
+      return [address, match?.displayName?.trim() ?? ""] as const;
+    })).then((entries) => {
+      if (!active) return;
+      const next = new Map<string, string>();
+      for (const [address, name] of entries) if (name) next.set(address, name);
+      setContactNames(next);
+    });
+    return () => { active = false; };
+  }, [attendeeKey, attendees]);
 
   const sourceRows = (sources: readonly MeetingNoteSource[], keyPrefix: string, link?: NoteReference) => sources.map((source, index) => <ContextRow
     key={`${keyPrefix}:${source.noteId}:${source.start}:${index}`}
@@ -114,39 +146,103 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
       onActivate={first ? () => openSource(first, item.reference) : undefined}
     />;
   });
-  const conversationRows = (items: readonly MeetingConversation[]) => items.map((item) => <ContextRow
-    key={item.threadId}
-    icon={<Mail size={ICON_SIZE.sm} />}
-    title={item.subject || "(No subject)"}
-    date={shortDate(item.lastMessageAt)}
-    detail={[item.reason === "attendees" ? `With ${item.attendees.join(", ")}` : CONVERSATION_REASON[item.reason], mailAccounts.length > 1 ? item.accountId : null].filter(Boolean).join(" · ")}
+  const conversationRows = (items: readonly MeetingConversation[]) => items.map((item) => {
+    const meta = [
+      item.reason === "attendees" ? `With ${item.attendees.map((address) => contactNames.get(address) ?? address).join(", ")}` : CONVERSATION_REASON[item.reason],
+      mailAccounts.length > 1 ? item.accountId : null,
+    ].filter(Boolean).join(" · ");
+    const detail = item.snippet ? (meta ? `${item.snippet} · ${meta}` : item.snippet) : meta;
+    return <ContextRow
+      key={item.threadId}
+      className={item.unread ? "meeting-prep-unread" : undefined}
+      icon={<Mail size={ICON_SIZE.sm} />}
+      title={item.subject || "(No subject)"}
+      date={shortDate(item.lastMessageAt)}
+      detail={detail}
+      onActivate={() => onOpenThread(item.threadId)}
+    />;
+  });
+  const commitmentRows = (items: readonly MeetingCommitment[]) => items.map((item) => {
+    const origin = COMMITMENT_ORIGIN[item.origin];
+    const detail = item.kind === "waiting_for" ? `Waiting on them · ${origin}` : origin;
+    return <ContextRow
+      key={item.id}
+      icon={<CheckSquare size={ICON_SIZE.sm} />}
+      title={item.title}
+      wrapTitle
+      detail={detail}
+      onActivate={() => onOpenTask(item)}
+    />;
+  });
+  const promiseRows = (items: readonly MeetingPromise[]) => items.map((item) => <ContextRow
+    key={`${item.threadId}:${item.messageId}`}
+    icon={<Handshake size={ICON_SIZE.sm} />}
+    title={item.excerpt}
+    wrapTitle
+    date={shortDate(item.sentAt)}
+    detail={[item.subject || "(No subject)", mailAccounts.length > 1 ? item.accountId : null].filter(Boolean).join(" · ")}
     onActivate={() => onOpenThread(item.threadId)}
   />);
-  const commitmentRows = (items: readonly MeetingCommitment[]) => items.map((item) => <ContextRow
-    key={item.id}
-    icon={<CheckSquare size={ICON_SIZE.sm} />}
-    title={item.title}
-    wrapTitle
-    detail={COMMITMENT_ORIGIN[item.origin]}
-    onActivate={() => onOpenTask(item)}
+  const openFile = (file: MeetingFile) => {
+    setFileError(null);
+    const task = file.source === "note"
+      ? mailClient.openNoteAttachment(file.attachmentId)
+      : file.messageId
+        ? mailClient.openAttachment(file.messageId, file.attachmentId)
+        : Promise.resolve();
+    void task.catch((reason) => setFileError(errorMessage(reason)));
+  };
+  const fileRows = (items: readonly MeetingFile[]) => items.map((file) => <ContextRow
+    key={`${file.source}:${file.messageId ?? file.noteId ?? ""}:${file.attachmentId}`}
+    icon={<AttachmentIcon filename={file.filename} mimeType={file.mimeType} size="sm" />}
+    title={file.filename}
+    date={shortDate(file.sentAt)}
+    detail={[file.contextLabel, formatAttachmentSize(file.size)].filter(Boolean).join(" · ")}
+    onActivate={() => openFile(file)}
+    actions={file.source === "mail" && file.threadId
+      ? [<button key="show" type="button" className="btn-icon btn-icon-sm" aria-label={`Show email with ${file.filename}`} title="Show email" onClick={() => onOpenThread(file.threadId!)}><MessageSquareText size={ICON_SIZE.sm} /></button>]
+      : file.source === "note" && file.noteId
+        ? [<button key="note" type="button" className="btn-icon btn-icon-sm" aria-label={`Open note with ${file.filename}`} title="Open note" onClick={() => onOpenNote(file.noteId!)}><NotebookText size={ICON_SIZE.sm} /></button>]
+        : undefined}
   />);
 
   const definite = context?.commitments.items.filter((item) => !item.candidate) ?? [];
   const candidates = context?.commitments.items.filter((item) => item.candidate) ?? [];
+  const promises = context?.promises?.items ?? [];
+  const files = context?.files?.items ?? [];
+  const relatedNotes = context?.relatedNotes?.items ?? [];
   const conversations = context?.conversations;
-  // Mail likely about the meeting leads; other mail with its attendees is
-  // often about something else with the same colleagues, so it waits below.
+  // Mail likely about the meeting leads; other mail with its attendees waits
+  // below (and starts open when no higher-confidence threads matched).
   const related = conversations?.items.filter((item) => item.related) ?? [];
   const otherMail = conversations?.items.filter((item) => !related.includes(item)) ?? [];
   const scopeAction = mailAccounts.length > 1 || conversations?.status === "scopeRequired"
     ? <button type="button" className="btn-link" onClick={() => setChoosingScope(true)}>{conversations?.status === "scopeRequired" ? "Choose Accounts…" : "Mail Accounts…"}</button>
     : null;
-  const attendees = context ? (context.event?.attendees ?? []) : (event.attendees ?? []);
   const attendeesOmitted = context?.event?.attendeesOmitted ?? 0;
   const hiddenAttendees = !showAllAttendees && attendees.length > VISIBLE_ATTENDEE_LIMIT
     ? attendees.length - (VISIBLE_ATTENDEE_LIMIT - 1)
     : 0;
   const shownAttendees = hiddenAttendees > 0 ? attendees.slice(0, VISIBLE_ATTENDEE_LIMIT - 1) : attendees;
+  const description = context?.event?.description ?? (event.description?.trim() || null);
+  const ended = !event.allDay && Number.isFinite(Date.parse(event.end)) && Date.now() >= Date.parse(event.end);
+
+  const followThroughSection = context && (onFollowThroughSaved || onOpenFollowUp) ? (
+    <ContextSection id="meeting-prep-follow-through" title="Follow-through" count={context.followThrough.items.length}
+      rows={context.followThrough.items.map((item) => <ContextRow
+        key={`${item.noteId}:${item.start}`}
+        icon={<ClipboardCheck size={ICON_SIZE.sm} />}
+        title={item.date ? `Reviewed ${dayLabel(item.date)}` : "Reviewed"}
+        detail={`${item.dailyDate ? dayLabel(item.dailyDate) : item.title} · ${notePlainText(item.text.split("\n").slice(1).join(" ").replace(/<!--[\s\S]*?-->/g, "")).replace(/\s+/g, " ").trim()}`}
+        onActivate={() => onOpenNote(item.noteId, occurrenceHref)}
+      />)}
+      footer={context.followThrough.status === "unavailable" ? <p className="context-status">{context.followThrough.message}</p>
+        : context.followThrough.items.length ? null : <p className="context-status">Not reviewed yet.</p>}
+      closing={<div className="meeting-prep-section-actions">
+        {onFollowThroughSaved ? <button type="button" className="btn btn-sm" onClick={() => setReviewing(true)}>Review Follow-through</button> : null}
+        {onOpenFollowUp ? <button type="button" className="btn btn-sm" onClick={() => setDrafting(true)}>Draft Follow-up</button> : null}
+      </div>} />
+  ) : null;
 
   return <section className="meeting-preparation" aria-label={`Preparation for ${event.title}`} aria-busy={prep.loading}>
     <ContextSectionHeader
@@ -159,7 +255,7 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
       <p className="meeting-prep-time">{formatEventTime(event)}</p>
       {shownAttendees.length || attendeesOmitted > 0 ? (
         <ul className="meeting-prep-attendees" aria-label="Attendees">
-          {shownAttendees.map((attendee) => <li key={attendee} title={attendee}>{attendee}</li>)}
+          {shownAttendees.map((attendee) => <li key={attendee} title={attendee}>{contactNames.get(attendee) ?? attendee}</li>)}
           {hiddenAttendees > 0 ? (
             <li className="meeting-prep-attendees-more">
               <button type="button" className="btn-link" onClick={() => setExpandedAttendeesFor(occurrenceHref ?? event.id)}>+{hiddenAttendees} more</button>
@@ -170,52 +266,17 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
           ) : null}
         </ul>
       ) : null}
+      {description ? <p className="meeting-prep-description">{description}</p> : null}
       {actions ? <div className="meeting-prep-actions" role="group" aria-label="Meeting actions">{actions}</div> : null}
     </div>
     {prep.loading && !context ? <p className="context-status" role="status">Loading preparation…</p> : null}
     {prep.error ? <p className="context-status" role="alert">{prep.error} <button type="button" className="btn-link" onClick={prep.reload}>Try Again</button></p> : null}
     {context ? <>
       {!context.event ? <p className="context-status">This meeting isn't in this device's calendar cache, so only its notes are shown.</p> : null}
-      <ContextSection id="meeting-prep-this" title="This meeting" count={context.thisMeeting.items.length}
-        rows={sourceRows(context.thisMeeting.items, "this")}
-        footer={<>
-          {sectionStatus(context.thisMeeting, "No notes for this meeting yet.")}
-          {onAddNote && context.thisMeeting.items.length === 0 && context.thisMeeting.status !== "unavailable"
-            ? <p className="context-status"><button type="button" className="btn-link" onClick={onAddNote}>Add Note</button> to start this meeting's notes in its day's note.</p> : null}
-        </>} />
-      {onFollowThroughSaved || onOpenFollowUp ? <ContextSection id="meeting-prep-follow-through" title="Follow-through" count={context.followThrough.items.length}
-        rows={context.followThrough.items.map((item) => <ContextRow
-          key={`${item.noteId}:${item.start}`}
-          icon={<ClipboardCheck size={ICON_SIZE.sm} />}
-          title={item.date ? `Reviewed ${dayLabel(item.date)}` : "Reviewed"}
-          detail={`${item.dailyDate ? dayLabel(item.dailyDate) : item.title} · ${notePlainText(item.text.split("\n").slice(1).join(" ").replace(/<!--[\s\S]*?-->/g, "")).replace(/\s+/g, " ").trim()}`}
-          onActivate={() => onOpenNote(item.noteId, occurrenceHref)}
-        />)}
-        footer={context.followThrough.status === "unavailable" ? <p className="context-status">{context.followThrough.message}</p>
-          : context.followThrough.items.length ? null : <p className="context-status">Not reviewed yet.</p>}
-        closing={<div className="meeting-prep-section-actions">
-          {onFollowThroughSaved ? <button type="button" className="btn btn-sm" onClick={() => setReviewing(true)}>Review Follow-through</button> : null}
-          {onOpenFollowUp ? <button type="button" className="btn btn-sm" onClick={() => setDrafting(true)}>Draft Follow-up</button> : null}
-        </div>} /> : null}
-      <ContextSection id="meeting-prep-previous" title="Previous meetings" count={context.previousMeetings.items.length}
-        rows={occurrenceRows(context.previousMeetings.items)}
-        footer={sectionStatus(context.previousMeetings, context.event?.seriesId ? "No notes from earlier meetings in this series." : "This meeting doesn't repeat.")} />
-      {context.seriesNotes.items.length || context.seriesNotes.status === "unavailable" ? <ContextSection id="meeting-prep-series" title="Series notes" count={context.seriesNotes.items.length}
-        rows={sourceRows(context.seriesNotes.items, "series")}
-        footer={sectionStatus(context.seriesNotes, "")} /> : null}
-      <ContextSection id="meeting-prep-mail" title="Conversations" count={related.length}
-        actions={scopeAction}
-        note={context.mailScope.length ? `Looking in ${context.mailScope.join(", ")}, last ${context.limits.mailLookbackDays} days` : undefined}
-        rows={conversationRows(related)}
-        footer={<>
-          {conversations?.status === "scopeRequired" ? <p className="context-status">{conversations.message}</p> : null}
-          {conversations?.status === "unavailable" ? <p className="context-status">{conversations.message}</p> : null}
-          {conversations && conversations.status !== "unavailable" && conversations.status !== "scopeRequired" && related.length === 0
-            ? <p className="context-status">{otherMail.length ? "No mail about this meeting or with all of its attendees." : "No recent mail about this meeting or with its attendees."}</p> : null}
-        </>} />
-      {otherMail.length || conversations?.omitted ? <ContextSection id="meeting-prep-other-mail" title="Other mail with attendees" count={otherMail.length} defaultCollapsed
-        rows={conversationRows(otherMail)}
-        footer={conversations?.omitted ? <p className="context-status">{conversations.omitted} more not shown.</p> : null} /> : null}
+      {ended ? followThroughSection : null}
+      {promises.length ? <ContextSection id="meeting-prep-promises" title="Open promises" count={promises.length}
+        rows={promiseRows(promises)}
+        footer={context.promises?.omitted ? <p className="context-status">{context.promises.omitted} more not shown.</p> : null} /> : null}
       <ContextSection id="meeting-prep-commitments" title="Open commitments" count={definite.length}
         rows={commitmentRows(definite)}
         footer={<>
@@ -225,6 +286,47 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
       {candidates.length ? <ContextSection id="meeting-prep-candidates" title="Possibly related" count={candidates.length}
         note="Open tasks on conversations with attendees. They may not be about this meeting."
         rows={commitmentRows(candidates)} /> : null}
+      <ContextSection id="meeting-prep-mail" title="Conversations" count={related.length}
+        actions={scopeAction}
+        note={context.mailScope.length ? `Looking in ${context.mailScope.join(", ")}, last ${context.limits.mailLookbackDays} days` : undefined}
+        rows={conversationRows(related)}
+        footer={<>
+          {conversations?.status === "scopeRequired" ? <p className="context-status">{conversations.message}</p> : null}
+          {conversations?.status === "unavailable" ? <p className="context-status">{conversations.message}</p> : null}
+          {conversations && conversations.status !== "unavailable" && conversations.status !== "scopeRequired" && related.length === 0
+            ? <p className="context-status">{otherMail.length ? "No mail about this meeting or with multiple attendees." : "No recent mail about this meeting or with its attendees."}</p> : null}
+        </>} />
+      {otherMail.length || conversations?.omitted ? <ContextSection
+        key={related.length > 0 ? "other-collapsed" : "other-open"}
+        id={related.length > 0 ? "meeting-prep-other-mail" : "meeting-prep-other-mail-primary"}
+        title="Other mail with attendees"
+        count={otherMail.length}
+        defaultCollapsed={related.length > 0}
+        rows={conversationRows(otherMail)}
+        footer={conversations?.omitted ? <p className="context-status">{conversations.omitted} more not shown.</p> : null} /> : null}
+      {files.length ? <ContextSection id="meeting-prep-files" title="Files" count={files.length}
+        rows={fileRows(files)}
+        footer={<>
+          {fileError ? <p className="form-error" role="alert">{fileError}</p> : null}
+          {context.files?.omitted ? <p className="context-status">{context.files.omitted} more not shown.</p> : null}
+        </>} /> : null}
+      <ContextSection id="meeting-prep-this" title="This meeting" count={context.thisMeeting.items.length}
+        rows={sourceRows(context.thisMeeting.items, "this")}
+        footer={<>
+          {sectionStatus(context.thisMeeting, "No notes for this meeting yet.")}
+          {onAddNote && context.thisMeeting.items.length === 0 && context.thisMeeting.status !== "unavailable"
+            ? <p className="context-status"><button type="button" className="btn-link" onClick={onAddNote}>Add Note</button> to start this meeting's notes in its day's note.</p> : null}
+        </>} />
+      <ContextSection id="meeting-prep-previous" title="Previous meetings" count={context.previousMeetings.items.length}
+        rows={occurrenceRows(context.previousMeetings.items)}
+        footer={sectionStatus(context.previousMeetings, context.event?.seriesId ? "No notes from earlier meetings in this series." : "This meeting doesn't repeat.")} />
+      {context.seriesNotes.items.length || context.seriesNotes.status === "unavailable" ? <ContextSection id="meeting-prep-series" title="Series notes" count={context.seriesNotes.items.length}
+        rows={sourceRows(context.seriesNotes.items, "series")}
+        footer={sectionStatus(context.seriesNotes, "")} /> : null}
+      {relatedNotes.length ? <ContextSection id="meeting-prep-related-notes" title="Related notes" count={relatedNotes.length}
+        rows={sourceRows(relatedNotes, "related")}
+        footer={context.relatedNotes?.omitted ? <p className="context-status">{context.relatedNotes.omitted} more not shown.</p> : null} /> : null}
+      {!ended ? followThroughSection : null}
     </> : null}
     {reviewing && context && onFollowThroughSaved ? <MeetingFollowThroughDialog
       event={event}

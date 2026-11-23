@@ -27,6 +27,16 @@ pub const MAX_ATTENDEE_CANDIDATE_THREADS: usize = 100;
 pub const MEETING_MAIL_LOOKBACK_DAYS: i64 = 90;
 /// Most commitments listed, definite ones before candidates.
 pub const MAX_MEETING_COMMITMENTS: usize = 25;
+/// Most files listed across the meeting's mail and notes.
+pub const MAX_MEETING_FILES: usize = 10;
+/// Most open email promises with attendees listed.
+pub const MAX_MEETING_PROMISES: usize = 10;
+/// Most related notes mentioning attendees or topic (outside exact series).
+pub const MAX_RELATED_NOTES: usize = 8;
+/// Longest cleaned calendar description kept on the event snapshot, in bytes.
+pub const MAX_EVENT_DESCRIPTION_BYTES: usize = 2048;
+/// Longest conversation snippet kept on a meeting conversation row, in chars.
+pub const MAX_CONVERSATION_SNIPPET_CHARS: usize = 180;
 
 /// The limits a result was produced under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -40,6 +50,9 @@ pub struct MeetingLimits {
     pub conversations: usize,
     pub mail_lookback_days: i64,
     pub commitments: usize,
+    pub files: usize,
+    pub promises: usize,
+    pub related_notes: usize,
 }
 
 pub const LIMITS: MeetingLimits = MeetingLimits {
@@ -51,6 +64,9 @@ pub const LIMITS: MeetingLimits = MeetingLimits {
     conversations: MAX_MEETING_CONVERSATIONS,
     mail_lookback_days: MEETING_MAIL_LOOKBACK_DAYS,
     commitments: MAX_MEETING_COMMITMENTS,
+    files: MAX_MEETING_FILES,
+    promises: MAX_MEETING_PROMISES,
+    related_notes: MAX_RELATED_NOTES,
 };
 
 /// Most decisions and actions one follow-through section saves.

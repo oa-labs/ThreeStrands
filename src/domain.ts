@@ -1141,17 +1141,23 @@ export type NoteBacklink = { reference?: import("./noteEntities").NoteReference;
 export type MeetingSectionStatus = "ready" | "limited" | "scopeRequired" | "unavailable";
 export type MeetingSection<T> = { status: MeetingSectionStatus; items: T[]; omitted: number; message: string | null };
 /** A meeting event as this device last cached it, without the user's own addresses. */
-export type MeetingEventSnapshot = { title: string; start: string; end: string; allDay: boolean; seriesId: string | null; attendees: string[]; attendeesOmitted: number; sourceMessageId: string | null; responseStatus: string | null };
+export type MeetingEventSnapshot = { title: string; start: string; end: string; allDay: boolean; seriesId: string | null; attendees: string[]; attendeesOmitted: number; sourceMessageId: string | null; responseStatus: string | null; description?: string | null };
 /** `excerpt` is a meeting block; `reference` only the line linking it; `linkedNote` a preview of a reusable note the block links. */
 export type MeetingSourceKind = "excerpt" | "reference" | "linkedNote";
 export type MeetingNoteSource = { noteId: string; title: string; dailyDate: string | null; revision: string; kind: MeetingSourceKind; text: string; truncated: boolean; start: number; end: number };
 export type MeetingOccurrence = { reference: import("./noteEntities").NoteReference; start: string | null; date: string | null; sources: MeetingNoteSource[] };
 export type MeetingConversation = { threadId: string; accountId: string; subject: string; lastMessageAt: string; reason: "origin" | "title" | "attendees"; attendees: string[];
-  /** Likely about this meeting: its origin, a subject naming it or sharing a distinctive title word, or mail with all its attendees. */
-  related: boolean };
-export type MeetingCommitment = { id: string; title: string; status: string; noteId: string | null; threadId: string | null; accountId: string | null; origin: "meetingNote" | "originConversation" | "titleConversation" | "attendeeConversation"; candidate: boolean };
+  /** Likely about this meeting: its origin, a subject naming it or sharing a distinctive title word, mail with all its attendees, or 2+ attendees of a group meeting. */
+  related: boolean;
+  snippet?: string | null;
+  unread?: boolean };
+export type MeetingCommitment = { id: string; title: string; status: string; kind?: string; noteId: string | null; threadId: string | null; accountId: string | null; origin: "meetingNote" | "previousMeetingNote" | "originConversation" | "titleConversation" | "attendeeConversation"; candidate: boolean };
+/** An open promise the user made in a recent sent email to an attendee. */
+export type MeetingPromise = { messageId: string; threadId: string; accountId: string; subject: string; recipients: string[]; excerpt: string; sentAt: string };
+/** A file attached to a meeting-related email or note. */
+export type MeetingFile = { source: "mail" | "note"; accountId: string | null; threadId: string | null; messageId: string | null; noteId: string | null; attachmentId: string; filename: string; mimeType: string; size: number; sentAt: string; starred: boolean; contextLabel: string };
 /** The limits a meeting context was read under (`src-tauri/src/meeting_policy.rs`). */
-export type MeetingLimits = { noteSources: number; priorOccurrences: number; excerptBytes: number; linkedNotePreviewBytes: number; attendees: number; conversations: number; mailLookbackDays: number; commitments: number };
+export type MeetingLimits = { noteSources: number; priorOccurrences: number; excerptBytes: number; linkedNotePreviewBytes: number; attendees: number; conversations: number; mailLookbackDays: number; commitments: number; files?: number; promises?: number; relatedNotes?: number };
 /** Local, read-only context for preparing one meeting occurrence. */
 export type MeetingContext = {
   reference: import("./noteEntities").NoteReference;
@@ -1160,8 +1166,11 @@ export type MeetingContext = {
   thisMeeting: MeetingSection<MeetingNoteSource>;
   previousMeetings: MeetingSection<MeetingOccurrence>;
   seriesNotes: MeetingSection<MeetingNoteSource>;
+  relatedNotes?: MeetingSection<MeetingNoteSource>;
   conversations: MeetingSection<MeetingConversation>;
   commitments: MeetingSection<MeetingCommitment>;
+  promises?: MeetingSection<MeetingPromise>;
+  files?: MeetingSection<MeetingFile>;
   /** Follow-through sections saved for this occurrence, in any note. */
   followThrough: MeetingSection<FollowThroughRecord>;
   limits: MeetingLimits;

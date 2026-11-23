@@ -860,6 +860,123 @@ fn related_conversations_name_the_meeting_share_a_title_word_or_include_every_at
 }
 
 #[test]
+fn step_a_carries_over_prior_tasks_promotes_group_threads_and_surfaces_promises_files_and_related_notes(
+) {
+    let mut prev = event(
+        "evt-prev",
+        Some("series-mkt"),
+        "Marketing Power Hour",
+        "2026-11-09T14:00:00Z",
+        &[
+            "taylor@example.org",
+            "hiede@example.org",
+            "nick@example.org",
+        ],
+    );
+    let mut curr = event(
+        "evt-curr",
+        Some("series-mkt"),
+        "Marketing Power Hour",
+        "2026-11-16T14:00:00Z",
+        &[
+            "taylor@example.org",
+            "hiede@example.org",
+            "nick@example.org",
+        ],
+    );
+    curr.description = Some("<p>Agenda: Q4 launch</p><br>-::~:~::~:~:~:~<br>Join Zoom".into());
+    prev.description = None;
+    let db = setup(&[prev, curr]);
+
+    // Prior occurrence has an open task that should carry forward into Open commitments.
+    db.save_daily_note(
+        "2026-11-09",
+        &format!(
+            "- [2pm]({})\n  - ( ) Confirm ad budget with Taylor\n",
+            href("evt-prev", Some("series-mkt"))
+        ),
+    )
+    .unwrap();
+
+    // A thread with 2 of 3 group attendees should be promoted to related = true, with snippet + attachment.
+    let mut group_msg = mail(
+        "m-group",
+        "t-group",
+        "2026-11-14T10:00:00Z",
+        "Taylor <taylor@example.org>",
+        &[ME, "hiede@example.org"],
+    );
+    group_msg.subject = "Q4 campaign creative".into();
+    group_msg.body_text = "Here is the updated creative deck for Monday".into();
+    group_msg.snippet = "Here is the updated creative deck for Monday".into();
+    group_msg.attachments = vec![crate::models::MessageAttachment {
+        id: "att-deck".into(),
+        filename: "Q4-Creative.pdf".into(),
+        mime_type: "application/pdf".into(),
+        size: 4096,
+        content_id: None,
+        inline: false,
+    }];
+    db.upsert_thread(ME, &[group_msg]).unwrap();
+
+    // An open promise sent by the user to Nick should appear in promises.
+    let mut promise_msg = mail(
+        "m-promise",
+        "t-promise",
+        "2026-11-15T09:00:00Z",
+        ME,
+        &["nick@example.org"],
+    );
+    promise_msg.subject = "Landing page metrics".into();
+    promise_msg.body_text = "I will send the conversion numbers before Monday's meeting.".into();
+    db.upsert_thread(ME, &[promise_msg]).unwrap();
+
+    // A standalone note referencing Taylor or sharing a title word should appear in related_notes.
+    db.create_note("Marketing Q4 goals", "Focus on partner webinars")
+        .unwrap();
+
+    let result = context(&db, &occurrence("evt-curr", Some("series-mkt")));
+    assert_eq!(
+        result.event.as_ref().unwrap().description.as_deref(),
+        Some("Agenda: Q4 launch")
+    );
+    assert!(result
+        .commitments
+        .items
+        .iter()
+        .any(|c| c.title == "Confirm ad budget with Taylor"
+            && c.origin == CommitmentOrigin::PreviousMeetingNote
+            && !c.candidate));
+    let group_conv = result
+        .conversations
+        .items
+        .iter()
+        .find(|c| c.thread_id == format!("{ME}:t-group"))
+        .expect("group thread included");
+    assert!(group_conv.related);
+    assert_eq!(
+        group_conv.snippet.as_deref(),
+        Some("Here is the updated creative deck for Monday")
+    );
+    assert!(result
+        .files
+        .items
+        .iter()
+        .any(|f| f.filename == "Q4-Creative.pdf" && f.source == "mail"));
+    assert!(result
+        .promises
+        .items
+        .iter()
+        .any(|p| p.thread_id == format!("{ME}:t-promise")
+            && p.excerpt.contains("conversion numbers")));
+    assert!(result
+        .related_notes
+        .items
+        .iter()
+        .any(|n| n.title == "Marketing Q4 goals"));
+}
+
+#[test]
 fn an_attendee_is_found_in_headers_only_as_a_whole_address() {
     assert!(mentions_address("ann <ann@example.org>", "ann@example.org"));
     assert!(mentions_address(

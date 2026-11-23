@@ -1378,5 +1378,19 @@ describe("Notes workspace", () => {
       await nextAgenda.findByText("Planning");
       expect(nextAgenda.queryByText("Haircut")).not.toBeInTheDocument();
     });
+    it("shows the resolved meeting title in Links and omits the duplicate Prepare button when that meeting is in the daily agenda", async () => {
+      const sync = meeting("2031-07-13", "Marketing Power Hour", 14);
+      const ref = { version: 1 as const, kind: "event" as const, id: sync.id, account: sync.accountId, calendar: sync.calendarId! };
+      await mailClient.saveDailyNote("2031-07-13", `- ${markdownEntityLink("2:00 pm", ref)} met with team`, null);
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [sync], errors: [] });
+      const preparation = vi.fn(() => <section aria-label="Prep"><p>Prep</p></section>);
+      writeLastNoteTarget({ kind: "daily", date: "2031-07-13" });
+      render(<NotesWorkspace calendars={calendars} onOpenEvent={vi.fn()} onAddNote={vi.fn()} renderMeetingPreparation={preparation} />);
+      const agenda = within(await screen.findByRole("region", { name: "Agenda" }));
+      await agenda.findByRole("button", { name: "Prepare for Marketing Power Hour" });
+      const links = within(screen.getByRole("region", { name: "Links" }));
+      await waitFor(() => expect(links.getByText("Marketing Power Hour")).toBeInTheDocument());
+      expect(links.queryByRole("button", { name: /^Prepare Meeting:/ })).not.toBeInTheDocument();
+    });
   });
 });

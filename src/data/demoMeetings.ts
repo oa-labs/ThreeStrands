@@ -8,7 +8,7 @@ import { extractWikiLinks } from "../noteWikiLinks";
 import type { MailClient } from "./client";
 
 /** The native limits (`src-tauri/src/meeting_policy.rs`), so the demo bounds results the same way. */
-export const DEMO_MEETING_LIMITS: MeetingLimits = { noteSources: 20, priorOccurrences: 8, excerptBytes: 4096, linkedNotePreviewBytes: 1024, attendees: 50, conversations: 10, mailLookbackDays: 90, commitments: 25 };
+export const DEMO_MEETING_LIMITS: MeetingLimits = { noteSources: 20, priorOccurrences: 8, excerptBytes: 4096, linkedNotePreviewBytes: 1024, attendees: 50, conversations: 10, mailLookbackDays: 90, commitments: 25, files: 10, promises: 10, relatedNotes: 8 };
 
 type Sources = {
   events(): ScheduleEvent[];
@@ -92,6 +92,7 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
         occurrences.set(noteReferenceKey(other), { reference: other, date });
       }
     }
+    const priorExcerpts: { note: Note; block: MeetingBlock }[] = [];
     let previousMeetings: MeetingSection<MeetingOccurrence>;
     if (!series) previousMeetings = bounded([], 0);
     else if (!event) previousMeetings = unavailable("Earlier meetings can't be ordered until this meeting's time is on this device.");
@@ -108,7 +109,11 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
       const items: MeetingOccurrence[] = [];
       for (const item of prior.slice(0, DEMO_MEETING_LIMITS.priorOccurrences)) {
         const occurrenceSources: MeetingNoteSource[] = [];
-        for (const note of await notesLinking(item.reference)) occurrenceSources.push(...toSources(note, occurrenceBlocks(note.body, item.reference)));
+        for (const note of await notesLinking(item.reference)) {
+          const blocks = occurrenceBlocks(note.body, item.reference);
+          occurrenceSources.push(...toSources(note, blocks));
+          for (const block of blocks) if (block.kind === "excerpt") priorExcerpts.push({ note, block });
+        }
         items.push({ reference: item.reference, start: item.start, date: item.date, sources: occurrenceSources.slice(0, DEMO_MEETING_LIMITS.noteSources) });
       }
       const omitted = Math.max(0, prior.length - DEMO_MEETING_LIMITS.priorOccurrences);
@@ -128,7 +133,7 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
       const items: MeetingConversation[] = [];
       const originThread = event.sourceMessageId ? sources.threadForMessage(event.sourceMessageId) : null;
       const origin = originThread ? sources.threads().find((thread) => thread.id === originThread && known.has(thread.accountId) && !thread.trashed) : undefined;
-      if (origin) items.push({ threadId: origin.id, accountId: origin.accountId, subject: origin.subject, lastMessageAt: origin.lastMessageAt, reason: "origin", attendees: [], related: true });
+      if (origin) items.push({ threadId: origin.id, accountId: origin.accountId, subject: origin.subject, lastMessageAt: origin.lastMessageAt, reason: "origin", attendees: [], related: true, snippet: origin.snippet || null, unread: origin.unread });
       if (!scope.length) conversations = { ...bounded(items, DEMO_MEETING_LIMITS.conversations), status: "scopeRequired", message: "Choose which mail accounts to look in for related mail." };
       else {
         const since = now.getTime() - DEMO_MEETING_LIMITS.mailLookbackDays * 86_400_000;
@@ -139,36 +144,41 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
         // attendee mail, then the rest, newest first within each.
         const title = event.title.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
         if ([...title].length >= 4) for (const thread of recent) {
-          if (thread.subject.toLowerCase().includes(title) && !items.some((item) => item.threadId === thread.id)) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, lastMessageAt: thread.lastMessageAt, reason: "title", attendees: [], related: true });
+          if (thread.subject.toLowerCase().includes(title) && !items.some((item) => item.threadId === thread.id)) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, lastMessageAt: thread.lastMessageAt, reason: "title", attendees: [], related: true, snippet: thread.snippet || null, unread: thread.unread });
         }
         const topic = titleWords(event.title);
         const matches = recent
           .filter((thread) => !items.some((item) => item.threadId === thread.id))
           .map((thread) => {
             const matched = lookup.filter((address) => thread.participants.some((participant) => normalizeContactAddress(participant).includes(address))).sort();
-            return { thread, matched, related: matched.length === lookup.length || [...titleWords(thread.subject)].some((word) => topic.has(word)) };
+            const related = matched.length === lookup.length || (lookup.length >= 3 && matched.length >= 2) || [...titleWords(thread.subject)].some((word) => topic.has(word));
+            return { thread, matched, related };
           })
           .filter(({ matched }) => matched.length)
           .sort((a, b) => Number(!a.related) - Number(!b.related));
-        for (const { thread, matched, related } of matches) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, lastMessageAt: thread.lastMessageAt, reason: "attendees", attendees: matched, related });
+        for (const { thread, matched, related } of matches) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, lastMessageAt: thread.lastMessageAt, reason: "attendees", attendees: matched, related, snippet: thread.snippet || null, unread: thread.unread });
         conversations = bounded(items, DEMO_MEETING_LIMITS.conversations);
       }
     }
 
     const commitments: MeetingCommitment[] = [];
     const active = (task: ThreadTask) => task.status === "open" || task.status === "in_progress";
-    for (const { note, block } of excerpts) {
-      const inside = (at: number) => block.start <= at && at < block.end;
-      const document = await sources.notes.noteDocument(note.id);
-      for (const item of document.items) if (item.task && !item.checked && inside(item.start)) commitments.push({ id: `note:${note.id}:${item.id}`, title: item.title, status: "open", noteId: note.id, threadId: null, accountId: null, origin: "meetingNote", candidate: false });
-      for (const link of document.links) if (link.reference.kind === "task" && inside(link.start) && !link.reference.note) {
-        const task = sources.tasks().find((candidate) => candidate.id === link.reference.id && active(candidate));
-        if (task) commitments.push({ id: task.id, title: task.title, status: task.status, noteId: null, threadId: task.threadId, accountId: task.accountId, origin: "meetingNote", candidate: false });
+    const addNoteCommitments = async (list: { note: Note; block: MeetingBlock }[], origin: "meetingNote" | "previousMeetingNote") => {
+      for (const { note, block } of list) {
+        const inside = (at: number) => block.start <= at && at < block.end;
+        const document = await sources.notes.noteDocument(note.id);
+        for (const item of document.items) if (item.task && !item.checked && inside(item.start)) commitments.push({ id: `note:${note.id}:${item.id}`, title: item.title, status: "open", kind: "action", noteId: note.id, threadId: null, accountId: null, origin, candidate: false });
+        for (const link of document.links) if (link.reference.kind === "task" && inside(link.start) && !link.reference.note) {
+          const task = sources.tasks().find((candidate) => candidate.id === link.reference.id && active(candidate));
+          if (task) commitments.push({ id: task.id, title: task.title, status: task.status, kind: task.kind, noteId: null, threadId: task.threadId, accountId: task.accountId, origin, candidate: false });
+        }
       }
-    }
+    };
+    await addNoteCommitments(excerpts, "meetingNote");
+    await addNoteCommitments(priorExcerpts, "previousMeetingNote");
     for (const conversation of conversations.items) for (const task of sources.tasks().filter((task) => task.threadId === conversation.threadId && active(task))) {
       const candidate = conversation.reason === "attendees";
-      commitments.push({ id: task.id, title: task.title, status: task.status, noteId: null, threadId: task.threadId, accountId: task.accountId, origin: candidate ? "attendeeConversation" : conversation.reason === "title" ? "titleConversation" : "originConversation", candidate });
+      commitments.push({ id: task.id, title: task.title, status: task.status, kind: task.kind, noteId: null, threadId: task.threadId, accountId: task.accountId, origin: candidate ? "attendeeConversation" : conversation.reason === "title" ? "titleConversation" : "originConversation", candidate });
     }
     const followThrough: FollowThroughRecord[] = [];
     for (const note of await notesLinking(reference)) for (const section of followThroughSections(note.body, reference)) {
@@ -180,13 +190,16 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
 
     return {
       reference,
-      event: event ? { title: event.title, start: event.start, end: event.end, allDay: event.allDay, seriesId: series ? seriesId : null, attendees, attendeesOmitted: Math.max(0, attendees.length - DEMO_MEETING_LIMITS.attendees), sourceMessageId: event.sourceMessageId ?? null, responseStatus: event.responseStatus ?? null } : null,
+      event: event ? { title: event.title, start: event.start, end: event.end, allDay: event.allDay, seriesId: series ? seriesId : null, attendees, attendeesOmitted: Math.max(0, attendees.length - DEMO_MEETING_LIMITS.attendees), sourceMessageId: event.sourceMessageId ?? null, responseStatus: event.responseStatus ?? null, description: event.description?.trim() || null } : null,
       mailScope: scope,
       thisMeeting: bounded(thisSources, DEMO_MEETING_LIMITS.noteSources),
       previousMeetings,
       seriesNotes: bounded(seriesSources, DEMO_MEETING_LIMITS.noteSources),
+      relatedNotes: bounded([], DEMO_MEETING_LIMITS.relatedNotes ?? 8),
       conversations,
       commitments: { ...bounded(unique, DEMO_MEETING_LIMITS.commitments), message: event ? null : "Only commitments in this meeting's notes are shown." },
+      promises: bounded([], DEMO_MEETING_LIMITS.promises ?? 10),
+      files: bounded([], DEMO_MEETING_LIMITS.files ?? 10),
       followThrough: bounded(followThrough, DEMO_MEETING_LIMITS.noteSources),
       limits: DEMO_MEETING_LIMITS,
     };

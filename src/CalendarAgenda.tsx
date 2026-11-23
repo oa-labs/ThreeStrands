@@ -64,6 +64,8 @@ type AgendaProps = {
    * one calendar is selected) and remembers hidden calendars under this key.
    */
   calendarFilterKey?: string;
+  /** Called with the agenda's currently visible events whenever that list changes. */
+  onVisibleEventsChange?(events: readonly ScheduleEvent[]): void;
 };
 
 const AGENDA_FILTER_PREFIX = "threestrands.agenda.hiddenCalendars.";
@@ -143,7 +145,7 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, taskFor, onOpenTask, selectedKey = null, describe, now, day = "today", id, showDate = true, markConflicts = false, workingLocation, calendarFilterKey, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, taskFor, onOpenTask, selectedKey = null, describe, now, day = "today", id, showDate = true, markConflicts = false, workingLocation, calendarFilterKey, onVisibleEventsChange, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
   const agendaRef = useRef<HTMLElement>(null);
   const refresh = useCallback(async () => { if (refreshSchedule) await refreshSchedule(); else reload(); }, [refreshSchedule, reload]);
   const pull = usePullToRefresh(agendaRef, pullToRefresh ? refresh : undefined);
@@ -156,6 +158,12 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
     : selected;
   const hiddenSelectedCount = selected.length - visibleCalendars.length;
   const agenda = agendaEventsFor(events, today, visibleCalendars).filter((event) => workingLocation === undefined || !isWorkingLocation(event));
+  const agendaSignature = agenda.map((event) => `${event.accountId}\u0000${event.calendarId ?? ""}\u0000${event.id}\u0000${event.title}`).join("\n");
+  const latestAgenda = useRef(agenda);
+  latestAgenda.current = agenda;
+  useEffect(() => {
+    onVisibleEventsChange?.(latestAgenda.current);
+  }, [agendaSignature, onVisibleEventsChange]);
   const multipleAccounts = new Set(visibleCalendars.map((calendar) => calendar.accountId)).size > 1;
   // One calendar needs no name on each row; the name (often the account address) only tells calendars apart.
   const multipleCalendars = new Set(agenda.map((event) => `${event.accountId}\u0000${event.calendarId}`)).size > 1;

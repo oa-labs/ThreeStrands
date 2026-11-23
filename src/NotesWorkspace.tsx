@@ -43,9 +43,9 @@ import { scrollBehavior } from "./useReaderActions";
 import { NotesDayCalendar } from "./NotesDayCalendar";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { parseCalendarDate } from "./DatePickerField";
-import { addDays, dateInputValue } from "./calendarTime";
+import { addDays, dateInputValue, formatEventTime } from "./calendarTime";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { noteReferenceHref } from "./noteEntities";
+import { noteReferenceHref, noteReferenceKey } from "./noteEntities";
 
 /** Most notes the Recent list shows. */
 const RECENT_LIMIT = 200;
@@ -158,6 +158,8 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const focusPreparation = useRef(false);
   const [linkPicker, setLinkPicker] = useState(false);
   const [people, setPeople] = useState<ContactProfile[]>([]);
+  const [agendaEventsByKey, setAgendaEventsByKey] = useState<Map<string, ScheduleEvent>>(() => new Map());
+  const [resolvedLinkEvents, setResolvedLinkEvents] = useState<Map<string, ScheduleEvent | null>>(() => new Map());
   const [relinkNotice, setRelinkNotice] = useState<string | null>(null);
   /** The note last saved here, so "Saved" confirms typing rather than greeting every note opened. */
   const [lastSave, setLastSave] = useState<{ noteId: string } | null>(null);
@@ -537,7 +539,36 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const saved = !editor.loading && editor.saveState.kind !== "saving" && !editor.dirty && Boolean(editor.note) && lastSave?.noteId === editor.note?.id;
   const status = editor.loading ? "Loading note…" : editor.saveState.kind === "saving" ? "Saving…" : editor.dirty ? "Not saved yet" : saved ? "Saved" : "";
   // Contact references are listed under People rather than Links.
-  const entityLinks = (entityDocument?.noteId === noteId ? entityDocument.links : []).filter((link, index, all) => link.reference.kind !== "contact" && all.findIndex((other) => other.href === link.href) === index);
+  const entityLinks = useMemo(
+    () => (entityDocument?.noteId === noteId ? entityDocument.links : []).filter((link, index, all) => link.reference.kind !== "contact" && all.findIndex((other) => other.href === link.href) === index),
+    [entityDocument, noteId],
+  );
+  const handleVisibleAgendaEvents = useCallback((events: readonly ScheduleEvent[]) => {
+    const next = new Map<string, ScheduleEvent>();
+    for (const event of events) {
+      const ref = meetingEventReference(event);
+      if (ref) next.set(noteReferenceKey(ref), event);
+    }
+    setAgendaEventsByKey(next);
+  }, []);
+  useEffect(() => {
+    if (!daily) setAgendaEventsByKey(new Map());
+  }, [daily, selectedKey]);
+  // Resolve cached event titles for event links not already shown in the daily agenda.
+  useEffect(() => {
+    const unresolved = entityLinks.filter((link) => link.reference.kind === "event" && !(daily && agendaEventsByKey.has(noteReferenceKey(link.reference))));
+    if (!unresolved.length) return;
+    let active = true;
+    void Promise.all(unresolved.map(async (link) => [link.href, await mailClient.resolveNoteEvent(link.reference).catch(() => null)] as const)).then((entries) => {
+      if (!active) return;
+      setResolvedLinkEvents((current) => {
+        const next = new Map(current);
+        for (const [href, event] of entries) next.set(href, event);
+        return next;
+      });
+    });
+    return () => { active = false; };
+  }, [entityLinks, daily, agendaEventsByKey]);
   const editorTitle = daily ? formatNoteDate(target.date) : editor.text.title;
 
   return <section className="notes-workspace" aria-label="Notes" onKeyDown={(event) => {
@@ -708,7 +739,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
         }}>{renderMeetingPreparation(preparing.event, closePreparation, preparing.noteId)}</div> : <>
         <NotesDayCalendar selected={daily ? target.date : null} today={today.date} onSelect={selectDay} revision={searchRevision} reveal={dayChosen} />
         {daily && calendars?.length && onOpenEvent ? <CalendarAgenda key={target.date} today={parseCalendarDate(target.date) ?? new Date()} day="chosen" id="notes-agenda" calendarFilterKey="notes-agenda" showDate={false}
-          calendars={calendars} onOpenEvent={onOpenEvent} onAddNote={onAddNote} onPrepare={renderMeetingPreparation && !inTrash ? openAgendaPreparation : undefined} /> : null}
+          calendars={calendars} onOpenEvent={onOpenEvent} onAddNote={onAddNote} onPrepare={renderMeetingPreparation && !inTrash ? openAgendaPreparation : undefined} onVisibleEventsChange={handleVisibleAgendaEvents} /> : null}
         <ContextSectionHeader title="Note Details" icon={<NotebookText size={ICON_SIZE.xs} />} />
         {entityDocument?.warning ? <p role="alert" className="form-error">{entityDocument.warning}</p> : null}
         {entityLinks.length || !readOnly ? <ContextSection id="note-links" title="Links" count={entityLinks.length || undefined}
@@ -717,21 +748,30 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
             <span id={linkHintId} hidden>Link to a contact, conversation, task, or event</span>
           </div> : undefined}
           actions={entityLinks.length && !readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a contact, conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
-          rows={entityLinks.map((link) => <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind as keyof typeof LINK_ICON]} title={link.label} detail={link.reference.account}
-            actions={link.reference.kind === "event" && renderMeetingPreparation && !inTrash ? [<button key="prepare" type="button" className="btn-icon btn-icon-sm" data-prepare-reference={link.href} data-prepare-trigger={`link:${link.href}`} aria-label={`Prepare Meeting: ${link.label}`} title="Prepare meeting" disabled={busy || readOnly} onClick={() => {
-              const targetKey = selectedKey;
-              void act(async () => {
-                await editor.flush();
-                if (editor.unsaved()) throw new Error("Resolve your unsaved note first.");
-                const event = await mailClient.resolveNoteEvent(link.reference);
-                if (!event) throw new Error("Unavailable on this device");
-                if (openKey.current !== targetKey) return;
-                preparationTrigger.current = `link:${link.href}`;
-                focusPreparation.current = true;
-                setPreparing({ noteId: targetKey, event });
-              });
-            }}><ClipboardList size={ICON_SIZE.sm} /></button>] : undefined}
-            onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />)} /> : null}
+          rows={entityLinks.map((link) => {
+            const agendaEvent = link.reference.kind === "event" && daily ? agendaEventsByKey.get(noteReferenceKey(link.reference)) : undefined;
+            const resolvedEvent = link.reference.kind === "event" ? (agendaEvent ?? resolvedLinkEvents.get(link.href) ?? null) : null;
+            const linkTitle = resolvedEvent?.title || link.label;
+            const linkDetail = resolvedEvent
+              ? [formatEventTime(resolvedEvent), link.reference.account].filter(Boolean).join(" · ")
+              : link.reference.account;
+            const showPrepare = link.reference.kind === "event" && renderMeetingPreparation && !inTrash && !agendaEvent;
+            return <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind as keyof typeof LINK_ICON]} title={linkTitle} detail={linkDetail}
+              actions={showPrepare ? [<button key="prepare" type="button" className="btn-icon btn-icon-sm" data-prepare-reference={link.href} data-prepare-trigger={`link:${link.href}`} aria-label={`Prepare Meeting: ${linkTitle}`} title="Prepare meeting" disabled={busy || readOnly} onClick={() => {
+                const targetKey = selectedKey;
+                void act(async () => {
+                  await editor.flush();
+                  if (editor.unsaved()) throw new Error("Resolve your unsaved note first.");
+                  const event = await mailClient.resolveNoteEvent(link.reference);
+                  if (!event) throw new Error("Unavailable on this device");
+                  if (openKey.current !== targetKey) return;
+                  preparationTrigger.current = `link:${link.href}`;
+                  focusPreparation.current = true;
+                  setPreparing({ noteId: targetKey, event });
+                });
+              }}><ClipboardList size={ICON_SIZE.sm} /></button>] : undefined}
+              onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />;
+          })} /> : null}
         {entityDocument?.noteId === noteId && entityDocument?.items.length && !inTrash ? <NoteChecklistSection key={noteId} items={entityDocument.items}
           disabled={readOnly || busy || !entityItemsCurrent} onChange={(item, patch) => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, patch); })} /> : null}
         {editor.note && links?.noteId === editor.note.id ? <>

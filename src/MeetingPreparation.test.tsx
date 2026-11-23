@@ -203,6 +203,50 @@ describe("MeetingPreparation", () => {
     expect(within(followThrough).getByRole("button", { name: "Draft Follow-up" })).toBeInTheDocument();
   });
 
+  it("shows open promises, files, related notes, attendee names, invite description, and expands other attendee mail when no higher-confidence threads matched", async () => {
+    const base = context();
+    vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([
+      { id: "c1", displayName: "Ann Lee", addresses: ["ann@example.org"], company: null, role: null, phone: null, notes: null, favorite: false, keepInTouchDays: null, lastContactedAt: null, updatedAt: "" } as never,
+    ]);
+    vi.spyOn(mailClient, "meetingContext").mockResolvedValue(context({
+      event: { ...base.event!, description: "Review Q4 campaign metrics" },
+      conversations: section([
+        { threadId: "t-other", accountId: ME, subject: "Campaign draft", lastMessageAt: "2026-11-15T09:00:00Z", reason: "attendees", attendees: ["ann@example.org"], related: false, snippet: "Attached the updated slide deck", unread: true },
+      ]),
+      promises: section([
+        { messageId: "m1", threadId: "t-other", accountId: ME, subject: "Campaign draft", recipients: ["ann@example.org"], excerpt: "I'll send the budget sheet Friday.", sentAt: "2026-11-14T10:00:00Z" },
+      ]),
+      files: section([
+        { source: "mail", accountId: ME, threadId: "t-other", messageId: "m1", noteId: null, attachmentId: "att-1", filename: "Q4-Deck.pdf", mimeType: "application/pdf", size: 2048, sentAt: "2026-11-15T09:00:00Z", starred: true, contextLabel: "Campaign draft" },
+      ]),
+      relatedNotes: section([
+        { noteId: "n-rel", title: "Marketing ideas", dailyDate: null, revision: "r1", kind: "linkedNote", text: "Explore partner webinars", truncated: false, start: 0, end: 24 },
+      ]),
+    }));
+    const openAttachment = vi.spyOn(mailClient, "openAttachment").mockResolvedValue(undefined);
+    const handlers = renderPrep();
+    const view = within(await screen.findByRole("region", { name: "Preparation for Meeting evt" }));
+    expect(await view.findByText("Review Q4 campaign metrics")).toBeInTheDocument();
+    expect(await within(view.getByRole("list", { name: "Attendees" })).findByText("Ann Lee")).toBeInTheDocument();
+
+    // Open promises and Files render and activate cleanly.
+    const promises = within(view.getByRole("region", { name: "Open promises" }));
+    fireEvent.click(promises.getByRole("button", { name: /I'll send the budget sheet Friday/ }));
+    expect(handlers.onOpenThread).toHaveBeenCalledWith("t-other");
+
+    const files = within(view.getByRole("region", { name: "Files" }));
+    fireEvent.click(files.getByRole("button", { name: /^Q4-Deck\.pdf/ }));
+    expect(openAttachment).toHaveBeenCalledWith("m1", "att-1");
+
+    const relatedNotes = within(view.getByRole("region", { name: "Related notes" }));
+    fireEvent.click(relatedNotes.getByRole("button", { name: /Marketing ideas/ }));
+    expect(handlers.onOpenNote).toHaveBeenCalledWith("n-rel", undefined);
+
+    // Because no higher-confidence threads matched, Other mail with attendees starts expanded with its snippet.
+    const other = within(view.getByRole("region", { name: "Other mail with attendees" }));
+    expect(other.getByText(/Attached the updated slide deck/)).toBeVisible();
+  });
+
   it("offers Try Again after a failure", async () => {
     const load = vi.spyOn(mailClient, "meetingContext").mockRejectedValueOnce(new Error("Database busy")).mockResolvedValue(context());
     renderPrep();
@@ -213,16 +257,15 @@ describe("MeetingPreparation", () => {
 });
 
 describe("MeetingPrepActions", () => {
-  it("offers Add Note until the meeting has a note, then Open Note, with Reserve Prep Time, Join, and Open in Calendar", async () => {
-    const handlers = { onAddNote: vi.fn(), onReservePrep: vi.fn(), onOpenInCalendar: vi.fn() };
+  it("offers Add Note until the meeting has a note, then Open Note, with Join and Open in Calendar (no Reserve Prep Time)", async () => {
+    const handlers = { onAddNote: vi.fn(), onOpenInCalendar: vi.fn() };
     const online = meeting("evt", { conferenceUrl: "https://meet.example.com/x" });
     const { unmount } = render(<MeetingPrepActions event={online} {...handlers} />);
     fireEvent.click(await screen.findByRole("button", { name: "Add Note" }));
-    fireEvent.click(screen.getByRole("button", { name: "Reserve Prep Time" }));
     fireEvent.click(screen.getByRole("button", { name: "Open in Calendar" }));
     expect(screen.getByRole("button", { name: "Join" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reserve Prep Time" })).not.toBeInTheDocument();
     expect(handlers.onAddNote).toHaveBeenCalled();
-    expect(handlers.onReservePrep).toHaveBeenCalled();
     expect(handlers.onOpenInCalendar).toHaveBeenCalled();
     unmount();
 

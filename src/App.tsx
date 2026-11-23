@@ -8,7 +8,7 @@ import { prepareNoteMutation } from "./noteMutations";
 import { MeetingNoteDialog } from "./MeetingNoteDialog";
 import { meetingDate, meetingEventReference, primaryMeetingNote } from "./meetingNoteEntry";
 import { preparationKey } from "./meetingPrep";
-import { MeetingPrepActions, reservePrepTime } from "./meetingPrepActions";
+import { MeetingPrepActions } from "./meetingPrepActions";
 import type { MeetingCommitment } from "./domain";
 import { parseAddress } from "./emailAddress";
 import type { MeetingEntry } from "./noteMeetings";
@@ -843,13 +843,12 @@ export function App() {
       return handoff;
     }}
     // Calendar's details already offer Open Note / Add Note and Join beside the event.
-    actions={<MeetingPrepActions
+    actions={origin === "today" ? <MeetingPrepActions
       event={event}
-      onAddNote={origin === "today" ? () => { void openMeetingNote(event); } : undefined}
-      onReservePrep={() => void reservePrepTime(event, meetingOwnAddresses, setNotice, (noteId, href) => openNote(noteId, undefined, href))}
-      onOpenInCalendar={origin === "today" ? () => openCalendarView(eventDate(event), event) : undefined}
-      showJoin={origin === "today"}
-    />}
+      onAddNote={() => { void openMeetingNote(event); }}
+      onOpenInCalendar={() => openCalendarView(eventDate(event), event)}
+      showJoin
+    /> : undefined}
   /></Suspense>;
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,

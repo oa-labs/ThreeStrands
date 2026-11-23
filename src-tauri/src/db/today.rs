@@ -227,80 +227,117 @@ impl Database {
         account_id: Option<&str>,
         since: &str,
     ) -> DbResult<Vec<OpenPromise>> {
-        self.with_connection(|connection| {
-            let mut sent = connection.prepare(
-                "SELECT m.id, m.thread_id, m.sender, m.recipients_json, m.sent_at, t.account_id
-                 FROM messages AS m JOIN threads AS t ON t.id = m.thread_id
-                 WHERE t.trashed = 0 AND m.sent_at >= ?1 AND (?2 IS NULL OR t.account_id = ?2)
-                   AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.thread_id = t.id AND tasks.status IN ('open', 'in_progress'))
-                 ORDER BY m.sent_at DESC",
-            )?;
-            let mut tracked_message = connection.prepare(
-                "SELECT EXISTS(SELECT 1 FROM tasks WHERE account_id = ?1 AND source_message_id = ?2)",
-            )?;
-            let mut body = connection.prepare("SELECT body_text, body_text_z FROM messages WHERE id = ?1")?;
-            let mut sent_later = connection.prepare(
-                "SELECT EXISTS(SELECT 1 FROM contact_interactions WHERE direction = 'sent' AND email = ?1 AND sent_at > ?2)",
-            )?;
-            let mut thread = connection.prepare(&format!("SELECT {THREAD_COLUMNS} FROM threads AS t WHERE t.id = ?1"))?;
-
-            let mut identity_sets: HashMap<String, BTreeSet<String>> = HashMap::new();
-            let mut seen_threads: HashSet<String> = HashSet::new();
-            let mut promises = Vec::new();
-            let mut rows = sent.query(params![since, account_id])?;
-            while let Some(row) = rows.next()? {
-                if promises.len() >= MAX_OPEN_PROMISES {
-                    break;
-                }
-                let (message_id, thread_id, sender, recipients_json, sent_at, owner): (String, String, String, String, String, String) =
-                    (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?);
-                let mine = identity_sets
-                    .entry(owner.clone())
-                    .or_insert_with(|| sending_addresses_for_account(connection, &owner));
-                // Rows run newest first, so the first one the user sent is the
-                // conversation's newest sent message; older ones are not read.
-                if !mine.contains(&normalize_sender(&sender).0) || !seen_threads.insert(thread_id.clone()) {
-                    continue;
-                }
-                // Check after marking the newest sent message seen: skipping it
-                // must never resurrect an older promise in this conversation.
-                if tracked_message.query_row(params![owner, message_id], |row| row.get::<_, bool>(0))? {
-                    continue;
-                }
-                let recipients: Vec<String> = serde_json::from_str::<Vec<String>>(&recipients_json)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|recipient| {
-                        let address = normalize_sender(recipient).0;
-                        !address.is_empty() && !mine.contains(&address)
-                    })
-                    .collect();
-                if recipients.is_empty() {
-                    continue;
-                }
-                let mut kept = false;
-                for recipient in &recipients {
-                    if sent_later.query_row(params![normalize_sender(recipient).0, sent_at], |row| row.get::<_, bool>(0))? {
-                        kept = true;
-                        break;
-                    }
-                }
-                if kept {
-                    continue;
-                }
-                let text = body
-                    .query_row([&message_id], |row| resolve_body(1, row.get(0)?, row.get(1)?))
-                    .optional()?
-                    .map(readable_body_text)
-                    .unwrap_or_default();
-                let own_text = &text[..ThreadHistory::default().preview_text_len(&text)];
-                let Some(excerpt) = promise_sentence(own_text) else { continue };
-                let Some(thread) = thread.query_row([&thread_id], thread_from_row).optional()? else { continue };
-                promises.push(OpenPromise { thread, message_id, sent_at, recipients, excerpt });
-            }
-            Ok(promises)
-        })
+        self.with_connection(|connection| list_open_promises_on(connection, account_id, since))
     }
+}
+
+/// Connection-level open promises query shared by Today and Meeting Preparation.
+pub(super) fn list_open_promises_on(
+    connection: &rusqlite::Connection,
+    account_id: Option<&str>,
+    since: &str,
+) -> DbResult<Vec<OpenPromise>> {
+    let mut sent = connection.prepare(
+        "SELECT m.id, m.thread_id, m.sender, m.recipients_json, m.sent_at, t.account_id
+         FROM messages AS m JOIN threads AS t ON t.id = m.thread_id
+         WHERE t.trashed = 0 AND m.sent_at >= ?1 AND (?2 IS NULL OR t.account_id = ?2)
+           AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.thread_id = t.id AND tasks.status IN ('open', 'in_progress'))
+         ORDER BY m.sent_at DESC",
+    )?;
+    let mut tracked_message = connection.prepare(
+        "SELECT EXISTS(SELECT 1 FROM tasks WHERE account_id = ?1 AND source_message_id = ?2)",
+    )?;
+    let mut body =
+        connection.prepare("SELECT body_text, body_text_z FROM messages WHERE id = ?1")?;
+    let mut sent_later = connection.prepare(
+        "SELECT EXISTS(SELECT 1 FROM contact_interactions WHERE direction = 'sent' AND email = ?1 AND sent_at > ?2)",
+    )?;
+    let mut thread = connection.prepare(&format!(
+        "SELECT {THREAD_COLUMNS} FROM threads AS t WHERE t.id = ?1"
+    ))?;
+
+    let mut identity_sets: HashMap<String, BTreeSet<String>> = HashMap::new();
+    let mut seen_threads: HashSet<String> = HashSet::new();
+    let mut promises = Vec::new();
+    let mut rows = sent.query(params![since, account_id])?;
+    while let Some(row) = rows.next()? {
+        if promises.len() >= MAX_OPEN_PROMISES {
+            break;
+        }
+        let (message_id, thread_id, sender, recipients_json, sent_at, owner): (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+        ) = (
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+            row.get(5)?,
+        );
+        let mine = identity_sets
+            .entry(owner.clone())
+            .or_insert_with(|| sending_addresses_for_account(connection, &owner));
+        // Rows run newest first, so the first one the user sent is the
+        // conversation's newest sent message; older ones are not read.
+        if !mine.contains(&normalize_sender(&sender).0) || !seen_threads.insert(thread_id.clone()) {
+            continue;
+        }
+        // Check after marking the newest sent message seen: skipping it
+        // must never resurrect an older promise in this conversation.
+        if tracked_message.query_row(params![owner, message_id], |row| row.get::<_, bool>(0))? {
+            continue;
+        }
+        let recipients: Vec<String> = serde_json::from_str::<Vec<String>>(&recipients_json)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|recipient| {
+                let address = normalize_sender(recipient).0;
+                !address.is_empty() && !mine.contains(&address)
+            })
+            .collect();
+        if recipients.is_empty() {
+            continue;
+        }
+        let mut kept = false;
+        for recipient in &recipients {
+            if sent_later.query_row(params![normalize_sender(recipient).0, sent_at], |row| {
+                row.get::<_, bool>(0)
+            })? {
+                kept = true;
+                break;
+            }
+        }
+        if kept {
+            continue;
+        }
+        let text = body
+            .query_row([&message_id], |row| {
+                resolve_body(1, row.get(0)?, row.get(1)?)
+            })
+            .optional()?
+            .map(readable_body_text)
+            .unwrap_or_default();
+        let own_text = &text[..ThreadHistory::default().preview_text_len(&text)];
+        let Some(excerpt) = promise_sentence(own_text) else {
+            continue;
+        };
+        let Some(thread) = thread.query_row([&thread_id], thread_from_row).optional()? else {
+            continue;
+        };
+        promises.push(OpenPromise {
+            thread,
+            message_id,
+            sent_at,
+            recipients,
+            excerpt,
+        });
+    }
+    Ok(promises)
 }
 
 fn explicit_reply_request(text: &str) -> Option<&str> {
