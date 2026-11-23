@@ -1,9 +1,9 @@
-import type { FollowThroughRecord, FollowThroughSave, MeetingCommitment, MeetingContext, MeetingConversation, MeetingLimits, MeetingNoteSource, MeetingOccurrence, MeetingPrepSelection, MeetingPrepSourceItem, MeetingReadiness, MeetingSection, MeetingSourcePreview, PrepReservation, ScheduleEvent, Thread, ThreadTask, Note } from "../domain";
+import type { FollowThroughRecord, FollowThroughSave, MeetingAgendaSave, MeetingCommitment, MeetingContext, MeetingConversation, MeetingLimits, MeetingNoteSource, MeetingOccurrence, MeetingPrepBrief, MeetingPrepSelection, MeetingPrepSourceItem, MeetingReadiness, MeetingSection, MeetingSourcePreview, PrepReservation, ScheduleEvent, Thread, ThreadTask, Note } from "../domain";
 import { boundedText, insertPrepTask, meetingBlocks, occurrenceBlocks, PREP_TASK_PREFIX, type MeetingBlock } from "../meetingExcerpt";
 import { insertMeetingLine, meetingLine } from "../noteMeetings";
 import { MAX_READINESS_EVENTS } from "../meetingReadinessPolicy";
 import { followThroughSections, insertFollowThrough } from "../meetingFollowThrough";
-import { extractNoteEntityLinks, normalizeContactAddress, noteReferenceKey, type NoteReference } from "../noteEntities";
+import { escapeMarkdownText, extractNoteEntityLinks, normalizeContactAddress, noteReferenceKey, type NoteReference } from "../noteEntities";
 import { extractWikiLinks } from "../noteWikiLinks";
 import type { MailClient } from "./client";
 
@@ -35,9 +35,10 @@ const instant = (start: string) => /^\d{4}-\d{2}-\d{2}$/.test(start) ? new Date(
 const localDate = (time: number) => { const d = new Date(time); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 /** Meeting preparation for the browser demo: the native rules over in-memory data. */
-export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingContext" | "meetingSourcePreview" | "meetingReadiness" | "reserveMeetingPrep" | "saveMeetingFollowThrough" | "undoMeetingFollowThrough"> {
+export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingContext" | "meetingSourcePreview" | "prepareMeetingBrief" | "saveMeetingAgenda" | "undoMeetingAgenda" | "meetingReadiness" | "reserveMeetingPrep" | "saveMeetingFollowThrough" | "undoMeetingFollowThrough"> {
   /** Receipts, as natively: a retry with the same operation returns its first result. */
   const receipts = new Map<string, { scope: string; result: FollowThroughSave; undone: boolean }>();
+  const agendaReceipts = new Map<string, { scope: string; result: MeetingAgendaSave; undone: boolean }>();
   const cached = (reference: NoteReference) => sources.events().find((event) => event.accountId === reference.account && event.calendarId === reference.calendar && event.id === reference.id) ?? null;
   const notesLinking = async (reference: NoteReference) => {
     const notes: Note[] = [];
@@ -270,6 +271,115 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
       }
       const payloadRevision = `demo:${items.filter((i) => i.selected).map((i) => `${i.sourceId}@${i.revision}`).join("|")}`;
       return { payloadRevision, sources: items, excludedNoteTitles, totalSelectedCharacters, budgetCharacters, overBudget: totalSelectedCharacters > budgetCharacters };
+    },
+    async prepareMeetingBrief(reference, mailScope = null, selection = null, expectedPayloadRevision): Promise<MeetingPrepBrief> {
+      const preview = await this.meetingSourcePreview(reference, mailScope, selection);
+      if (preview.payloadRevision !== expectedPayloadRevision) {
+        throw new Error("One or more sources changed since you reviewed them. Review the updated sources and try again.");
+      }
+      if (preview.overBudget) {
+        throw new Error("Selected sources exceed the preparation size budget. Deselect some sources and try again.");
+      }
+      const chosen = preview.sources.filter((item) => item.selected && !item.excludedByNoteSetting);
+      if (!chosen.length) throw new Error("Select at least one source before preparing an agenda.");
+      const cite = (item: MeetingPrepSourceItem) => ({ sourceId: item.sourceId, kind: item.kind, id: item.id, title: item.title });
+      const agendaItems = chosen.slice(0, 4).map((item) => ({
+        topic: `Review ${item.title}`,
+        detail: `Align on updates and open decisions from ${item.title}.`,
+        citations: [cite(item)],
+      }));
+      const followUps = chosen
+        .filter((item) => item.kind === "promise" || item.kind === "commitment")
+        .slice(0, 4)
+        .map((item) => ({
+          text: item.title,
+          owner: item.kind === "promise" ? "you" : "unclear",
+          citations: [cite(item)],
+        }));
+      const recentContext = chosen
+        .filter((item) => item.kind === "conversation" || item.kind === "note")
+        .slice(0, 3)
+        .map((item) => ({
+          summary: `${item.title}${item.detail ? ` (${item.detail})` : ""}`,
+          citations: [cite(item)],
+        }));
+      return { payloadRevision: preview.payloadRevision, agendaItems, followUps, recentContext, withheldCount: 0 };
+    },
+    async saveMeetingAgenda(reference, noteId, date, expectedRevision, operationId, entry, items): Promise<MeetingAgendaSave> {
+      const scope = noteReferenceKey(reference);
+      const existingReceipt = agendaReceipts.get(operationId);
+      if (existingReceipt) {
+        if (existingReceipt.scope !== scope) throw new Error("This change was already used for something else. Try again.");
+        return { ...existingReceipt.result, replayed: true };
+      }
+      const cleaned = items.map((raw) => escapeMarkdownText(raw.replace(/\s+/g, " ").trim())).filter(Boolean);
+      if (!cleaned.length) throw new Error("Select at least one agenda item to add to the note.");
+      const targetId = noteId ?? `daily:${date}`;
+      const existing = noteId ? await sources.notes.getNote(targetId) : await sources.notes.getDailyNote(date);
+      if (existing?.trashed) throw new Error("That note is in Trash. Restore it or choose another note.");
+      if ((existing?.updatedAt ?? null) !== expectedRevision) {
+        throw new Error("That note changed since you started preparing. Refresh and try again.");
+      }
+      const currentBody = existing?.body ?? "";
+      const isDaily = existing ? Boolean(existing.dailyDate) : targetId === `daily:${date}`;
+      const insertUnder = (body: string) => {
+        const block = occurrenceBlocks(body, reference).find((b) => b.kind === "excerpt");
+        if (!block) return null;
+        const firstLine = body.slice(block.start, block.end).split("\n")[0] ?? "";
+        const indent = /^[ \t]*/.exec(firstLine)?.[0] ?? "";
+        const prefix = !body.slice(0, block.end).endsWith("\n") ? "\n" : "";
+        const inserted = prefix + cleaned.map((item) => `${indent}  - ${item}\n`).join("");
+        const start = block.end;
+        const end = start + inserted.length;
+        return { body: body.slice(0, start) + inserted + body.slice(start), inserted, start, end };
+      };
+      let next = insertUnder(currentBody);
+      if (!next && isDaily) {
+        const withLine = insertMeetingLine(currentBody, meetingLine({ ...entry, linkNote: false }, null));
+        if (withLine === null) throw new Error("That day's note has an unclosed code block where the meeting would go.");
+        const final = insertUnder(withLine);
+        if (!final) throw new Error("Could not locate the added meeting line");
+        let start = 0;
+        while (start < currentBody.length && start < final.body.length && currentBody[start] === final.body[start]) start += 1;
+        let suffix = 0;
+        while (
+          suffix < currentBody.length - start
+          && suffix < final.body.length - start
+          && currentBody[currentBody.length - 1 - suffix] === final.body[final.body.length - 1 - suffix]
+        ) suffix += 1;
+        const end = final.body.length - suffix;
+        next = { body: final.body, inserted: final.body.slice(start, end), start, end };
+      } else if (!next) {
+        const prefix = currentBody ? (currentBody.endsWith("\n\n") ? "" : currentBody.endsWith("\n") ? "\n" : "\n\n") : "";
+        const inserted = `${prefix}## Agenda\n\n${cleaned.map((item) => `- ${item}\n`).join("")}`;
+        const start = currentBody.length;
+        next = { body: currentBody + inserted, inserted, start, end: start + inserted.length };
+      }
+      const saved = isDaily
+        ? await sources.notes.saveDailyNote(existing?.dailyDate ?? date, next.body, expectedRevision)
+        : await sources.notes.updateNote(existing!.id, existing!.authoredTitle ?? existing!.title, next.body, expectedRevision!);
+      if (!saved.saved || !saved.note) throw new Error("That note changed since you started preparing. Refresh and try again.");
+      const result: MeetingAgendaSave = { operationId, note: saved.note, inserted: next.inserted, start: next.start, end: next.end, replayed: false };
+      agendaReceipts.set(operationId, { scope, result, undone: false });
+      return result;
+    },
+    async undoMeetingAgenda(operationId) {
+      const receipt = agendaReceipts.get(operationId);
+      if (!receipt) throw new Error("That agenda addition can no longer be undone.");
+      const note = await sources.notes.getNote(receipt.result.note.id);
+      if (!note) throw new Error("That note no longer exists.");
+      if (receipt.undone) return { note };
+      const { result } = receipt;
+      if (note.trashed || note.updatedAt !== result.note.updatedAt || note.body.slice(result.start, result.end) !== result.inserted) {
+        throw new Error("That note changed after the agenda was added, so it can't be undone automatically.");
+      }
+      const restoredBody = note.body.slice(0, result.start) + note.body.slice(result.end);
+      const saved = note.dailyDate
+        ? await sources.notes.saveDailyNote(note.dailyDate, restoredBody, note.updatedAt)
+        : await sources.notes.updateNote(note.id, note.authoredTitle ?? note.title, restoredBody, note.updatedAt);
+      if (!saved.saved) throw new Error("That note changed after the agenda was added, so it can't be undone automatically.");
+      receipt.undone = true;
+      return { note: saved.note ?? { ...note, body: restoredBody } };
     },
     async saveMeetingFollowThrough(reference, destination, expectedRevision, operationId, accepted) {
       const scope = noteReferenceKey(reference);

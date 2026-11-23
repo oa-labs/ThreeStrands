@@ -71,6 +71,7 @@ fn creating_and_editing_records_only_changed_fields_and_saving_unchanged_text_wr
             "_entity",
             "body",
             "createdAt",
+            "excludeFromAi",
             "id",
             "starred",
             "title",
@@ -381,10 +382,19 @@ fn edits_made_while_sync_is_off_stay_local_until_it_is_on() {
     db.set_beta_features_enabled(true).unwrap();
     db.reconcile_replicated_sync_backlog().unwrap();
     let recorded = replica_fields(&db, &note.id);
-    assert_eq!(recorded.len(), 7);
+    assert_eq!(recorded.len(), 8);
     let peer = synced();
     sync_into(&peer, &db);
     assert_eq!(peer.get_note(&note.id).unwrap().unwrap().body, "v2");
+
+    // Toggling excludeFromAi replicates across devices.
+    db.set_note_exclude_from_ai(&note.id, true).unwrap();
+    sync_into(&peer, &db);
+    assert!(peer.get_note(&note.id).unwrap().unwrap().exclude_from_ai);
+    db.set_note_exclude_from_ai(&note.id, false).unwrap();
+    sync_into(&peer, &db);
+    assert!(!peer.get_note(&note.id).unwrap().unwrap().exclude_from_ai);
+    let recorded = replica_fields(&db, &note.id);
 
     // Only the fields edited while off are recorded again.
     db.set_beta_features_enabled(false).unwrap();

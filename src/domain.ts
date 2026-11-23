@@ -1207,6 +1207,45 @@ export type MeetingSourcePreview = {
   budgetCharacters: number;
   overBudget: boolean;
 };
+/** A source citation attached to an AI meeting preparation brief item. */
+export type MeetingEvidenceCitation = {
+  sourceId: string;
+  kind: "event" | "note" | "conversation" | "promise" | "commitment" | "file" | string;
+  id: string;
+  title: string;
+};
+export type MeetingAgendaItem = {
+  topic: string;
+  detail: string;
+  citations: MeetingEvidenceCitation[];
+};
+export type MeetingFollowUpItem = {
+  text: string;
+  owner: "you" | "attendee" | "unclear" | string;
+  citations: MeetingEvidenceCitation[];
+};
+export type MeetingContextBullet = {
+  summary: string;
+  citations: MeetingEvidenceCitation[];
+};
+/** Source-cited AI preparation brief generated from user-approved local sources. */
+export type MeetingPrepBrief = {
+  payloadRevision: string;
+  agendaItems: MeetingAgendaItem[];
+  followUps: MeetingFollowUpItem[];
+  recentContext: MeetingContextBullet[];
+  withheldCount: number;
+};
+/** Result of inserting accepted agenda items into a note (`src-tauri/src/db/meeting_agenda.rs`). */
+export type MeetingAgendaSave = {
+  operationId: string;
+  note: Note;
+  inserted: string;
+  start: number;
+  end: number;
+  replayed: boolean;
+};
+export type MeetingAgendaUndo = { note: Note };
 /** A follow-through section saved for an occurrence (`src-tauri/src/db/meetings.rs`). */
 export type FollowThroughRecord = { noteId: string; title: string; dailyDate: string | null; revision: string; date: string | null; text: string; truncated: boolean; start: number; end: number };
 /** Whether a meeting has been reviewed, derived from saved note content; `unknown` when its notes couldn't be read. */

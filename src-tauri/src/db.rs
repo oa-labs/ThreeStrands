@@ -39,6 +39,7 @@ mod join_codes;
 mod labels;
 mod mail_sync;
 mod maintenance;
+pub(crate) mod meeting_agenda;
 pub(crate) mod meeting_follow_through;
 pub(crate) mod meetings;
 mod messages;

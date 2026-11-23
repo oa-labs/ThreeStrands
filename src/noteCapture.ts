@@ -195,6 +195,39 @@ export async function saveFollowThrough(
   } };
 }
 
+/** Adds accepted agenda bullets to an existing meeting note or the meeting's
+ * daily note after flushing any open typing there. Undo removes exactly the
+ * inserted text while the note is unchanged since. */
+export async function saveMeetingAgenda(
+  event: ScheduleEvent,
+  ownAddresses: readonly string[],
+  destination: { noteId: string; dailyDate: string | null; revision: string } | null,
+  operationId: string,
+  items: readonly string[],
+) {
+  const reference = meetingEventReference(event);
+  if (!reference) throw new Error("This meeting can't be added to a note.");
+  const date = meetingDate(event);
+  const key = destination
+    ? (destination.dailyDate ? noteTargetKey({ kind: "daily", date: destination.dailyDate }) : destination.noteId)
+    : noteTargetKey({ kind: "daily", date });
+  const prepared = await prepareNoteMutation(key);
+  let expected: string | null;
+  if (destination) {
+    expected = prepared.before === destination.revision ? prepared.after ?? destination.revision : destination.revision;
+  } else {
+    expected = (await mailClient.getDailyNote(date))?.updatedAt ?? null;
+  }
+  const entry = await defaultMeetingEntry(event, ownAddresses);
+  const saved = await mailClient.saveMeetingAgenda(reference, destination?.noteId ?? null, date, expected, operationId, entry, [...items]);
+  await notesChanged(key);
+  return { ...saved, async undo() {
+    await prepareNoteMutation(key);
+    await mailClient.undoMeetingAgenda(operationId);
+    await notesChanged(key);
+  } };
+}
+
 /** Open an occurrence's existing note, or add its entry to its day's note.
  * Concurrent activations share the guarded write; a failed lookup never creates a duplicate. */
 const openingMeetings = new Map<string, Promise<{ noteId: string; href: string; undo?: () => Promise<void> }>>();

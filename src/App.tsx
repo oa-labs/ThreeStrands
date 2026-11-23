@@ -835,6 +835,15 @@ export function App() {
         undo: () => void saved.undo().catch((reason) => setNotice({ message: errorMessage(reason) })),
       });
     }}
+    onAgendaSaved={(saved) => {
+      const href = meetingEventReference(event) ? noteReferenceHref(meetingEventReference(event)!) : undefined;
+      setNotice({
+        message: `Agenda added to ${saved.note.dailyDate ? dailyNoteName(saved.note.dailyDate) : saved.note.title}`,
+        action: { label: "Open Note", run: () => openNote(saved.note.id, undefined, href) },
+        undo: () => void saved.undo().catch((reason) => setNotice({ message: errorMessage(reason) })),
+      });
+    }}
+    onOpenAiSettings={() => openSettingsAt("ai")}
     onOpenFollowUp={async (request) => {
       if (returnNoteId) await prepareNoteMutation(returnNoteId);
       const handoff = await correspondence.openDraftHandoff(request);

@@ -1,11 +1,12 @@
 import { CheckSquare, ClipboardCheck, ClipboardList, Handshake, Mail, MessageSquareText, NotebookPen, NotebookText, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Modal } from "./AppChrome";
+import { aiAreaEnabled, readAiFeatures, readAiProvider } from "./aiSettings";
 import { AttachmentIcon } from "./AttachmentIcon";
 import { ContextRow, ContextSection, ContextSectionHeader } from "./ContextSections";
 import { formatEventTime } from "./calendarTime";
 import { mailClient } from "./data/client";
-import type { DraftHandoff, DraftHandoffRequest, FollowThroughSave, MeetingCommitment, MeetingConversation, MeetingFile, MeetingNoteSource, MeetingOccurrence, MeetingPromise, MeetingSection, ScheduleEvent } from "./domain";
+import type { DraftHandoff, DraftHandoffRequest, FollowThroughSave, MeetingAgendaSave, MeetingCommitment, MeetingConversation, MeetingFile, MeetingNoteSource, MeetingOccurrence, MeetingPrepBrief, MeetingPrepSelection, MeetingPromise, MeetingSection, ScheduleEvent } from "./domain";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { meetingEventReference } from "./meetingNoteEntry";
@@ -14,6 +15,7 @@ import { notePlainText } from "./notePreview";
 import { formatAttachmentSize } from "./threadPresentation";
 import { useMeetingPreparation } from "./useMeetingPreparation";
 import { MeetingFollowThroughDialog, MeetingFollowUpDialog } from "./MeetingFollowThroughDialog";
+import { MeetingPrepBriefCard, MeetingPrepSourcesDialog } from "./MeetingPrepBrief";
 import { itemsFromSection, localDay } from "./meetingFollowThrough";
 
 export type MailAccountChoice = { email: string; label: string };
@@ -37,6 +39,10 @@ type Props = {
   ownAddresses?: readonly string[];
   /** Says a follow-through was saved, with its Undo. Review Follow-through is offered with it. */
   onFollowThroughSaved?(saved: FollowThroughSave & { undo(): Promise<void> }): void;
+  /** Says accepted AI agenda items were inserted into a note, with Undo. */
+  onAgendaSaved?(saved: MeetingAgendaSave & { undo(): Promise<void> }): void;
+  /** Opens Settings → AI when a provider is configured but Meeting AI is off. */
+  onOpenAiSettings?(): void;
   /** Saves the open composer, then opens or resumes the follow-up's draft. Draft Follow-up is offered with it. */
   onOpenFollowUp?(request: DraftHandoffRequest): Promise<DraftHandoff>;
   /** The day a review is dated; today by default. */
@@ -90,10 +96,12 @@ const MAX_ATTENDEE_NAME_LOOKUPS = 20;
  * opening its source. Opening it reads only local data; nothing is written,
  * and nothing takes focus on its own.
  */
-export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote, onOpenThread, onOpenTask, onClose, actions, onAddNote, ownAddresses = [], onFollowThroughSaved, onOpenFollowUp, today }: Props) {
+export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote, onOpenThread, onOpenTask, onClose, actions, onAddNote, ownAddresses = [], onFollowThroughSaved, onAgendaSaved, onOpenAiSettings, onOpenFollowUp, today }: Props) {
   const reference = meetingEventReference(event);
   const prep = useMeetingPreparation(reference, refreshKey);
   const [choosingScope, setChoosingScope] = useState(false);
+  const [choosingSources, setChoosingSources] = useState(false);
+  const [briefState, setBriefState] = useState<{ key: string; brief: MeetingPrepBrief; selection: MeetingPrepSelection } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [expandedAttendeesFor, setExpandedAttendeesFor] = useState<string | null>(null);
@@ -101,7 +109,13 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
   const [fileError, setFileError] = useState<string | null>(null);
   const context = prep.context;
   const occurrenceHref = reference ? noteReferenceHref(reference) : undefined;
-  const showAllAttendees = expandedAttendeesFor !== null && expandedAttendeesFor === (occurrenceHref ?? event.id);
+  const meetingKey = occurrenceHref ?? event.id;
+  const activeBrief = briefState && briefState.key === meetingKey ? briefState : null;
+  const showAllAttendees = expandedAttendeesFor !== null && expandedAttendeesFor === meetingKey;
+  const aiProvider = readAiProvider();
+  const meetingAiEnabled = aiProvider !== "none" && aiAreaEnabled(readAiFeatures(), "meetings");
+  const canPrepareAgenda = Boolean(meetingAiEnabled && reference && context?.event);
+  const showEnableAiHint = Boolean(aiProvider !== "none" && !meetingAiEnabled && onOpenAiSettings && reference && context?.event);
   const openSource = (source: MeetingNoteSource, link?: NoteReference) =>
     onOpenNote(source.noteId, source.kind === "linkedNote" ? undefined : link ? noteReferenceHref(link) : occurrenceHref);
 
@@ -267,12 +281,40 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
         </ul>
       ) : null}
       {description ? <p className="meeting-prep-description">{description}</p> : null}
-      {actions ? <div className="meeting-prep-actions" role="group" aria-label="Meeting actions">{actions}</div> : null}
+      {actions || canPrepareAgenda ? (
+        <div className="meeting-prep-actions" role="group" aria-label="Meeting actions">
+          {canPrepareAgenda ? (
+            <button type="button" className="btn btn-sm" onClick={() => setChoosingSources(true)}>
+              {activeBrief ? "Refresh Agenda…" : "Prepare Agenda…"}
+            </button>
+          ) : null}
+          {actions}
+        </div>
+      ) : null}
+      {showEnableAiHint ? (
+        <p className="meeting-prep-ai-hint">
+          <button type="button" className="btn-link" onClick={onOpenAiSettings}>Enable Meeting AI in Settings…</button>
+        </p>
+      ) : null}
     </div>
     {prep.loading && !context ? <p className="context-status" role="status">Loading preparation…</p> : null}
     {prep.error ? <p className="context-status" role="alert">{prep.error} <button type="button" className="btn-link" onClick={prep.reload}>Try Again</button></p> : null}
     {context ? <>
       {!context.event ? <p className="context-status">This meeting isn't in this device's calendar cache, so only its notes are shown.</p> : null}
+      {activeBrief ? (
+        <MeetingPrepBriefCard
+          event={event}
+          context={context}
+          brief={activeBrief.brief}
+          ownAddresses={ownAddresses}
+          onOpenNote={onOpenNote}
+          onOpenThread={onOpenThread}
+          onOpenTask={onOpenTask}
+          onChangeSources={() => setChoosingSources(true)}
+          onDismiss={() => setBriefState(null)}
+          onAgendaSaved={onAgendaSaved}
+        />
+      ) : null}
       {ended ? followThroughSection : null}
       {promises.length ? <ContextSection id="meeting-prep-promises" title="Open promises" count={promises.length}
         rows={promiseRows(promises)}
@@ -350,6 +392,17 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
       chosen={context?.mailScope ?? []}
       onClose={() => setChoosingScope(false)}
       onChoose={(accounts) => { prep.setMailScope(accounts); setChoosingScope(false); }}
+    /> : null}
+    {choosingSources && reference && context?.event ? <MeetingPrepSourcesDialog
+      event={event}
+      reference={reference}
+      mailScope={prep.mailScope}
+      initialSelection={activeBrief?.selection ?? null}
+      onClose={() => setChoosingSources(false)}
+      onGenerated={(brief, selection) => {
+        setBriefState({ key: meetingKey, brief, selection });
+        setChoosingSources(false);
+      }}
     /> : null}
   </section>;
 }

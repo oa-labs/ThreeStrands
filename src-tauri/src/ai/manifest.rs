@@ -19,6 +19,7 @@ pub enum Feature {
     DraftReview,
     Contact,
     FindTimes,
+    MeetingPrep,
     Connection,
 }
 impl Feature {
@@ -32,6 +33,7 @@ impl Feature {
             Self::DraftReview => "draft_review",
             Self::Contact => "contact",
             Self::FindTimes => "find_times",
+            Self::MeetingPrep => "meeting_prep",
             Self::Connection => "connection",
         }
     }
@@ -46,6 +48,7 @@ impl Feature {
             Self::DraftReview => 2,
             Self::Contact => 2,
             Self::FindTimes => 1,
+            Self::MeetingPrep => 1,
             Self::Connection => 1,
         }
     }

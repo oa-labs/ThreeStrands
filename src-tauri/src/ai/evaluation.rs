@@ -385,6 +385,9 @@ async fn execute(case: &Case, provider: AiProvider, options: &Options) -> Result
             .map_err(|_| "Invalid contact result".into())
         }
         Feature::Connection => Err("Connection tests are not quality evaluations".into()),
+        Feature::MeetingPrep => {
+            Err("Meeting preparation does not use quality evaluations yet".into())
+        }
     }
 }
 pub fn suite_revision(filter: Option<&str>) -> Result<String, String> {

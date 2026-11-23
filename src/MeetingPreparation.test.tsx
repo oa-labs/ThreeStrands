@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { saveAiFeatures, saveAiProvider, DEFAULT_AI_FEATURES } from "./aiSettings";
 import { mailClient } from "./data/client";
 import type { MeetingContext, MeetingReadiness, MeetingSection, ScheduleEvent } from "./domain";
 import { MeetingPreparation } from "./MeetingPreparation";
@@ -253,6 +254,112 @@ describe("MeetingPreparation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Try Again" }));
     await screen.findByText(/Decided to ship/);
     expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("gates Prepare Agenda on AI provider and Meeting AI opt-in, reviews pre-checked sources, renders cited brief, and adds selected items to note with Undo", async () => {
+    vi.spyOn(mailClient, "meetingContext").mockResolvedValue(context());
+    const onOpenAiSettings = vi.fn();
+    const onAgendaSaved = vi.fn();
+
+    // No provider configured -> neither button nor Settings hint.
+    renderPrep({ onOpenAiSettings, onAgendaSaved });
+    await screen.findByRole("region", { name: "This meeting" });
+    expect(screen.queryByRole("button", { name: /Prepare Agenda/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Enable Meeting AI/ })).not.toBeInTheDocument();
+    cleanup();
+
+    // Provider configured, Meeting AI still off -> Settings link shown.
+    saveAiProvider("openai");
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, meetingAssistance: false });
+    renderPrep({ onOpenAiSettings, onAgendaSaved });
+    await screen.findByRole("region", { name: "This meeting" });
+    expect(screen.queryByRole("button", { name: /Prepare Agenda/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Enable Meeting AI/ }));
+    expect(onOpenAiSettings).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    // Meeting AI enabled -> Prepare Agenda opens source review modal with pre-checked sources and excluded note banner.
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, meetingAssistance: true });
+    vi.spyOn(mailClient, "meetingSourcePreview").mockResolvedValue({
+      payloadRevision: "rev-abc",
+      sources: [
+        { sourceId: "note:daily:2026-11-16", kind: "note", id: "daily:2026-11-16", title: "2026-11-16", detail: "This meeting", revision: "r1", characters: 120, truncated: false, selected: true, excludedByNoteSetting: false },
+        { sourceId: "note:private-1", kind: "note", id: "private-1", title: "Private diary", detail: "Related note", revision: "r2", characters: 80, truncated: false, selected: false, excludedByNoteSetting: true },
+        { sourceId: "thread:t1", kind: "conversation", id: "t1", title: "Agenda thread", detail: "2026-11-14", revision: "2026-11-14", characters: 240, truncated: false, selected: true, excludedByNoteSetting: false },
+      ],
+      excludedNoteTitles: ["Private diary"],
+      totalSelectedCharacters: 360,
+      budgetCharacters: 36_000,
+      overBudget: false,
+    });
+    const prepareBrief = vi.spyOn(mailClient, "prepareMeetingBrief").mockResolvedValue({
+      payloadRevision: "rev-abc",
+      agendaItems: [
+        {
+          topic: "Approve Q4 creative",
+          detail: "Finalize the deck before launch.",
+          citations: [{ sourceId: "thread:t1", kind: "conversation", id: "t1", title: "Agenda thread" }],
+        },
+      ],
+      followUps: [
+        {
+          text: "Send the deck",
+          owner: "you",
+          citations: [{ sourceId: "note:daily:2026-11-16", kind: "note", id: "daily:2026-11-16", title: "2026-11-16" }],
+        },
+      ],
+      recentContext: [
+        {
+          summary: "Ann shared the latest agenda thread.",
+          citations: [{ sourceId: "thread:t1", kind: "conversation", id: "t1", title: "Agenda thread" }],
+        },
+      ],
+      withheldCount: 1,
+    });
+    const saveAgenda = vi.spyOn(mailClient, "saveMeetingAgenda").mockResolvedValue({
+      operationId: "op-1",
+      note: { id: "daily:2026-11-16", title: "2026-11-16", body: "updated", dailyDate: "2026-11-16", createdAt: "t0", updatedAt: "r2", trashed: false, trashedAt: null },
+      inserted: "  - Approve Q4 creative\n",
+      start: 10,
+      end: 34,
+      replayed: false,
+    });
+    const undoAgenda = vi.spyOn(mailClient, "undoMeetingAgenda").mockResolvedValue({
+      note: { id: "daily:2026-11-16", title: "2026-11-16", body: "original", dailyDate: "2026-11-16", createdAt: "t0", updatedAt: "r3", trashed: false, trashedAt: null },
+    });
+
+    const handlers = renderPrep({ onOpenAiSettings, onAgendaSaved });
+    await screen.findByRole("region", { name: "This meeting" });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare Agenda…" }));
+
+    const dialog = within(await screen.findByRole("dialog", { name: "Prepare Meeting Agenda" }));
+    expect(await dialog.findByText(/Excluded from AI \(1\): Private diary/)).toBeInTheDocument();
+    expect(dialog.getByRole("checkbox", { name: /Private diary/ })).toBeDisabled();
+    expect(dialog.getByRole("checkbox", { name: /Agenda thread/ })).toBeChecked();
+
+    fireEvent.click(dialog.getByRole("button", { name: "Generate Agenda" }));
+    await waitFor(() => expect(prepareBrief).toHaveBeenCalledTimes(1));
+
+    const briefRegion = within(await screen.findByRole("region", { name: "Suggested agenda brief" }));
+    expect(briefRegion.getByText("Approve Q4 creative")).toBeInTheDocument();
+    expect(briefRegion.getByText("1 unverified suggestion was withheld.")).toBeInTheDocument();
+
+    // Clicking citations navigates to the cited thread and note.
+    fireEvent.click(briefRegion.getAllByRole("button", { name: "Agenda thread" })[0]);
+    expect(handlers.onOpenThread).toHaveBeenCalledWith("t1");
+    fireEvent.click(briefRegion.getByRole("button", { name: "2026-11-16" }));
+    expect(handlers.onOpenNote).toHaveBeenCalledWith("daily:2026-11-16");
+
+    // Adding selected items calls saveMeetingAgenda and hands an Undo callback to onAgendaSaved.
+    fireEvent.click(briefRegion.getByRole("button", { name: "Add Selected to Note" }));
+    await waitFor(() => expect(saveAgenda).toHaveBeenCalledTimes(1));
+    expect(saveAgenda.mock.calls[0][6]).toEqual([
+      "Approve Q4 creative — Finalize the deck before launch.",
+      "Follow-up: Send the deck",
+    ]);
+    await waitFor(() => expect(onAgendaSaved).toHaveBeenCalledTimes(1));
+    await act(async () => { await onAgendaSaved.mock.calls[0][0].undo(); });
+    expect(undoAgenda).toHaveBeenCalledTimes(1);
   });
 });
 

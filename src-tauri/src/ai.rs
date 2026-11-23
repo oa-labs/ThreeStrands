@@ -10,6 +10,7 @@ pub(crate) mod diagnostics;
 pub mod evaluation;
 pub mod find_times;
 pub mod manifest;
+mod meeting;
 mod output;
 mod proposals;
 mod provider;
@@ -33,6 +34,9 @@ pub use contact::{
     enrich_contact, ContactEnrichmentRequest, ContactEnrichmentResult, ContactMessageInput,
 };
 pub use context::{sent_message_count, ActionMessageInput, ThreadMessageInput};
+pub use meeting::{
+    prepare_meeting_brief, MeetingPrepBrief, MeetingPrepBriefRequest, MeetingPrepSourceMeta,
+};
 pub use provider::{
     configured, get_key, list_models, set, test_connection, AiProvider, ModelInfo, Reasoning,
 };

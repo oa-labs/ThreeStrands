@@ -7,7 +7,7 @@ import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRe
 import type { SentInRange, DoneNote } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
-import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingContext, MeetingPrepSelection, MeetingReadiness, MeetingSourcePreview, PlanChanges, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
+import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingAgendaSave, MeetingAgendaUndo, MeetingContext, MeetingPrepBrief, MeetingPrepSelection, MeetingReadiness, MeetingSourcePreview, PlanChanges, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
 import type { PlanAddition } from "../dailyPlan";
 import {
   BOUNDED_LOCAL_READ,
@@ -453,6 +453,29 @@ export interface MailClient extends CorrespondenceClient {
   meetingContext(reference: NoteReference, mailScope?: string[] | null): Promise<MeetingContext>;
   /** Native preview of the bounded local sources for an AI meeting preparation brief. */
   meetingSourcePreview(reference: NoteReference, mailScope?: string[] | null, selection?: MeetingPrepSelection | null): Promise<MeetingSourcePreview>;
+  /** Generates a source-cited AI meeting brief from the reviewed local sources. */
+  prepareMeetingBrief(
+    reference: NoteReference,
+    mailScope: string[] | null,
+    selection: MeetingPrepSelection | null,
+    expectedPayloadRevision: string,
+    provider: AiProvider,
+    model: string,
+    endpoint: string | null,
+    reasoning?: AiReasoning,
+  ): Promise<MeetingPrepBrief>;
+  /** Guarded insertion of accepted agenda items into a meeting note or daily note, idempotent per `operationId`. */
+  saveMeetingAgenda(
+    reference: NoteReference,
+    noteId: string | null,
+    date: string,
+    expectedRevision: string | null,
+    operationId: string,
+    entry: MeetingEntry,
+    items: string[],
+  ): Promise<MeetingAgendaSave>;
+  /** Removes the exact agenda text `operationId` inserted while the note is unchanged since. */
+  undoMeetingAgenda(operationId: string): Promise<MeetingAgendaUndo>;
   /** Counts for up to 50 meetings, such as a day's. */
   meetingReadiness(references: NoteReference[], mailScope?: string[] | null): Promise<MeetingReadiness[]>;
   /** Reserve Prep Time: a prep task under the meeting's line in `date`'s note, adding the line when needed. */
@@ -763,6 +786,11 @@ const tauriClient: MailClient = {
   noteBacklinks: (reference) => read("note_backlinks", { reference }),
   meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),
   meetingSourcePreview: (reference, mailScope = null, selection = null) => read("meeting_source_preview", { reference, mailScope, selection }),
+  prepareMeetingBrief: (reference, mailScope, selection, expectedPayloadRevision, provider, model, endpoint, reasoning = "default") =>
+    invokeAi("prepare_meeting_brief", { reference, mailScope, selection, expectedPayloadRevision, provider, model, endpoint, reasoning }),
+  saveMeetingAgenda: (reference, noteId, date, expectedRevision, operationId, entry, items) =>
+    complete("save_meeting_agenda", { reference, noteId, date, expectedRevision, operationId, entry, items }),
+  undoMeetingAgenda: (operationId) => complete("undo_meeting_agenda", { operationId }),
   meetingReadiness: (references, mailScope = null) => read("meeting_readiness", { references, mailScope }),
   reserveMeetingPrep: (date, expected, entry) => complete("reserve_meeting_prep", { date, expected, entry }),
   saveMeetingFollowThrough: (reference, destination, expectedRevision, operationId, accepted) => complete("save_meeting_follow_through", { reference, destination, expectedRevision, operationId, accepted }),
