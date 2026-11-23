@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ImapSendingSettings } from "./ImapSendingSettings";
+import { ImapSendingAddressesDialog, ImapSendingSettings } from "./ImapSendingSettings";
 import { mailClient } from "./data/client";
 import type { ImapSendingOptions } from "./domain";
 
@@ -18,59 +18,71 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function renderAddressesDialog(onClose = vi.fn()) {
+  return render(<ImapSendingAddressesDialog account="me@proton.me" onClose={onClose} />);
+}
+
 function renderPanel() {
   return render(<ImapSendingSettings account="me@proton.me" />);
 }
 
-describe("ImapSendingSettings", () => {
+describe("ImapSendingAddressesDialog", () => {
   it("shows the sign-in address as text, not a field, and the secondary addresses editable", async () => {
     vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue(options);
-    renderPanel();
-    const signIn = await screen.findByText("me@proton.me", { selector: "span" });
+    renderAddressesDialog();
+    const dialog = screen.getByRole("dialog", { name: "Sending Addresses" });
+    const signIn = await within(dialog).findByText("me@proton.me", { selector: "span" });
     expect(signIn.closest("input, textarea")).toBeNull();
-    expect(screen.getByText("Sign-in address")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Sign-in address" })).not.toBeInTheDocument();
-    expect((screen.getByLabelText("Address 1") as HTMLInputElement).value).toBe("work@proton.me");
+    expect(within(dialog).getByText("Sign-in address")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("textbox", { name: "Sign-in address" })).not.toBeInTheDocument();
+    expect((within(dialog).getByLabelText("Address 1") as HTMLInputElement).value).toBe("work@proton.me");
   });
 
   it("offers a default From choice when there is a second address and saves only changed addresses", async () => {
     const signInOnly = { ...options, identities: options.identities.slice(0, 1) };
     vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue(signInOnly);
     const save = vi.spyOn(mailClient, "setImapIdentities").mockResolvedValue(options.identities);
-    renderPanel();
-    const replyTo = await screen.findByLabelText("Reply-To (optional)");
-    const saveButton = screen.getByRole("button", { name: "Save addresses" });
-    expect(replyTo).toHaveAccessibleDescription();
-    expect(saveButton).toBeDisabled();
-    expect(screen.queryByRole("combobox", { name: "Default From address" })).not.toBeInTheDocument();
+    const changed = vi.fn();
+    window.addEventListener("threestrands:sending-identities-changed", changed);
+    try {
+      renderAddressesDialog();
+      const dialog = screen.getByRole("dialog", { name: "Sending Addresses" });
+      const replyTo = await within(dialog).findByLabelText("Reply-To (optional)");
+      const saveButton = within(dialog).getByRole("button", { name: "Save addresses" });
+      expect(replyTo).toHaveAccessibleDescription();
+      expect(saveButton).toBeDisabled();
+      expect(within(dialog).queryByRole("combobox", { name: "Default From address" })).not.toBeInTheDocument();
 
-    fireEvent.change(replyTo, { target: { value: "help@example.com" } });
-    expect(saveButton).toBeEnabled();
-    fireEvent.change(replyTo, { target: { value: "" } });
-    expect(saveButton).toBeDisabled();
+      fireEvent.change(replyTo, { target: { value: "help@example.com" } });
+      expect(saveButton).toBeEnabled();
+      fireEvent.change(replyTo, { target: { value: "" } });
+      expect(saveButton).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add address" }));
-    expect(saveButton).toBeDisabled();
-    expect(screen.queryByRole("combobox", { name: "Default From address" })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Address 1"), { target: { value: "work@proton.me" } });
-    const defaultFrom = screen.getByRole("combobox", { name: "Default From address" });
-    expect(defaultFrom).toHaveDisplayValue("me@proton.me");
-    expect(within(defaultFrom).getByRole("option", { name: "work@proton.me" })).toBeInTheDocument();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Add address" }));
+      expect(saveButton).toBeDisabled();
+      expect(within(dialog).queryByRole("combobox", { name: "Default From address" })).not.toBeInTheDocument();
+      fireEvent.change(within(dialog).getByLabelText("Address 1"), { target: { value: "work@proton.me" } });
+      const defaultFrom = within(dialog).getByRole("combobox", { name: "Default From address" });
+      expect(defaultFrom).toHaveDisplayValue("me@proton.me");
+      expect(within(defaultFrom).getByRole("option", { name: "work@proton.me" })).toBeInTheDocument();
 
-    await act(async () => { fireEvent.click(saveButton); });
-    expect(save).toHaveBeenCalledOnce();
-    const sending = screen.getByRole("region", { name: "Sending addresses" });
-    expect(within(sending).getByRole("status")).toHaveTextContent("Addresses saved.");
-    expect(saveButton).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Remove address 1" }));
-    expect(defaultFrom).not.toBeInTheDocument();
-    expect(saveButton).toBeEnabled();
+      await act(async () => { fireEvent.click(saveButton); });
+      expect(save).toHaveBeenCalledOnce();
+      expect(changed).toHaveBeenCalledOnce();
+      expect(within(dialog).getByRole("status")).toHaveTextContent("Addresses saved.");
+      expect(saveButton).toBeDisabled();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove address 1" }));
+      expect(defaultFrom).not.toBeInTheDocument();
+      expect(saveButton).toBeEnabled();
+    } finally {
+      window.removeEventListener("threestrands:sending-identities-changed", changed);
+    }
   });
 
   it("adds and removes secondary address rows and saves the full list", async () => {
     vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue(options);
     const save = vi.spyOn(mailClient, "setImapIdentities").mockResolvedValue(options.identities);
-    renderPanel();
+    renderAddressesDialog();
     await screen.findByLabelText("Reply-To (optional)");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Add address/ })); });
     const second = screen.getByLabelText("Address 2") as HTMLInputElement;
@@ -89,24 +101,24 @@ describe("ImapSendingSettings", () => {
   it("shows a backend validation error and leaves the edited list in place", async () => {
     vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue(options);
     vi.spyOn(mailClient, "setImapIdentities").mockRejectedValue(new Error("work@proton.me is listed more than once. Each sending address can appear only once."));
-    renderPanel();
-    const replyTo = await screen.findByLabelText("Reply-To (optional)");
-    const sending = replyTo.closest("section")!;
+    renderAddressesDialog();
+    const dialog = screen.getByRole("dialog", { name: "Sending Addresses" });
+    await within(dialog).findByLabelText("Reply-To (optional)");
     // Add a duplicate of the existing secondary address.
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Add address/ })); });
-    const added = screen.getByLabelText("Address 2") as HTMLInputElement;
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: /Add address/ })); });
+    const added = within(dialog).getByLabelText("Address 2") as HTMLInputElement;
     await act(async () => { fireEvent.change(added, { target: { value: "work@proton.me" } }); });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save addresses" })); });
-    expect(await within(sending).findByRole("alert")).toHaveTextContent("listed more than once");
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Save addresses" })); });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("listed more than once");
     // The user's edited rows are still shown (the component did not reload on error).
-    expect((screen.getByLabelText("Address 1") as HTMLInputElement).value).toBe("work@proton.me");
-    expect((screen.getByLabelText("Address 2") as HTMLInputElement).value).toBe("work@proton.me");
+    expect((within(dialog).getByLabelText("Address 1") as HTMLInputElement).value).toBe("work@proton.me");
+    expect((within(dialog).getByLabelText("Address 2") as HTMLInputElement).value).toBe("work@proton.me");
   });
 
   it("saves Reply-To for each sending address and a single default", async () => {
     vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue(options);
     const save = vi.spyOn(mailClient, "setImapIdentities").mockResolvedValue(options.identities);
-    renderPanel();
+    renderAddressesDialog();
     const replyTo = await screen.findByLabelText("Reply-To (optional)");
     fireEvent.change(replyTo, { target: { value: "help@example.com" } });
     fireEvent.change(screen.getByLabelText("Reply-To 1"), { target: { value: "team@example.com" } });
@@ -116,6 +128,37 @@ describe("ImapSendingSettings", () => {
       { address: "me@proton.me", displayName: null, replyTo: "help@example.com" },
       { address: "work@proton.me", displayName: "Work", replyTo: "team@example.com", isDefault: true },
     ]);
+  });
+
+  it("keeps the dialog open while saving and surfaces a load failure", async () => {
+    let finish!: (value: ImapSendingOptions["identities"]) => void;
+    vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue(options);
+    vi.spyOn(mailClient, "setImapIdentities").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const onClose = vi.fn();
+    renderAddressesDialog(onClose);
+    const replyTo = await screen.findByLabelText("Reply-To (optional)");
+    fireEvent.change(replyTo, { target: { value: "help@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save addresses" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => finish(options.identities));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+
+    cleanup();
+    vi.spyOn(mailClient, "getImapSendingOptions").mockRejectedValue(new Error("not an IMAP account"));
+    renderAddressesDialog();
+    expect(await screen.findByRole("alert")).toHaveTextContent("not an IMAP account");
+  });
+});
+
+describe("ImapSendingSettings", () => {
+  it("renders only sent-message settings inline without sending address inputs", async () => {
+    vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue(options);
+    renderPanel();
+    await screen.findByRole("group", { name: "Save sent messages" });
+    expect(screen.queryByLabelText("Reply-To (optional)")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add address/ })).not.toBeInTheDocument();
   });
 
   it("toggles the server-saves-sent override", async () => {
@@ -128,40 +171,6 @@ describe("ImapSendingSettings", () => {
     expect(set).toHaveBeenCalledWith("me@proton.me", true);
     expect(manual).toBeChecked();
     expect(within(fieldset).getByRole("status")).toHaveTextContent("Sent settings saved.");
-  });
-
-  it("preserves a draft through changes to Sent mode and a scheduled re-check", async () => {
-    vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue({ ...options, sentCopyDetected: false });
-    vi.spyOn(mailClient, "setImapServerSavesSent").mockResolvedValue();
-    vi.spyOn(mailClient, "resetImapSentCopyDetection").mockResolvedValue();
-    const save = vi.spyOn(mailClient, "setImapIdentities").mockResolvedValue(options.identities);
-    renderPanel();
-
-    const replyTo = await screen.findByLabelText("Reply-To (optional)");
-    fireEvent.change(replyTo, { target: { value: "help@example.com" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add address" }));
-    const alias = screen.getByLabelText("Address 2");
-    fireEvent.change(alias, { target: { value: "alias@example.com" } });
-    const defaultFrom = screen.getByRole("combobox", { name: "Default From address" });
-    fireEvent.change(defaultFrom, { target: { value: "1" } });
-
-    await act(async () => { fireEvent.click(screen.getByRole("radio", { name: "Use the server’s copy" })); });
-    expect(screen.getByRole("radio", { name: "Use the server’s copy" })).toBeChecked();
-    await act(async () => { fireEvent.click(screen.getByRole("radio", { name: "Automatic (recommended)" })); });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Re-check on next send" })); });
-    expect(within(screen.getByRole("group", { name: "Save sent messages" })).getByRole("status"))
-      .toHaveTextContent("ThreeStrands will check on your next send.");
-
-    expect(replyTo).toHaveValue("help@example.com");
-    expect(alias).toHaveValue("alias@example.com");
-    expect(defaultFrom).toHaveDisplayValue("alias@example.com");
-    expect(save).not.toHaveBeenCalled();
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save addresses" })); });
-    expect(save).toHaveBeenCalledWith("me@proton.me", [
-      { address: "me@proton.me", displayName: null, replyTo: "help@example.com" },
-      { address: "work@proton.me", displayName: "Work" },
-      { address: "alias@example.com", displayName: null, isDefault: true },
-    ]);
   });
 
   it("shows errors from a Sent action in the Sent section", async () => {

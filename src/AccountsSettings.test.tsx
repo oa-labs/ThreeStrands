@@ -279,13 +279,42 @@ describe("mail account settings", () => {
     expect(workMenu).toHaveFocus();
   });
 
-  it("offers Signature Defaults for IMAP without the Gmail actions", () => {
+  it("offers Signature Defaults and Sending Addresses for IMAP without the Gmail actions", async () => {
+    const sendingOptions = vi.spyOn(mailClient, "getImapSendingOptions").mockResolvedValue({
+      identities: [{ address: account.email }],
+      serverSavesSentOverride: false,
+      sentCopyDetected: null,
+    });
     const onSignatureDefaults = vi.fn();
-    renderAccounts(vi.fn(), { accounts: [{ ...account, provider: "imap" }], onSignatureDefaults });
-    fireEvent.click(screen.getByRole("button", { name: `More actions for ${account.email}` }));
-    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("menuitem", { name: "Signature Defaults…" }));
-    expect(onSignatureDefaults).toHaveBeenCalledWith(account.email);
+    try {
+      await act(async () => {
+        renderAccounts(vi.fn(), { accounts: [{ ...account, provider: "imap" }], onSignatureDefaults });
+      });
+      expect(screen.queryByRole("dialog", { name: "Sending Addresses" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Sending addresses" })).not.toBeInTheDocument();
+
+      const menu = screen.getByRole("button", { name: `More actions for ${account.email}` });
+      fireEvent.click(menu);
+      expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+        "Signature Defaults…",
+        "Sending Addresses…",
+      ]);
+      fireEvent.click(screen.getByRole("menuitem", { name: "Signature Defaults…" }));
+      expect(onSignatureDefaults).toHaveBeenCalledWith(account.email);
+      expect(menu).toHaveFocus();
+
+      fireEvent.click(menu);
+      await act(async () => {
+        fireEvent.click(screen.getByRole("menuitem", { name: "Sending Addresses…" }));
+      });
+      const dialog = screen.getByRole("dialog", { name: "Sending Addresses" });
+      expect(within(dialog).getByText(account.email)).toBeVisible();
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(dialog).not.toBeInTheDocument();
+      expect(menu).toHaveFocus();
+    } finally {
+      sendingOptions.mockRestore();
+    }
   });
 
   it("saves only the latest color after continuous picker changes", async () => {

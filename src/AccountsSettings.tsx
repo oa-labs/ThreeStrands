@@ -16,7 +16,7 @@ import { ImapAccountSetup } from "./ImapAccountSetup";
 import { GmailSendingSettings } from "./GmailSendingSettings";
 import { MoreActionsMenu, type MoreAction } from "./MoreActionsMenu";
 import { SwitchGmailToImap } from "./SwitchGmailToImap";
-import { ImapSendingSettings } from "./ImapSendingSettings";
+import { ImapSendingAddressesDialog, ImapSendingSettings } from "./ImapSendingSettings";
 import { ImapServerSettings } from "./ImapServerSettings";
 import { ImapLabelEditorSettings } from "./ImapLabelEditorSettings";
 import { replicatedSyncEnabled } from "./replicatedSync";
@@ -68,7 +68,7 @@ export function AccountsSettings({
   const restoreAddFocus = useRef(false);
   const [imapSaved, setImapSaved] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
-  const [aliasesEmail, setAliasesEmail] = useState<string | null>(null);
+  const [sendingAddressesEmail, setSendingAddressesEmail] = useState<string | null>(null);
   const [editingDeviceEmail, setEditingDeviceEmail] = useState<string | null>(null);
   const [syncEnabled, setSyncEnabled] = useState(false);
   const [switchingEmail, setSwitchingEmail] = useState<string | null>(null);
@@ -194,9 +194,12 @@ export function AccountsSettings({
             if (onSignatureDefaults) {
               actions.push({ label: "Signature Defaults…", onSelect: () => onSignatureDefaults(account.email) });
             }
+            if (account.provider === "imap") {
+              actions.push({ label: "Sending Addresses…", onSelect: () => setSendingAddressesEmail(account.email) });
+            }
             if (account.provider === "gmail") {
               actions.push(
-                { label: "Aliases…", onSelect: () => setAliasesEmail(account.email) },
+                { label: "Aliases…", onSelect: () => setSendingAddressesEmail(account.email) },
                 {
                   label: "Switch to Gmail via IMAP…",
                   disabled: busyEmail !== null || switchingEmail !== null,
@@ -321,8 +324,11 @@ export function AccountsSettings({
                 </button>
               </div>
               {account.provider === "imap" ? <ImapSendingSettings account={account.email} /> : null}
-              {account.provider === "gmail" && aliasesEmail === account.email && (
-                <GmailSendingSettings account={account.email} onClose={() => setAliasesEmail(null)} />
+              {account.provider === "imap" && sendingAddressesEmail === account.email && (
+                <ImapSendingAddressesDialog account={account.email} onClose={() => setSendingAddressesEmail(null)} />
+              )}
+              {account.provider === "gmail" && sendingAddressesEmail === account.email && (
+                <GmailSendingSettings account={account.email} onClose={() => setSendingAddressesEmail(null)} />
               )}
               {account.provider === "imap" ? (
                 <ImapServerSettings

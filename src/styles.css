@@ -2931,7 +2931,12 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .imap-identity-signin { display: flex; flex-direction: column; gap: var(--space-0-5); }
 .imap-identity-signin-address { color: var(--text); font-size: var(--text-body); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
 .imap-identity-reply-to { max-width: 420px; }
+.sending-address-details .imap-identity-reply-to { max-width: none; }
 .imap-identity-list { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.imap-identity-row { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-2-5); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.imap-identity-fields { display: grid; flex: 1; min-width: 0; gap: var(--space-1-5); }
+.imap-identity-fields label { color: var(--muted); font-size: var(--text-meta); }
+.imap-identity-fields input { box-sizing: border-box; width: 100%; min-width: 0; height: var(--control-h); padding: var(--space-2) var(--space-2-5); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background-color: var(--input); font: inherit; font-size: var(--text-body); }
 .imap-sending-actions, .imap-server-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .imap-sent-copy { display: flex; flex-direction: column; gap: var(--space-2-5); min-width: 0; margin: 0; padding: 0; border: 0; }
 .imap-sent-copy legend { margin-bottom: var(--space-3); padding: 0; color: var(--text); font-size: var(--text-body); font-weight: var(--weight-semibold); }
