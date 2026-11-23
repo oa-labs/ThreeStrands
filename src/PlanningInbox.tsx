@@ -8,11 +8,11 @@ import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import type { PlanDragSource } from "./TodayPlan";
 
 export type InboxCategory = "tasks" | "emails" | "contacts";
-export type InboxFilter = "all" | InboxCategory;
+export type InboxFilter = "all" | "commitments" | InboxCategory;
 export const INBOX_FILTER_KEY = "threestrands.today.inboxFilter";
 export const INBOX_PAGE_SIZE = 8;
 const FILTERS: { id: InboxFilter; label: string }[] = [
-  { id: "all", label: "All" }, { id: "tasks", label: "Tasks" }, { id: "emails", label: "Emails" }, { id: "contacts", label: "Contacts" },
+  { id: "all", label: "All" }, { id: "tasks", label: "Tasks" }, { id: "emails", label: "Emails" }, { id: "contacts", label: "Contacts" }, { id: "commitments", label: "Commitments" },
 ];
 
 export type InboxEntry = {
@@ -48,7 +48,7 @@ export function interleaveInboxCategories(entries: InboxEntry[]): InboxEntry[] {
 }
 
 /** Carry the previous source choice into the new, smaller set of filters. */
-function initialFilter(): InboxFilter {
+export function readInboxFilter(): InboxFilter {
   const previous = readLocalStorage("threestrands.today.planSource", (raw) => raw, null);
   const fallback: InboxFilter = previous === "starred-mail" || previous === "promises" ? "emails"
     : previous === "keep-in-touch" ? "contacts"
@@ -56,8 +56,10 @@ function initialFilter(): InboxFilter {
   return readLocalStorage(INBOX_FILTER_KEY, (raw) => FILTERS.some((filter) => filter.id === raw) ? raw as InboxFilter : fallback, fallback);
 }
 
-export function PlanningInbox({ entries, scope, onAddTask, status, unavailable = () => false, loading, hasMore, onLoadMore, drag }: {
+export function PlanningInbox({ entries, commitments = [], onFilterChange, scope, onAddTask, status, unavailable = () => false, loading, hasMore, onLoadMore, drag }: {
   entries: InboxEntry[];
+  commitments?: InboxEntry[];
+  onFilterChange?(filter: InboxFilter): void;
   scope?: string;
   /** Creates a task from a typed title. Present only when tasks can be created. Resolve to keep the input for the next task; reject to show the error. */
   onAddTask?(title: string): Promise<void> | void;
@@ -74,7 +76,7 @@ export function PlanningInbox({ entries, scope, onAddTask, status, unavailable =
     enabled: boolean;
   };
 }) {
-  const [filter, setFilter] = useLocalStorageState<InboxFilter>(INBOX_FILTER_KEY, initialFilter);
+  const [filter, setFilter] = useLocalStorageState<InboxFilter>(INBOX_FILTER_KEY, readInboxFilter);
   const [limit, setLimit] = useState(INBOX_PAGE_SIZE);
   const tabs = useRef<HTMLDivElement>(null);
   const id = useId();
@@ -84,10 +86,11 @@ export function PlanningInbox({ entries, scope, onAddTask, status, unavailable =
   const [actionError, setActionError] = useState<string | null>(null);
   const restore = useRef<{ id: string; index: number; trigger: HTMLButtonElement } | null>(null);
   const completionFocus = useRef<{ key: string; trigger: HTMLInputElement } | null>(null);
-  const items = entries.filter((entry) => filter === "all" || entry.category === filter);
+  const items = filter === "commitments" ? commitments : entries.filter((entry) => filter === "all" || entry.category === filter);
   const busy = loading(filter);
   const more = hasMore(filter);
-  const noun = items.length === 1 ? "item" : "items";
+  const singular = items.length === 1;
+  const countLabel = filter === "commitments" ? (singular ? "commitment" : "commitments") : (singular ? "unscheduled item" : "unscheduled items");
   const count = items.length <= limit + 1 ? items.length : limit;
   const [draftTitle, setDraftTitle] = useState("");
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -133,7 +136,7 @@ export function PlanningInbox({ entries, scope, onAddTask, status, unavailable =
     finally { pending.current.delete(entry.id); setBusyEntries(new Set(pending.current)); }
   };
   const select = (next: InboxFilter, focus = false) => {
-    setFilter(next); setLimit(INBOX_PAGE_SIZE);
+    setFilter(next); setLimit(INBOX_PAGE_SIZE); onFilterChange?.(next);
     if (focus) tabs.current?.querySelector<HTMLButtonElement>(`[data-filter="${next}"]`)?.focus();
   };
   const move = (event: KeyboardEvent) => {
@@ -146,7 +149,7 @@ export function PlanningInbox({ entries, scope, onAddTask, status, unavailable =
   };
   return <section aria-label="Planning Inbox" className="planning-inbox">
     <header className="today-panel-heading">
-      <h2><Inbox size={ICON_SIZE.md} aria-hidden="true" />Planning Inbox <span className="context-count" aria-label={`${items.length}${more ? " or more" : ""} unscheduled ${noun}`}>{items.length}{more ? "+" : ""}</span></h2>
+      <h2><Inbox size={ICON_SIZE.md} aria-hidden="true" />Planning Inbox <span className="context-count" aria-label={`${items.length}${more ? " or more" : ""} ${countLabel}`}>{items.length}{more ? "+" : ""}</span></h2>
       {scope && filter !== "contacts" ? <span className="today-source-scope">Mail · {scope}</span> : null}
     </header>
     <div ref={tabs} className="planning-inbox-tabs" role="tablist" aria-label="Planning Inbox Filters" onKeyDown={move}>
@@ -162,14 +165,21 @@ export function PlanningInbox({ entries, scope, onAddTask, status, unavailable =
     }}>
       {status(filter)}
       {actionError ? <p className="form-error" role="alert">{actionError}</p> : null}
-      {!items.length && !unavailable(filter) && (busy || !more) ? <p className="context-status">{busy ? "Reading planning items…" : filter === "contacts" ? "You're up to date with all keep in touch contact goals" : "Nothing to schedule here."}</p> : null}
+      {!items.length && !unavailable(filter) && (busy || !more) ? <p className="context-status">{busy ? "Reading planning items…" : filter === "contacts" ? "You're up to date with all keep in touch contact goals" : filter === "commitments" ? "No commitments to review." : "Nothing to schedule here."}</p> : null}
       {items.slice(0, count).map((entry, index) => <ContextRow {...entry.row} key={entry.id} as="article" title={entry.title} rowKey={rowKey(entry)}
         className={[entry.row.className, "today-inbox-card", entry.source && drag.enabled ? "today-inbox-card-draggable" : "", drag.draggingId === entry.id ? "today-inbox-card-dragging" : ""].filter(Boolean).join(" ")}
         onActivate={entry.row.onActivate ? () => { if (!drag.clickSuppressed()) entry.row.onActivate?.(); } : undefined}
         onPointerDown={entry.source ? (event) => { if (drag.enabled && !entry.busy && !pending.current.has(entry.id) && entry.source) drag.startDrag(entry.source, event); } : undefined}
         actions={[
           ...(entry.schedule ? [<button key="schedule" type="button" className="btn-icon btn-icon-sm" aria-label={`Schedule: ${entry.title}`} title="Schedule the next free half hour" disabled={entry.busy || busyEntries.has(entry.id)} onClick={(event) => void schedule(entry, index, event.currentTarget)}><CalendarClock size={ICON_SIZE.sm} /></button>] : []),
-          ...(entry.actions.length ? [<MoreActionsMenu key="more" compact label={`Actions for ${entry.title}`} actions={entry.actions.map((action) => ({ ...action, disabled: entry.busy || busyEntries.has(entry.id) || action.disabled }))} />] : []),
+          ...(entry.actions.length ? [<MoreActionsMenu key="more" compact label={`Actions for ${entry.title}`} actions={entry.actions.map((action) => ({
+            ...action, disabled: entry.busy || busyEntries.has(entry.id) || action.disabled,
+            onSelect: () => {
+              const trigger = document.activeElement;
+              if (trigger instanceof HTMLButtonElement) restore.current = { id: entry.id, index, trigger };
+              action.onSelect();
+            },
+          }))} />] : []),
         ]} />)}
       {count < items.length || more ? <button type="button" className="btn-link context-link-button" disabled={busy} onClick={() => {
         if (count < items.length) setLimit((value) => value + INBOX_PAGE_SIZE);

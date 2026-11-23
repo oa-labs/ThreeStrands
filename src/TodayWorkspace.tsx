@@ -11,7 +11,7 @@ import { isWorkingLocation } from "./WorkingLocation";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { ContextSection } from "./ContextSections";
 import { mailClient } from "./data/client";
-import type { Account, CalendarAccount, CalendarOption, ContactProfile, DailyPlanItem, OpenPromise, PlanCandidate as SourceCandidate, PlanSourceKind, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
+import type { Account, CalendarAccount, CalendarOption, CommitmentReply, ContactProfile, DailyPlanItem, OpenPromise, PlanCandidate as SourceCandidate, PlanSourceKind, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { agendaEventsFor, formatClockTime, isDeclined, isPastEvent } from "./agendaEvents";
 import { addDays, dateInputValue, eventDate, formatEventDate, isSameDay, startOfLocalDay } from "./calendarTime";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -45,7 +45,7 @@ import { activeDayChoice, clearDayChoice, localDay, readDayChoice, writeDayChoic
 import { useTaskBlockDrag } from "./useTaskBlockDrag";
 import { TaskDragChip } from "./TaskDragChip";
 import { isFinished, itemBlock, carriedLabel, linkKey, type PlanCandidate, type PlanDragSource } from "./TodayPlan";
-import { PlanningInbox, uniqueInboxEntries, interleaveInboxCategories, type InboxCategory, type InboxEntry, type InboxFilter } from "./PlanningInbox";
+import { PlanningInbox, readInboxFilter, uniqueInboxEntries, interleaveInboxCategories, type InboxCategory, type InboxEntry, type InboxFilter } from "./PlanningInbox";
 import { TodayDayView } from "./TodayDayView";
 import { EventNoteAction } from "./NoteEntityContext";
 import { refreshSyncedData } from "./refreshSyncedData";
@@ -74,6 +74,10 @@ export type TodayWorkspaceProps = {
   /** Connected calendar accounts, for where a booked block can go. */
   calendarAccounts?: CalendarAccount[];
   onOpenThread(threadId: string): void;
+  onOpenMessage?(threadId: string, messageId: string): void;
+  onDraftCommitmentReply?(reply: CommitmentReply): void;
+  onDraftCommitmentFollowUp?(task: ThreadTask): void;
+  cachedCommitmentAi?: boolean;
   onOpenEvent(event: ScheduleEvent): void;
   /** Add Note for an event: its line in that day's note. */
   onAddNote?(event: ScheduleEvent): void;
@@ -141,7 +145,8 @@ function ScheduledToday({ now, day, onChangeDay, ...props }: TodayWorkspaceProps
 function TodayLayout({
   accountId, mailAccountCount = 1, refreshKey, taskRefreshKey, calendars, calendarAccounts = [], now, schedule,
   displaySchedule = schedule, scheduleDay, onChangeDay,
-  onOpenThread, onOpenEvent, onAddNote, onEditTask, onTasksChanged, onOpenCalendar, onEventCreated, onOpenContact,
+  onOpenThread, onOpenMessage, onDraftCommitmentReply, onDraftCommitmentFollowUp, cachedCommitmentAi = false,
+  onOpenEvent, onAddNote, onEditTask, onTasksChanged, onOpenCalendar, onEventCreated, onOpenContact,
   onOpenNote, onOpenEntity, onNotice, workingHours = null, onCreateTask, mailAccounts = [],
 }: TodayWorkspaceProps & {
   now: Date;
@@ -192,6 +197,8 @@ function TodayLayout({
   /** Every completed task with a completion time; the Done card keeps the ones finished on the shown day. */
   const [completedTasks, setCompletedTasks] = useState<ThreadTask[]>([]);
   const [dismissed, setDismissed] = useState(readDismissedPromises);
+  const [inboxFilter, setInboxFilter] = useState(readInboxFilter);
+  const [replyCandidates, setReplyCandidates] = useState<{ accountId: string | null; cachedAi: boolean; rows: CommitmentReply[]; error: string | null } | null>(null);
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
     setLoadingSources(true);
@@ -563,6 +570,16 @@ function TodayLayout({
     };
   };
   const inboxRefreshKey = `${refreshKey}:${taskRefreshKey}:${plan?.revision ?? ""}:${inboxRevision}`;
+  useEffect(() => {
+    if (inboxFilter !== "commitments") return;
+    let live = true;
+    mailClient.listCommitmentReplies(accountId, cachedCommitmentAi).then(
+      (rows) => { if (live) setReplyCandidates({ accountId, cachedAi: cachedCommitmentAi, rows, error: null }); },
+      (reason: unknown) => { if (live) setReplyCandidates({ accountId, cachedAi: cachedCommitmentAi, rows: [], error: errorMessage(reason) }); },
+    );
+    return () => { live = false; };
+  }, [inboxFilter, accountId, cachedCommitmentAi, inboxRefreshKey]);
+  const currentReplies = replyCandidates?.accountId === accountId && replyCandidates.cachedAi === cachedCommitmentAi ? replyCandidates : null;
   const starredPage = usePlanSourcePage(planDate, "starredMail", accountId, inboxRefreshKey, true);
   const notesPage = usePlanSourcePage(planDate, "notes", null, inboxRefreshKey, true);
   const shownDate = dateInputValue(shownDay);
@@ -732,6 +749,63 @@ function TodayLayout({
     ...reconnect.map((profile) => candidateEntry(contactCandidate(profile), "contacts")),
   ];
   const inboxEntries = uniqueInboxEntries([...plannedEntries, ...interleaveInboxCategories(candidates.filter((entry): entry is InboxEntry => entry !== null))]);
+  const showSource = (threadId: string, messageId: string) => {
+    if (onOpenMessage) onOpenMessage(threadId, messageId);
+    else onOpenThread(threadId);
+  };
+  const dismissCommitment = (key: string) => {
+    setDismissed(dismissPromise(key));
+    notice({ message: "Commitment dismissed", undo: () => setDismissed(dismissPromise(key, false)) });
+  };
+  const commitmentEntries: InboxEntry[] = [];
+  if (inboxFilter === "commitments") {
+    const mailTasks = tasks.filter((task) => task.threadId && (accountId === null || task.accountId === accountId));
+    for (const task of mailTasks) {
+      const waiting = task.kind === "waiting_for";
+      const followUp = waiting || task.kind === "follow_up";
+      const due = task.dueValue && (task.dueKind === "date" ? task.dueValue <= planDate : task.dueKind === "datetime" && Date.parse(task.dueValue) <= now.getTime());
+      if (followUp ? !due : !task.sourceMessageId || !task.evidenceText) continue;
+      const candidate = taskCandidate(task);
+      const actions: InboxEntry["actions"] = [];
+      if (followUp && onDraftCommitmentFollowUp) actions.push({ label: "Draft Follow-up", onSelect: () => onDraftCommitmentFollowUp(task) });
+      if (task.sourceMessageId) actions.push({ label: "Open Source Message", onSelect: () => showSource(task.threadId!, task.sourceMessageId!) });
+      else actions.push({ label: "Open Conversation", onSelect: () => onOpenThread(task.threadId!) });
+      const entry = candidateEntry(candidate, "tasks", actions);
+      if (entry) commitmentEntries.push({
+        ...entry, row: { ...entry.row, detail: [waiting ? "Waiting on a reply · Check-in due" : followUp ? "Follow-up due" : "You’re tracking this", entry.row.detail].filter(Boolean).join(" · ") },
+      });
+    }
+    for (const promise of openPromises.filter((item) => (accountId === null || item.thread.accountId === accountId) && !mailTasks.some((task) => task.threadId === item.thread.id))) {
+      const candidate = promiseCandidate(promise);
+      candidate.row = {
+        ...candidate.row,
+        detail: [`You promised this to ${promiseRecipients(promise)}`, accountId === null ? promise.thread.accountId : null].filter(Boolean).join(" · "),
+        onActivate: () => showSource(promise.thread.id, promise.messageId),
+      };
+      const entry = candidateEntry(candidate, "emails", [
+        { label: "Make a Task", onSelect: () => void trackPromise(promise) },
+        { label: "Dismiss", onSelect: () => dismissCommitment(promise.messageId) },
+      ]);
+      if (entry) commitmentEntries.push(entry);
+    }
+    const promisedThreads = new Set(openPromises.map((promise) => promise.thread.id));
+    for (const reply of currentReplies?.rows ?? []) {
+      const key = `reply:${reply.messageId}`;
+      if (dismissed.includes(key) || promisedThreads.has(reply.threadId) || mailTasks.some((task) => task.threadId === reply.threadId)) continue;
+      const sender = parseAddress(reply.sender);
+      const title = reply.suggestedTitle || `Reply to ${sender.name || sender.email} about ${reply.subject || "(no subject)"}`;
+      const open = () => showSource(reply.threadId, reply.messageId);
+      commitmentEntries.push({
+        id: key, identities: [key], category: "emails", title, source: null,
+        row: { icon: <Mail size={ICON_SIZE.sm} />, wrapTitle: true, date: formatArrival(reply.sentAt, now),
+          detail: [`Possible reply · “${reply.excerpt}”`, accountId === null ? reply.accountId : null].filter(Boolean).join(" · "), onActivate: open },
+        actions: [
+          { label: "Draft Reply", onSelect: () => onDraftCommitmentReply ? onDraftCommitmentReply(reply) : open() },
+          { label: "Dismiss", onSelect: () => dismissCommitment(key) },
+        ],
+      });
+    }
+  }
   const finishedOnShownDay = (at: string | null | undefined) => Boolean(at) && dateInputValue(new Date(at as string)) === shownDate;
   const doneEntries: DoneEntry[] = doneShown ? uniqueDoneEntries([
     ...completedTasks.filter((task) => finishedOnShownDay(task.completedAt) && (accountId === null || task.accountId === accountId)).map((task): DoneEntry => ({
@@ -769,17 +843,18 @@ function TodayLayout({
   ]) : [];
   const doneErrors = { tasks: sourceErrors.tasks, noteTasks: completedNotes.error, ...doneOnDay.errors };
   const doneTitle = showingToday ? "Done Today" : "Done";
-  const inboxPages = (filter: InboxFilter) => filter === "contacts" ? [] : filter === "emails" ? [starredPage] : filter === "tasks" ? [notesPage, starredPage] : [notesPage, starredPage];
-  const inboxUnavailable = (filter: InboxFilter) => Boolean(planError
-    || ((filter === "all" || filter === "tasks") && sourceErrors.tasks)
-    || ((filter === "all" || filter === "emails") && sourceErrors.promises)
+  const inboxPages = (filter: InboxFilter) => (filter === "contacts" || filter === "commitments") ? [] : filter === "emails" ? [starredPage] : filter === "tasks" ? [notesPage, starredPage] : [notesPage, starredPage];
+  const inboxUnavailable = (filter: InboxFilter) => Boolean((filter === "commitments" && currentReplies?.error) || planError
+    || ((filter === "all" || filter === "tasks" || filter === "commitments") && sourceErrors.tasks)
+    || ((filter === "all" || filter === "emails" || filter === "commitments") && sourceErrors.promises)
     || ((filter === "all" || filter === "contacts") && sourceErrors.contacts)
     || inboxPages(filter).some((page) => page.error));
   const inboxStatus = (filter: InboxFilter) => <>
     {planError ? <p className="form-error" role="alert">{planError}</p> : null}
-    {(filter === "all" || filter === "tasks") && sourceErrors.tasks ? <p className="form-error" role="alert">Tasks: {sourceErrors.tasks}</p> : null}
-    {(filter === "all" || filter === "emails") && sourceErrors.promises ? <p className="form-error" role="alert">Promises: {sourceErrors.promises}</p> : null}
+    {(filter === "all" || filter === "tasks" || filter === "commitments") && sourceErrors.tasks ? <p className="form-error" role="alert">Tasks: {sourceErrors.tasks}</p> : null}
+    {(filter === "all" || filter === "emails" || filter === "commitments") && sourceErrors.promises ? <p className="form-error" role="alert">Promises: {sourceErrors.promises}</p> : null}
     {(filter === "all" || filter === "contacts") && sourceErrors.contacts ? <p className="form-error" role="alert">Contacts: {sourceErrors.contacts}</p> : null}
+    {filter === "commitments" && currentReplies?.error ? <p className="form-error" role="alert">Reply suggestions: {currentReplies.error}</p> : null}
     {inboxPages(filter).map((page, index) => page.error ? <p key={index} className="form-error" role="alert">{page.error}</p> : null)}
   </>;
 
@@ -821,8 +896,8 @@ function TodayLayout({
           if (!defaultTaskAccount) { setAddingTask(title); return; }
           await createStandaloneTask({ title, kind: "action", dueKind: "none", dueValue: null }, defaultTaskAccount);
           setAnnouncement(`Task added: ${title}`);
-        } : undefined} entries={inboxEntries} scope={scope} status={inboxStatus} unavailable={inboxUnavailable}
-          loading={(filter) => loadingSources || inboxPages(filter).some((page) => page.loading)}
+        } : undefined} entries={inboxEntries} commitments={commitmentEntries} onFilterChange={setInboxFilter} scope={scope} status={inboxStatus} unavailable={inboxUnavailable}
+          loading={(filter) => loadingSources || (filter === "commitments" && currentReplies === null) || inboxPages(filter).some((page) => page.loading)}
           hasMore={(filter) => inboxPages(filter).some((page) => Boolean(page.next))}
           onLoadMore={(filter) => { for (const page of inboxPages(filter)) if (page.next) void page.loadMore(); }} drag={{ startDrag: drag.startDrag, clickSuppressed: drag.clickSuppressed, draggingId: drag.draggingId, enabled: canBookShownDay }} />
       </div>

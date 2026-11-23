@@ -1,3 +1,4 @@
+import { collapseQuotedHistoryText } from "../quotedHistory";
 import { createDemoAgents } from "./demoAgents";
 import { previewScheduleChoices } from "../scheduleTimes";
 import { isHolidayCalendar } from "../calendarAvailability";
@@ -572,6 +573,20 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       return { threads: items, total: unread.length };
     },
     /** Promise detection runs natively over stored bodies, so the demo lists only the dataset's fixtures. */
+    async listCommitmentReplies(accountId) {
+      const normalize = (address: string) => parseAddress(address).email.toLowerCase();
+      const starred = visibleWhere(accountId ?? undefined, (thread) => thread.starred && !thread.trashed && !thread.labels.includes("SPAM"));
+      return starred.slice(0, 32).flatMap((thread) => {
+        const message = messagesFor(thread).at(-1);
+        if (!message || message.sentByAccount || normalize(message.sender) === thread.accountId.toLowerCase()
+          || message.recipients.length !== 1 || normalize(message.recipients[0]) !== thread.accountId.toLowerCase()
+          || message.unsubscribe || message.attachments.some((part) => part.mimeType === "text/calendar" || /\.ics$/i.test(part.filename))) return [];
+        const text = collapseQuotedHistoryText(message.bodyText) ?? message.bodyText;
+        const excerpt = text.match(/(?:^|[.!?\n])\s*((?:please (?:reply|respond|confirm|let me know|get back to me)|(?:can|could|would) you (?:confirm|tell me|let me know|reply))\b[^.!?\n]*[.!?]?)/i)?.[1];
+        return excerpt ? [{ threadId: thread.id, accountId: thread.accountId, messageId: message.id, sender: message.sender,
+          sentAt: message.sentAt, subject: thread.subject, excerpt: excerpt.slice(0, 160), suggestedTitle: null }] : [];
+      });
+    },
     async listOpenPromises(accountId) {
       return (seed.openPromises ?? []).flatMap(({ threadId, excerpt }): OpenPromise[] => {
         const [thread] = visibleWhere(accountId, (candidate) => candidate.id === threadId && !candidate.trashed);

@@ -551,6 +551,20 @@ pub struct TodayMailPage {
 
 /// A promise the user made in their own sent mail that nothing they have
 /// sent since appears to keep; see `Database::list_open_promises`.
+/// A possible reply to the latest message in a starred conversation.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitmentReply {
+    pub thread_id: String,
+    pub account_id: String,
+    pub message_id: String,
+    pub sender: String,
+    pub sent_at: String,
+    pub subject: String,
+    pub excerpt: String,
+    pub suggested_title: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenPromise {

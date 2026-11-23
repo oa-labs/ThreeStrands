@@ -52,7 +52,7 @@ describe("PlanningInbox", () => {
 
   it("shows All as the union of the three categories, with a count for the selected filter", () => {
     render(<PlanningInbox {...defaults} entries={[entry("Task"), entry("Email", "emails"), entry("Contact", "contacts")]} />);
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["All", "Tasks", "Emails", "Contacts"]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["All", "Tasks", "Emails", "Contacts", "Commitments"]);
     expect(screen.getAllByRole("article")).toHaveLength(3);
     expect(screen.getByLabelText("3 unscheduled items")).toHaveTextContent("3");
     for (const [filter, title] of [["Tasks", "Task"], ["Emails", "Email"], ["Contacts", "Contact"]]) {
@@ -64,6 +64,16 @@ describe("PlanningInbox", () => {
     }
     expect(screen.queryByText(/^Meanwhile/)).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("views commitments in the existing inbox and keeps speculative replies out of All", () => {
+    const onFilterChange = vi.fn();
+    render(<PlanningInbox {...defaults} entries={[entry("Track order")]} commitments={[entry("Reply about the order", "emails")]} onFilterChange={onFilterChange} />);
+    expect(screen.queryByText("Reply about the order")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Commitments" }));
+    expect(within(screen.getByRole("tabpanel", { name: "Commitments" })).getByText("Reply about the order")).toBeInTheDocument();
+    expect(screen.getByLabelText("1 commitment")).toBeInTheDocument();
+    expect(onFilterChange).toHaveBeenCalledWith("commitments");
   });
 
   it("deduplicates planned tasks, starred task sources, and contacts by durable identity", () => {
@@ -122,11 +132,11 @@ describe("PlanningInbox", () => {
     render(<PlanningInbox {...defaults} entries={[]} />);
     expect(before).toHaveFocus();
     const all = screen.getByRole("tab", { name: "All" }); all.focus();
-    fireEvent.keyDown(all, { key: "ArrowLeft" }); expect(screen.getByRole("tab", { name: "Contacts" })).toHaveFocus();
+    fireEvent.keyDown(all, { key: "ArrowLeft" }); expect(screen.getByRole("tab", { name: "Commitments" })).toHaveFocus();
     fireEvent.keyDown(document.activeElement!, { key: "Home" }); expect(all).toHaveFocus();
     fireEvent.keyDown(all, { key: "ArrowRight" }); expect(screen.getByRole("tab", { name: "Tasks" })).toHaveFocus();
-    fireEvent.keyDown(document.activeElement!, { key: "End" }); expect(screen.getByRole("tab", { name: "Contacts" })).toHaveFocus();
-    expect(localStorage.getItem(INBOX_FILTER_KEY)).toBe("contacts");
+    fireEvent.keyDown(document.activeElement!, { key: "End" }); expect(screen.getByRole("tab", { name: "Commitments" })).toHaveFocus();
+    expect(localStorage.getItem(INBOX_FILTER_KEY)).toBe("commitments");
     before.remove();
   });
 

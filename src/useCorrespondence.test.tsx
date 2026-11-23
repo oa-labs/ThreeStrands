@@ -367,6 +367,17 @@ describe("useCorrespondence", () => {
     expect(create).toHaveBeenCalledWith("new", undefined, activeAccount ?? undefined);
   });
 
+  it("opens a reply from Today through the source account even when a different mailbox is selected", async () => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    const reply = { ...draft, account: "customer@example.test", sourceId: "customer-message", mode: "reply" as const };
+    const create = vi.spyOn(mailClient, "createDraft").mockResolvedValue(reply);
+    const { result } = renderHook(() => useCorrespondence([], "work-message", "work@example.com", ...snippetArgs, "work-thread"));
+    await act(async () => { await result.current.replyFromOutside("customer-message", "customer@example.test"); });
+    expect(create).toHaveBeenCalledWith("reply", "customer-message", "customer@example.test");
+    expect(result.current.activeDraft?.sourceId).toBe("customer-message");
+  });
+
   it("reloads drafts after each pull and reopens the open draft on a version saved elsewhere", async () => {
     let onSync: () => void = () => {};
     listenMock.mockImplementation(async (event: string, handler: () => void) => { if (event === "drafts-changed") onSync = handler; return () => {}; });

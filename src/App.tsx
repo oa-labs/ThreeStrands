@@ -1947,6 +1947,32 @@ export function App() {
         calendars={calendar.calendars}
         calendarAccounts={calendar.accounts}
         onOpenThread={jumpToThread}
+        onOpenMessage={(threadId, messageId) => {
+          if (visibleDetail?.thread.id === threadId) jumpToThread(threadId);
+          showMessage(threadId, messageId);
+        }}
+        cachedCommitmentAi={aiActionFeatureEnabled}
+        onDraftCommitmentReply={(reply) => {
+          void (async () => {
+            const detail = await mailClient.getThread(reply.threadId);
+            if (detail.thread.accountId !== reply.accountId || detail.messages.at(-1)?.id !== reply.messageId) {
+              setNotice({ message: "This conversation has changed. Open it to review the latest message." });
+              return;
+            }
+            if (await correspondence.replyFromOutside(reply.messageId, reply.accountId)) setRightWorkspace(null);
+          })().catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
+        }}
+        onDraftCommitmentFollowUp={(task) => {
+          if (!task.threadId) return;
+          void (async () => {
+            const detail = await mailClient.getThread(task.threadId!);
+            const source = detail.messages.find((message) => message.id === task.sourceMessageId) ?? detail.messages.at(-1);
+            if (!source || detail.thread.accountId !== task.accountId) throw new Error("The follow-up conversation is unavailable");
+            if (await correspondence.replyFromOutside(source.id, task.accountId, "Draft a brief check-in about the outstanding reply or deliverable in this conversation.", task.kind === "follow_up" && task.repeatIntervalDays ? task.id : undefined)) {
+              setRightWorkspace(null);
+            }
+          })().catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
+        }}
         onOpenEvent={(event) => openCalendarView(eventDate(event), event)}
         onAddNote={(event) => { void openPlanningMeetingNote(event); }}
         onOpenNote={(noteId) => openNote(noteId)}
