@@ -681,7 +681,7 @@ notes' sync space.
 merges notes' files (outside Trash, today's unsaved note included) with mail
 attachments, newest first by when each was sent or added: both lists are
 read to the end of the requested page and the merged window is returned.
-Files asks for them only while it covers every account, and the query
+Files asks for them under both all-accounts and single-account scopes, and the query
 leaves them out when it names a conversation, sender, direction, the
 calendar type, or a message to put first, since only mail has those. A
 note's file carries `note` (id, title, daily date) instead of the mail
@@ -1141,8 +1141,8 @@ behavior, and keep the user-facing changelog entry current.
   or Event…**). In **Checklists and tasks**, each row converts with one
   small icon button rather than a **Convert to …** link.
 - Task scope controls include **All accounts** even with one mail account.
-  Changing the scope while in Tasks keeps Tasks open. Note tasks join the
-  all-accounts query; account-specific queries continue to exclude them.
+  Changing the scope while in Tasks keeps Tasks open. Note tasks join both
+  the all-accounts view and account-scoped views, matching Contacts.
 - Task mutations coordinate with the open editor's save owner, advancing the
   expected version only through that owner's own successful flush. Closed
   drafts, external changes, conflicts, and limit failures require resolution.

@@ -46,18 +46,18 @@ describe("Files workspace", () => {
     modal.remove();
   });
   describe("files in notes", () => {
-    it("are asked for only while Files covers every account", async () => {
+    it("are asked for under both all-accounts and single-account scopes", async () => {
       const list = vi.spyOn(mailClient, "listFiles").mockResolvedValue({ files: [], total: 0 });
       render(<FilesWorkspace accountId={null} accountIds={[report.accountId, "other@example.com"]} onOpenThread={vi.fn()} />);
       await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ includeNotes: true })));
       fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
       fireEvent.change(screen.getByRole("combobox", { name: "Account" }), { target: { value: "other@example.com" } });
-      await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.not.objectContaining({ includeNotes: true })));
+      await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ accountIds: ["other@example.com"], includeNotes: true })));
       cleanup();
       list.mockClear();
       render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
       await waitFor(() => expect(list).toHaveBeenCalled());
-      expect(list).toHaveBeenLastCalledWith(expect.not.objectContaining({ includeNotes: true }));
+      expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ accountIds: [report.accountId], includeNotes: true }));
     });
 
     it("name their note, open it, and open, save, and star the file", async () => {

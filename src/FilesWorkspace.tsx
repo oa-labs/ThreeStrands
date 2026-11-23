@@ -112,9 +112,8 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenNote
   // Date inputs name days in the user's time zone.
   // Invitations stay hidden unless asked for: by the toggle, the Calendar type, or a star.
   const excludeCalendar = !showInvitations && type !== "calendar" && !starred;
-  // Notes' files belong to no account, so they list only while Files covers every account.
-  const includeNotes = !accountId && !(scope && accountIds.includes(scope));
-  const queryKey = JSON.stringify({ accountIds: scoped, search, sender, type, direction: direction || undefined, starred, excludeCalendar: excludeCalendar || undefined, includeNotes: includeNotes || undefined, after: after ? localDayStart(after) : undefined, before: before ? localDayStart(before, 1) : undefined });
+  // Notes belong to no single account, so their files stay visible under any account scope.
+  const queryKey = JSON.stringify({ accountIds: scoped, search, sender, type, direction: direction || undefined, starred, excludeCalendar: excludeCalendar || undefined, includeNotes: true, after: after ? localDayStart(after) : undefined, before: before ? localDayStart(before, 1) : undefined });
   const lastQuery = useRef(queryKey);
   if (lastQuery.current!==queryKey) { lastQuery.current=queryKey; setLoad((current) => ({ offset: 0, count: PAGE_SIZE, attempt: current.attempt+1 })); setFiles([]); setSelected(null); }
   const lastRefresh = useRef(refreshKey);
@@ -179,13 +178,13 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenNote
     <div className="files-workspace-body">
       <div ref={main} className="files-main">
         <div className="files-toolbar">
-          <label className="files-search"><span className="sr-only">Search Files</span><input ref={searchInput} type="search" {...SEARCH_INPUT_ATTRIBUTES} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={includeNotes ? "Search filenames, senders, and notes" : "Search filenames and senders"} /></label><kbd aria-hidden="true">/</kbd>
+          <label className="files-search"><span className="sr-only">Search Files</span><input ref={searchInput} type="search" {...SEARCH_INPUT_ATTRIBUTES} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search filenames, senders, and notes" /></label><kbd aria-hidden="true">/</kbd>
           <button ref={filtersButton} type="button" className="btn" aria-expanded={filtersOpen} aria-controls="file-filter-controls" onClick={() => setFiltersOpen((value) => !value)}><SlidersHorizontal size={ICON_SIZE.sm} />Filters{filterChips.length ? <span className="context-count">{filterChips.length}</span> : null}</button>
           <details className="files-help" onKeyDown={(event) => {
             if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
           }}>
             <summary className="btn-icon" aria-label="About Files" title="About Files"><Info size={ICON_SIZE.lg} /></summary>
-            <div className="files-help-panel" role="note" aria-label="About Files"><p>Includes attachments from mail on this device, including archived conversations, and files in your notes when Files shows all accounts. Sender and direction filters show mail only. Stars stay on this device. Starring a file does not keep an offline copy.</p></div>
+            <div className="files-help-panel" role="note" aria-label="About Files"><p>Includes attachments from mail on this device, including archived conversations, and files in your notes. Sender and direction filters show mail only. Stars stay on this device. Starring a file does not keep an offline copy.</p></div>
           </details>
         </div>
         <div id="file-filter-controls" className="files-filters" role="group" aria-label="File filters" hidden={!filtersOpen} onKeyDown={(event) => {
