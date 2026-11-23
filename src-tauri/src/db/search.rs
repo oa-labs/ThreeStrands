@@ -24,7 +24,7 @@ type IndexedMessageRow = (String, String, String, Option<(Vec<String>, Vec<Strin
 /// so a thread this many days old needs twice the bm25 relevance of a fresh one
 /// to tie with it. Future dates clamp to age 0 and an unparseable or missing
 /// `last_received_at` counts as the Julian epoch (very old).
-const RECENCY_HALF_WEIGHT_DAYS: f64 = 90.0;
+const RECENCY_HALF_WEIGHT_DAYS: f64 = 270.0;
 
 /// The ORDER BY terms for MATCH queries. The constant is formatted in; it is
 /// not user input.
