@@ -63,6 +63,7 @@ const MIGRATIONS: &[Migration] = &[
     (116, to_v116),
     (117, to_v117),
     (118, to_v118),
+    (119, to_v119),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1516,6 +1517,24 @@ fn ensure_note_starred_column(tx: &rusqlite::Transaction) -> Result<(), String> 
         tx.execute_batch("ALTER TABLE notes ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;")
             .map_err(|error| error.to_string())?;
     }
+    ensure_note_exclude_from_ai_column(tx)?;
+    Ok(())
+}
+
+fn ensure_note_exclude_from_ai_column(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('notes') WHERE name='exclude_from_ai')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !exists {
+        tx.execute_batch(
+            "ALTER TABLE notes ADD COLUMN exclude_from_ai INTEGER NOT NULL DEFAULT 0;",
+        )
+        .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -1534,6 +1553,10 @@ fn to_v115(tx: &rusqlite::Transaction) -> Result<(), String> {
         );",
     )
     .map_err(error)
+}
+
+fn to_v119(tx: &rusqlite::Transaction) -> Result<(), String> {
+    ensure_note_exclude_from_ai_column(tx)
 }
 
 fn to_v118(tx: &rusqlite::Transaction) -> Result<(), String> {

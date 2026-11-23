@@ -1096,6 +1096,7 @@ export type Note = {
   updatedAt: string;
   trashed: boolean;
   starred?: boolean;
+  excludeFromAi?: boolean;
   trashedAt: string | null;
 };
 
@@ -1174,6 +1175,37 @@ export type MeetingContext = {
   /** Follow-through sections saved for this occurrence, in any note. */
   followThrough: MeetingSection<FollowThroughRecord>;
   limits: MeetingLimits;
+};
+/** Explicit user selection of sources for one AI meeting preparation request. */
+export type MeetingPrepSelection = {
+  noteIds?: string[];
+  threadIds?: string[];
+  includeInviteDescription?: boolean;
+  includeCommitments?: boolean;
+  includePromises?: boolean;
+  includeFiles?: boolean;
+};
+/** One candidate source in a meeting AI source preview manifest. */
+export type MeetingPrepSourceItem = {
+  sourceId: string;
+  kind: "event" | "note" | "conversation" | "promise" | "commitment" | "file";
+  id: string;
+  title: string;
+  detail: string | null;
+  revision: string;
+  characters: number;
+  truncated: boolean;
+  selected: boolean;
+  excludedByNoteSetting: boolean;
+};
+/** Native source preview returned before any AI request is sent. */
+export type MeetingSourcePreview = {
+  payloadRevision: string;
+  sources: MeetingPrepSourceItem[];
+  excludedNoteTitles: string[];
+  totalSelectedCharacters: number;
+  budgetCharacters: number;
+  overBudget: boolean;
 };
 /** A follow-through section saved for an occurrence (`src-tauri/src/db/meetings.rs`). */
 export type FollowThroughRecord = { noteId: string; title: string; dailyDate: string | null; revision: string; date: string | null; text: string; truncated: boolean; start: number; end: number };

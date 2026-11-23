@@ -3,7 +3,9 @@
 //! `db/meetings.rs` for what each result contains and how it is bounded.
 use tauri::State;
 
-use crate::db::meetings::{MeetingContext, MeetingReadiness};
+use crate::db::meetings::{
+    MeetingContext, MeetingPrepSelection, MeetingReadiness, MeetingSourcePreview,
+};
 use crate::note_entities::NoteReference;
 use crate::{run_database_task, AppResult, AppState};
 
@@ -16,6 +18,27 @@ pub(crate) async fn meeting_context(
     let database = state.database.clone();
     run_database_task(move || {
         database.meeting_context(&reference, mail_scope.as_deref(), chrono::Utc::now())
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn meeting_source_preview(
+    reference: NoteReference,
+    mail_scope: Option<Vec<String>>,
+    selection: Option<MeetingPrepSelection>,
+    state: State<'_, AppState>,
+) -> AppResult<MeetingSourcePreview> {
+    let database = state.database.clone();
+    run_database_task(move || {
+        database
+            .meeting_source_preview(
+                &reference,
+                mail_scope.as_deref(),
+                selection.as_ref(),
+                chrono::Utc::now(),
+            )
+            .map(|(preview, _, _)| preview)
     })
     .await
 }

@@ -745,6 +745,12 @@ fn validate_note(object: &Map<String, Value>) -> Result<(), String> {
     ) {
         return Err("starred is invalid".into());
     }
+    if !matches!(
+        object.get("excludeFromAi"),
+        None | Some(Value::Null) | Some(Value::Bool(_))
+    ) {
+        return Err("excludeFromAi is invalid".into());
+    }
     Ok(())
 }
 
@@ -1555,6 +1561,20 @@ mod note_tests {
         }
         for value in [json!("yes"), json!(1), json!({})] {
             payload["starred"] = value;
+            assert!(EntityType::Note.validate_payload(&payload).is_err());
+        }
+    }
+
+    #[test]
+    fn note_exclude_from_ai_is_optional_and_accepts_only_booleans() {
+        let mut payload = note("Text");
+        assert!(EntityType::Note.validate_payload(&payload).is_ok());
+        for value in [json!(true), json!(false), Value::Null] {
+            payload["excludeFromAi"] = value;
+            assert!(EntityType::Note.validate_payload(&payload).is_ok());
+        }
+        for value in [json!("yes"), json!(1), json!({})] {
+            payload["excludeFromAi"] = value;
             assert!(EntityType::Note.validate_payload(&payload).is_err());
         }
     }

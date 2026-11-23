@@ -849,6 +849,7 @@ fn plan_paths(
                 updated_at: updated,
                 trashed: false,
                 starred: value(&parsed, "starred") == Some("true"),
+                exclude_from_ai: value(&parsed, "exclude_from_ai") == Some("true"),
                 trashed_at: None,
                 authored_title: None,
             },

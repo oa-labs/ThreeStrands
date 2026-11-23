@@ -89,3 +89,17 @@ pub const MAX_FOLLOW_UP_SUBJECT_CHARS: usize = 998;
 pub const MAX_FOLLOW_UP_BODY_BYTES: usize = 65_536;
 /// Most recipients a follow-up draft can start with.
 pub const MAX_FOLLOW_UP_RECIPIENTS: usize = 100;
+
+/// Budgets for one on-demand AI meeting preparation brief.
+pub const MAX_AI_PREP_NOTES: usize = 12;
+pub const MAX_AI_PREP_THREADS: usize = 8;
+pub const MAX_AI_PREP_FILES: usize = 10;
+pub const MAX_AI_PREP_PROMISES: usize = 10;
+pub const MAX_AI_PREP_COMMITMENTS: usize = 25;
+pub const MAX_AI_PREP_NOTE_CHARS: usize = 4_000;
+pub const MAX_AI_PREP_THREAD_CHARS: usize = 4_000;
+pub const MAX_AI_PREP_THREAD_MESSAGES: usize = 3;
+pub const MAX_AI_PREP_TOTAL_CHARS: usize = 36_000;
+/// Most agenda items saved into a note in one operation.
+pub const MAX_AGENDA_ITEMS: usize = 30;
+pub const MAX_AGENDA_ITEM_CHARS: usize = 500;

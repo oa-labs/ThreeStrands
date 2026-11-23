@@ -455,6 +455,7 @@ impl Database {
                                 updated_at: now,
                                 trashed: false,
                                 starred: false,
+                                exclude_from_ai: false,
                                 trashed_at: None,
                                 authored_title: None,
                             };

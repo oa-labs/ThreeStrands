@@ -7,7 +7,7 @@ import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRe
 import type { SentInRange, DoneNote } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
-import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingContext, MeetingReadiness, PlanChanges, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
+import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingContext, MeetingPrepSelection, MeetingReadiness, MeetingSourcePreview, PlanChanges, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
 import type { PlanAddition } from "../dailyPlan";
 import {
   BOUNDED_LOCAL_READ,
@@ -451,6 +451,8 @@ export interface MailClient extends CorrespondenceClient {
   noteBacklinks(reference: NoteReference): Promise<NoteBacklink[]>;
   /** Local context for preparing one meeting; `mailScope` overrides the calendar's own mail account. */
   meetingContext(reference: NoteReference, mailScope?: string[] | null): Promise<MeetingContext>;
+  /** Native preview of the bounded local sources for an AI meeting preparation brief. */
+  meetingSourcePreview(reference: NoteReference, mailScope?: string[] | null, selection?: MeetingPrepSelection | null): Promise<MeetingSourcePreview>;
   /** Counts for up to 50 meetings, such as a day's. */
   meetingReadiness(references: NoteReference[], mailScope?: string[] | null): Promise<MeetingReadiness[]>;
   /** Reserve Prep Time: a prep task under the meeting's line in `date`'s note, adding the line when needed. */
@@ -482,6 +484,7 @@ export interface MailClient extends CorrespondenceClient {
   listRecentNotes(limit: number): Promise<NoteSummary[]>;
   listStarredNotes(limit: number): Promise<NoteSummary[]>;
   setNoteStarred(id: string, starred: boolean): Promise<Note>;
+  setNoteExcludeFromAi(id: string, excluded: boolean): Promise<Note>;
   /** New non-daily notes and starred notes last edited in `[start, end)`, ISO times, newest first, once per note and outside Trash. */
   listNotesDoneBetween(start: string, end: string, limit: number): Promise<DoneNote[]>;
   getNote(id: string): Promise<Note | null>;
@@ -759,6 +762,7 @@ const tauriClient: MailClient = {
   patchNoteItem: (id, marker, expected, checked, task) => complete("patch_note_item", { id, marker, expected, checked: checked ?? null, task: task ?? null }),
   noteBacklinks: (reference) => read("note_backlinks", { reference }),
   meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),
+  meetingSourcePreview: (reference, mailScope = null, selection = null) => read("meeting_source_preview", { reference, mailScope, selection }),
   meetingReadiness: (references, mailScope = null) => read("meeting_readiness", { references, mailScope }),
   reserveMeetingPrep: (date, expected, entry) => complete("reserve_meeting_prep", { date, expected, entry }),
   saveMeetingFollowThrough: (reference, destination, expectedRevision, operationId, accepted) => complete("save_meeting_follow_through", { reference, destination, expectedRevision, operationId, accepted }),
@@ -777,6 +781,7 @@ const tauriClient: MailClient = {
   listRecentNotes: (limit) => read("list_recent_notes", { limit }),
   listStarredNotes: (limit) => read("list_starred_notes", { limit }),
   setNoteStarred: (id, starred) => complete("set_note_starred", { id, starred }),
+  setNoteExcludeFromAi: (id, excluded) => complete("set_note_exclude_from_ai", { id, excluded }),
   listNotesDoneBetween: (start, end, limit) => read("list_notes_done_between", { start, end, limit }),
   getNote: (id) => read("get_note", { id }),
   getDailyNote: (date) => read("get_daily_note", { date }),

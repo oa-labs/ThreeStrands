@@ -1443,6 +1443,8 @@ pub struct Note {
     pub trashed: bool,
     #[serde(default)]
     pub starred: bool,
+    #[serde(default)]
+    pub exclude_from_ai: bool,
     pub trashed_at: Option<String>,
 }
 

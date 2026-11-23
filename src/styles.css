@@ -4042,6 +4042,9 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .note-completed-toggle { display: flex; align-items: center; padding-inline: var(--context-row-inset); color: var(--muted); font-size: var(--text-meta); }
 /* The glyph column already includes the icon-to-text spacing used by checklist rows. */
 .note-links-empty > .btn-link, .note-completed-toggle { gap: 0; }
+.notes-ai-exclusion { padding: var(--space-2) var(--context-row-inset) 0 calc(var(--context-row-inset) + var(--context-glyph-column)); }
+.notes-ai-exclusion-toggle { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--secondary); font-size: var(--text-meta); cursor: pointer; }
+.notes-ai-exclusion-toggle input[type="checkbox"] { width: var(--check-size); height: var(--check-size); margin: 0; accent-color: var(--accent); cursor: pointer; }
 .notes-details { display: grid; gap: var(--space-1); margin: 0; padding: var(--space-2) 0 0 calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); }
 .notes-details > div { display: grid; grid-template-columns: 5em minmax(0, 1fr); align-items: baseline; gap: var(--space-2); }
 .notes-details dt { color: var(--muted); font-size: var(--text-meta); }

@@ -122,6 +122,7 @@ describe("AI provider preferences", () => {
       threadChat: "reasoning",
       // Resolving "next week" and stated hours into dates benefits from reasoning.
       findTimes: "reasoning",
+      meetingPrep: "reasoning",
     });
     saveAiProvider("fireworks");
     saveAiModel("example/reasoning");
@@ -169,7 +170,7 @@ describe("AI provider preferences", () => {
     expect(readAiFeatures()).toEqual(DEFAULT_AI_FEATURES);
     expect(DEFAULT_AI_FEATURES).toMatchObject({
       draftAssist: true, summarize: true, actionExtraction: true, threadChat: true, contactEnrichment: true,
-      proactiveBriefs: false, proactiveKnownSendersOnly: false,
+      proactiveBriefs: false, proactiveKnownSendersOnly: false, meetingAssistance: false,
     });
   });
 
@@ -181,12 +182,14 @@ describe("AI provider preferences", () => {
     };
     localStorage.setItem("threestrands.settings.ai.features", JSON.stringify(legacy));
     const features = readAiFeatures();
-    expect(features).toEqual(legacy);
+    expect(features).toEqual({ ...legacy, meetingAssistance: false });
     expect(aiAreaEnabled(features, "reading")).toBe(true);
     expect(aiAreaEnabled(features, "writing")).toBe(false);
+    expect(aiAreaEnabled(features, "meetings")).toBe(false);
     expect(aiAutomaticBriefs(features)).toBe("knownSenders");
     // Switching the area sets every feature in it together.
     expect(withAiArea(features, "reading", true)).toMatchObject({ summarize: true, actionExtraction: true, threadChat: true });
+    expect(withAiArea(features, "meetings", true)).toMatchObject({ meetingAssistance: true });
   });
 
   it("switches an area's flags together and maps the automatic brief choice to its flags", () => {

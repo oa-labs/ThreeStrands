@@ -349,6 +349,12 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               checked={aiAreaEnabled(features, "contacts")}
               onChange={(value) => updateArea("contacts", value)}
             />
+            <SettingsToggle
+              label="Meetings"
+              description="Prepare Agenda drafts discussion items and follow-ups from the notes, emails, and commitments you approve. Notes marked Exclude from AI are never included."
+              checked={aiAreaEnabled(features, "meetings")}
+              onChange={(value) => updateArea("meetings", value)}
+            />
           </div>
 
           <h3>Automatic Briefs</h3>

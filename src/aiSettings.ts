@@ -27,6 +27,8 @@ export type AiFeatureFlags = {
   proactiveKnownSendersOnly: boolean;
   /** Lets the reader ask questions about the open conversation. */
   threadChat: boolean;
+  /** On-demand meeting preparation agenda synthesis in Notes and Calendar. */
+  meetingAssistance: boolean;
 };
 
 export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] =
@@ -34,8 +36,8 @@ export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] =
 
 /**
  * On-demand features only send mail when the user clicks a sparkle button, so
- * choosing a provider is enough to offer them. Automatic briefs send without a
- * click, so they stay off until the user picks them.
+ * choosing a provider is enough to offer them. Automatic briefs and meeting
+ * assistance (which can include notes) stay off until the user turns them on.
  */
 export const DEFAULT_AI_FEATURES: AiFeatureFlags = {
   draftAssist: true,
@@ -45,18 +47,20 @@ export const DEFAULT_AI_FEATURES: AiFeatureFlags = {
   proactiveBriefs: false,
   proactiveKnownSendersOnly: false,
   threadChat: true,
+  meetingAssistance: false,
 };
 
 /**
  * The parts of the app the settings page lets the user show AI in. Each area
  * owns some feature flags; the flags stay the stored and exported shape.
  */
-export type AiArea = "reading" | "writing" | "contacts";
+export type AiArea = "reading" | "writing" | "contacts" | "meetings";
 
 const AI_AREA_FLAGS: Record<AiArea, readonly (keyof AiFeatureFlags)[]> = {
   reading: ["summarize", "actionExtraction", "threadChat"],
   writing: ["draftAssist"],
   contacts: ["contactEnrichment"],
+  meetings: ["meetingAssistance"],
 };
 
 /** When the app prepares a brief without being asked. */
@@ -130,7 +134,7 @@ export type AiRequestConfig = {
 export type AiReasoning = "default" | "off";
 
 /** The AI work the app sends to a provider, each served by one model tier. */
-export type AiModelUse = "summary" | "replyDraft" | "draftReview" | "contactEnrichment" | "actionExtraction" | "brief" | "threadChat" | "findTimes";
+export type AiModelUse = "summary" | "replyDraft" | "draftReview" | "contactEnrichment" | "actionExtraction" | "brief" | "threadChat" | "findTimes" | "meetingPrep";
 
 /**
  * Which model serves each use. Reading and copying (summaries, reply drafts,
@@ -148,6 +152,7 @@ export const AI_MODEL_TIERS: Record<AiModelUse, "fast" | "reasoning"> = {
   brief: "reasoning",
   threadChat: "reasoning",
   findTimes: "reasoning",
+  meetingPrep: "reasoning",
 };
 
 /**
@@ -271,6 +276,7 @@ export function readAiFeatures(): AiFeatureFlags {
         proactiveBriefs: saved.proactiveBriefs === true,
         proactiveKnownSendersOnly: saved.proactiveKnownSendersOnly === true,
         threadChat: saved.threadChat === true,
+        meetingAssistance: saved.meetingAssistance === true,
       };
     }
   } catch {

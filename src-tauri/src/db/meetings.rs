@@ -8,16 +8,22 @@
 //! A matching title or iCalendar UID never makes two events one meeting, and
 //! a note about another occurrence is "previous" only when it is in the same
 //! series and earlier.
-use super::{normalize_sender, today::list_open_promises_on, Database, DatabaseError, DbResult};
+use super::{
+    messages::resolve_body, normalize_sender, today::list_open_promises_on, Database,
+    DatabaseError, DbResult,
+};
 use crate::{
+    ai::manifest::{PreparedContext, SourceScope},
     meeting_excerpt::{self, MeetingBlock, MeetingBlockKind},
     meeting_policy::{self as policy, MeetingLimits},
+    mime::readable_body_text,
     models::ScheduleEvent,
     note_entities::{self, normalize_contact_address, NoteReference},
+    quoted_history::ThreadHistory,
 };
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1668,6 +1674,433 @@ impl Database {
                     include_promises: true,
                 },
             )
+        })
+    }
+}
+
+/// Explicit user source selection for one AI meeting preparation brief.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingPrepSelection {
+    pub note_ids: Option<Vec<String>>,
+    pub thread_ids: Option<Vec<String>>,
+    pub include_invite_description: Option<bool>,
+    pub include_commitments: Option<bool>,
+    pub include_promises: Option<bool>,
+    pub include_files: Option<bool>,
+}
+
+/// One candidate source in a meeting AI source preview manifest.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingPrepSourceItem {
+    pub source_id: String,
+    pub kind: String,
+    pub id: String,
+    pub title: String,
+    pub detail: Option<String>,
+    pub revision: String,
+    pub characters: usize,
+    pub truncated: bool,
+    pub selected: bool,
+    pub excluded_by_note_setting: bool,
+}
+
+/// Native preview of the exact bounded sources that would enter a meeting AI request.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingSourcePreview {
+    pub payload_revision: String,
+    pub sources: Vec<MeetingPrepSourceItem>,
+    pub excluded_note_titles: Vec<String>,
+    pub total_selected_characters: usize,
+    pub budget_characters: usize,
+    pub over_budget: bool,
+}
+
+fn bound_chars(text: &str, max_chars: usize) -> (String, bool) {
+    let mut out = String::new();
+    let mut count = 0;
+    for ch in text.chars() {
+        if count >= max_chars {
+            return (out, true);
+        }
+        out.push(ch);
+        count += 1;
+    }
+    (out, false)
+}
+
+fn note_excluded_from_ai(c: &Connection, note_id: &str) -> DbResult<bool> {
+    Ok(c.query_row(
+        "SELECT exclude_from_ai FROM notes WHERE id=?1 AND trashed=0",
+        [note_id],
+        |row| row.get::<_, bool>(0),
+    )
+    .optional()?
+    .unwrap_or(false))
+}
+
+fn thread_ai_excerpt(c: &Connection, thread_id: &str) -> DbResult<(String, String, bool)> {
+    let mut q = c.prepare(
+        "SELECT id, sender, sent_at, body_text, body_text_z FROM messages
+         WHERE thread_id=?1 ORDER BY sent_at DESC, id DESC LIMIT ?2",
+    )?;
+    let mut rows: Vec<(String, String, String, String)> = Vec::new();
+    let mut latest_rev = String::new();
+    for row in q.query_map(
+        params![thread_id, policy::MAX_AI_PREP_THREAD_MESSAGES as i64],
+        |r| {
+            let id: String = r.get(0)?;
+            let sender: String = r.get(1)?;
+            let sent_at: String = r.get(2)?;
+            let body = resolve_body(1, r.get(3)?, r.get(4)?)
+                .map(readable_body_text)
+                .unwrap_or_default();
+            Ok((id, sender, sent_at, body))
+        },
+    )? {
+        let (id, sender, sent_at, body) = row?;
+        if latest_rev.is_empty() {
+            latest_rev = format!("{sent_at}:{id}");
+        }
+        let own_len = ThreadHistory::default().preview_text_len(&body);
+        let own = body[..own_len].trim().to_string();
+        if !own.is_empty() {
+            rows.push((id, sender, sent_at, own));
+        }
+    }
+    rows.reverse();
+    let combined = rows
+        .into_iter()
+        .map(|(_, sender, sent_at, own)| format!("From {sender} ({sent_at}):\n{own}"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let (bounded, truncated) = bound_chars(&combined, policy::MAX_AI_PREP_THREAD_CHARS);
+    Ok((bounded, latest_rev, truncated))
+}
+
+impl Database {
+    /// Builds the bounded native preview and exact outbound AI payload for one
+    /// meeting occurrence. Notes with `exclude_from_ai = true` are always
+    /// excluded natively even if named in `selection`.
+    pub fn meeting_source_preview(
+        &self,
+        reference: &NoteReference,
+        mail_scope: Option<&[String]>,
+        selection: Option<&MeetingPrepSelection>,
+        now: DateTime<Utc>,
+    ) -> DbResult<(MeetingSourcePreview, PreparedContext, MeetingEventSnapshot)> {
+        Self::checked_occurrence(reference)?;
+        let own = self.meeting_own_addresses()?;
+        self.with_connection(|c| {
+            let ctx = build(
+                c,
+                &Inputs {
+                    reference,
+                    requested_scope: mail_scope,
+                    own_addresses: &own,
+                    now,
+                    include_promises: true,
+                },
+            )?;
+            let snapshot = ctx.event.clone().ok_or_else(|| {
+                DatabaseError::invalid(
+                    "This meeting isn't in this device's calendar cache, so an agenda can't be prepared.",
+                )
+            })?;
+            let explicit_notes: Option<HashSet<&str>> = selection
+                .and_then(|sel| sel.note_ids.as_ref())
+                .map(|ids| ids.iter().map(String::as_str).collect());
+            let explicit_threads: Option<HashSet<&str>> = selection
+                .and_then(|sel| sel.thread_ids.as_ref())
+                .map(|ids| ids.iter().map(String::as_str).collect());
+            let include_desc = selection
+                .and_then(|sel| sel.include_invite_description)
+                .unwrap_or(true);
+            let include_commitments = selection
+                .and_then(|sel| sel.include_commitments)
+                .unwrap_or(true);
+            let include_promises = selection
+                .and_then(|sel| sel.include_promises)
+                .unwrap_or(true);
+            let include_files = selection.and_then(|sel| sel.include_files).unwrap_or(true);
+
+            let mut sources: Vec<MeetingPrepSourceItem> = Vec::new();
+            let mut excluded_note_titles: Vec<String> = Vec::new();
+            let mut payload_sources: Vec<serde_json::Value> = Vec::new();
+            let mut total_chars: usize = 0;
+
+            // 1. Invite description (if present).
+            if let Some(description) = snapshot.description.as_deref().filter(|d| !d.is_empty()) {
+                let chars = description.chars().count();
+                let selected = include_desc;
+                let source_id = "event:description".to_string();
+                let revision = format!("{}:{}", snapshot.start, snapshot.end);
+                sources.push(MeetingPrepSourceItem {
+                    source_id: source_id.clone(),
+                    kind: "event".into(),
+                    id: reference.id.clone(),
+                    title: "Calendar invite description".into(),
+                    detail: None,
+                    revision: revision.clone(),
+                    characters: chars,
+                    truncated: false,
+                    selected,
+                    excluded_by_note_setting: false,
+                });
+                if selected {
+                    total_chars += chars;
+                    payload_sources.push(serde_json::json!({
+                        "sourceId": source_id,
+                        "kind": "event",
+                        "title": snapshot.title,
+                        "text": description,
+                    }));
+                }
+            }
+
+            // 2. Candidate notes (this meeting, previous meetings, series notes, related notes).
+            let mut seen_notes = HashSet::new();
+            let mut note_candidates: Vec<(&MeetingNoteSource, &'static str, bool)> = Vec::new();
+            for item in &ctx.this_meeting.items {
+                note_candidates.push((item, "This meeting", true));
+            }
+            for occ in &ctx.previous_meetings.items {
+                for item in &occ.sources {
+                    note_candidates.push((item, "Previous meeting", true));
+                }
+            }
+            for item in &ctx.series_notes.items {
+                note_candidates.push((item, "Series note", true));
+            }
+            for (idx, item) in ctx.related_notes.items.iter().enumerate() {
+                note_candidates.push((item, "Related note", idx < 3));
+            }
+            let mut selected_notes = 0usize;
+            for (note_src, label, default_pick) in note_candidates {
+                if !seen_notes.insert(note_src.note_id.clone()) {
+                    continue;
+                }
+                let excluded = note_excluded_from_ai(c, &note_src.note_id)?;
+                let (text, truncated) = bound_chars(&note_src.text, policy::MAX_AI_PREP_NOTE_CHARS);
+                let chars = text.chars().count();
+                if excluded {
+                    excluded_note_titles.push(note_src.title.clone());
+                }
+                let want = if excluded {
+                    false
+                } else if let Some(explicit) = &explicit_notes {
+                    explicit.contains(note_src.note_id.as_str())
+                } else {
+                    default_pick
+                        && selected_notes < policy::MAX_AI_PREP_NOTES
+                        && total_chars + chars <= policy::MAX_AI_PREP_TOTAL_CHARS
+                };
+                let source_id = format!("note:{}", note_src.note_id);
+                sources.push(MeetingPrepSourceItem {
+                    source_id: source_id.clone(),
+                    kind: "note".into(),
+                    id: note_src.note_id.clone(),
+                    title: note_src.daily_date.clone().unwrap_or_else(|| note_src.title.clone()),
+                    detail: Some(label.into()),
+                    revision: note_src.revision.clone(),
+                    characters: chars,
+                    truncated: truncated || note_src.truncated,
+                    selected: want,
+                    excluded_by_note_setting: excluded,
+                });
+                if want {
+                    selected_notes += 1;
+                    total_chars += chars;
+                    payload_sources.push(serde_json::json!({
+                        "sourceId": source_id,
+                        "kind": "note",
+                        "category": label,
+                        "title": note_src.title,
+                        "dailyDate": note_src.daily_date,
+                        "text": text,
+                    }));
+                }
+            }
+
+            // 3. Candidate conversations (related first, fallback to top 5 recent attendee threads).
+            let any_related = ctx.conversations.items.iter().any(|item| item.related);
+            let mut selected_threads = 0usize;
+            for (idx, conv) in ctx.conversations.items.iter().enumerate() {
+                let (body, rev, truncated) = thread_ai_excerpt(c, &conv.thread_id)?;
+                let text = if body.is_empty() {
+                    conv.snippet.clone().unwrap_or_default()
+                } else {
+                    body
+                };
+                let chars = text.chars().count();
+                let default_pick = if any_related { conv.related } else { idx < 5 };
+                let want = if let Some(explicit) = &explicit_threads {
+                    explicit.contains(conv.thread_id.as_str())
+                } else {
+                    default_pick
+                        && selected_threads < policy::MAX_AI_PREP_THREADS
+                        && total_chars + chars <= policy::MAX_AI_PREP_TOTAL_CHARS
+                };
+                let source_id = format!("thread:{}", conv.thread_id);
+                sources.push(MeetingPrepSourceItem {
+                    source_id: source_id.clone(),
+                    kind: "conversation".into(),
+                    id: conv.thread_id.clone(),
+                    title: if conv.subject.trim().is_empty() {
+                        "(No subject)".into()
+                    } else {
+                        conv.subject.clone()
+                    },
+                    detail: Some(conv.last_message_at.clone()),
+                    revision: if rev.is_empty() {
+                        conv.last_message_at.clone()
+                    } else {
+                        rev
+                    },
+                    characters: chars,
+                    truncated,
+                    selected: want,
+                    excluded_by_note_setting: false,
+                });
+                if want {
+                    selected_threads += 1;
+                    total_chars += chars;
+                    payload_sources.push(serde_json::json!({
+                        "sourceId": source_id,
+                        "kind": "conversation",
+                        "subject": conv.subject,
+                        "lastMessageAt": conv.last_message_at,
+                        "attendees": conv.attendees,
+                        "text": text,
+                    }));
+                }
+            }
+
+            // 4. Open email promises.
+            for promise in ctx.promises.items.iter().take(policy::MAX_AI_PREP_PROMISES) {
+                let chars = promise.excerpt.chars().count();
+                let source_id = format!("promise:{}", promise.thread_id);
+                sources.push(MeetingPrepSourceItem {
+                    source_id: source_id.clone(),
+                    kind: "promise".into(),
+                    id: promise.thread_id.clone(),
+                    title: promise.excerpt.clone(),
+                    detail: Some(promise.subject.clone()),
+                    revision: promise.sent_at.clone(),
+                    characters: chars,
+                    truncated: false,
+                    selected: include_promises,
+                    excluded_by_note_setting: false,
+                });
+                if include_promises {
+                    total_chars += chars;
+                    payload_sources.push(serde_json::json!({
+                        "sourceId": source_id,
+                        "kind": "promise",
+                        "subject": promise.subject,
+                        "sentAt": promise.sent_at,
+                        "text": promise.excerpt,
+                    }));
+                }
+            }
+
+            // 5. Open commitments (excluding those sourced solely from an excluded note).
+            for commitment in ctx.commitments.items.iter().take(policy::MAX_AI_PREP_COMMITMENTS) {
+                let excluded = match commitment.note_id.as_deref() {
+                    Some(note_id) => note_excluded_from_ai(c, note_id)?,
+                    None => false,
+                };
+                let want = include_commitments && !excluded;
+                let chars = commitment.title.chars().count();
+                let source_id = format!("task:{}", commitment.id);
+                sources.push(MeetingPrepSourceItem {
+                    source_id: source_id.clone(),
+                    kind: "commitment".into(),
+                    id: commitment.id.clone(),
+                    title: commitment.title.clone(),
+                    detail: Some(commitment.kind.clone()),
+                    revision: commitment.status.clone(),
+                    characters: chars,
+                    truncated: false,
+                    selected: want,
+                    excluded_by_note_setting: excluded,
+                });
+                if want {
+                    total_chars += chars;
+                    payload_sources.push(serde_json::json!({
+                        "sourceId": source_id,
+                        "kind": "commitment",
+                        "taskKind": commitment.kind,
+                        "candidate": commitment.candidate,
+                        "text": commitment.title,
+                    }));
+                }
+            }
+
+            // 6. File names & metadata only (never attachment bytes).
+            for file in ctx.files.items.iter().take(policy::MAX_AI_PREP_FILES) {
+                let excluded = match file.note_id.as_deref() {
+                    Some(note_id) => note_excluded_from_ai(c, note_id)?,
+                    None => false,
+                };
+                let want = include_files && !excluded;
+                let summary = format!("{} ({})", file.filename, file.context_label);
+                let chars = summary.chars().count();
+                let source_id = format!("file:{}:{}", file.source, file.attachment_id);
+                sources.push(MeetingPrepSourceItem {
+                    source_id: source_id.clone(),
+                    kind: "file".into(),
+                    id: file.attachment_id.clone(),
+                    title: file.filename.clone(),
+                    detail: Some(file.context_label.clone()),
+                    revision: file.sent_at.clone(),
+                    characters: chars,
+                    truncated: false,
+                    selected: want,
+                    excluded_by_note_setting: excluded,
+                });
+                if want {
+                    total_chars += chars;
+                    payload_sources.push(serde_json::json!({
+                        "sourceId": source_id,
+                        "kind": "file",
+                        "filename": file.filename,
+                        "contextLabel": file.context_label,
+                        "sentAt": file.sent_at,
+                    }));
+                }
+            }
+
+            let payload = serde_json::to_string(&serde_json::json!({
+                "meeting": {
+                    "title": snapshot.title,
+                    "start": snapshot.start,
+                    "end": snapshot.end,
+                    "attendees": snapshot.attendees,
+                },
+                "sources": payload_sources,
+            }))
+            .map_err(super::serialization_error)?;
+            let prepared = PreparedContext::new(
+                &payload,
+                SourceScope {
+                    account_ids: ctx.mail_scope.clone(),
+                    record_id: Some(reference.id.clone()),
+                    revision: None,
+                },
+            )
+            .map_err(DatabaseError::invalid)?;
+            let preview = MeetingSourcePreview {
+                payload_revision: prepared.manifest.payload_revision.clone(),
+                sources,
+                excluded_note_titles,
+                total_selected_characters: total_chars,
+                budget_characters: policy::MAX_AI_PREP_TOTAL_CHARS,
+                over_budget: total_chars > policy::MAX_AI_PREP_TOTAL_CHARS,
+            };
+            Ok((preview, prepared, snapshot))
         })
     }
 

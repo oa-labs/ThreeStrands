@@ -70,6 +70,7 @@ describe("exportable preferences", () => {
         proactiveBriefs: false,
         proactiveKnownSendersOnly: false,
         threadChat: false,
+        meetingAssistance: false,
       },
       availabilityPreferences: {
         timeZone: "America/New_York",

@@ -340,6 +340,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   }, [focusEditor, editorReady]);
 
   const linkHintId = useId();
+  const excludeAiHintId = useId();
   const inTrash = Boolean(editor.note?.trashed);
   const noteConflicts = editor.note ? conflicts.get(editor.note.id) ?? [] : [];
 
@@ -391,6 +392,10 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
     await mailClient.setNoteStarred(id, !starredIds.has(id));
     setSearchRevision((value) => value + 1);
     await Promise.all([loadStarred(), loadRecent()]);
+  });
+  const toggleExcludeFromAi = (id: string, excluded: boolean) => act(async () => {
+    await mailClient.setNoteExcludeFromAi(id, excluded);
+    await refresh();
   });
   const switchList = (next: NotesListView) => {
     setListView(next);
@@ -785,11 +790,26 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
             rows={people.map((contact) => <ContextRow key={contact.id} icon={<UserRound size={ICON_SIZE.sm} />}
               title={contact.displayName ?? contact.addresses[0]} detail={contact.company ?? contact.addresses[0]} onActivate={() => onOpenContact(contact.id)} />)} /> : null}
         </> : null}
-        {editor.note ? <dl className="notes-details">
-          <div><dt>Created</dt><dd><time dateTime={editor.note.createdAt} title={exactTime(editor.note.createdAt)}>{formatTime(editor.note.createdAt)}</time></dd></div>
-          {Date.parse(editor.note.updatedAt) !== Date.parse(editor.note.createdAt) ? <div><dt>Updated</dt><dd><time dateTime={editor.note.updatedAt} title={exactTime(editor.note.updatedAt)}>{formatTime(editor.note.updatedAt)}</time></dd></div> : null}
-          {editor.note.trashedAt ? <div><dt>Trashed</dt><dd><time dateTime={editor.note.trashedAt} title={exactTime(editor.note.trashedAt)}>{formatTime(editor.note.trashedAt)}</time></dd></div> : null}
-        </dl> : <p className="context-status">{daily ? "This day's note starts when you write in it." : "Select a note to see its details."}</p>}
+        {editor.note ? <>
+          {!inTrash ? <div className="notes-ai-exclusion">
+            <label className="notes-ai-exclusion-toggle">
+              <input
+                type="checkbox"
+                checked={Boolean(editor.note.excludeFromAi)}
+                disabled={busy || readOnly}
+                aria-describedby={excludeAiHintId}
+                onChange={(event) => void toggleExcludeFromAi(editor.note!.id, event.target.checked)}
+              />
+              <span>Exclude from AI</span>
+            </label>
+            <span id={excludeAiHintId} hidden>Excludes this note from AI meeting preparation and other AI requests; local search and reading are unaffected.</span>
+          </div> : null}
+          <dl className="notes-details">
+            <div><dt>Created</dt><dd><time dateTime={editor.note.createdAt} title={exactTime(editor.note.createdAt)}>{formatTime(editor.note.createdAt)}</time></dd></div>
+            {Date.parse(editor.note.updatedAt) !== Date.parse(editor.note.createdAt) ? <div><dt>Updated</dt><dd><time dateTime={editor.note.updatedAt} title={exactTime(editor.note.updatedAt)}>{formatTime(editor.note.updatedAt)}</time></dd></div> : null}
+            {editor.note.trashedAt ? <div><dt>Trashed</dt><dd><time dateTime={editor.note.trashedAt} title={exactTime(editor.note.trashedAt)}>{formatTime(editor.note.trashedAt)}</time></dd></div> : null}
+          </dl>
+        </> : <p className="context-status">{daily ? "This day's note starts when you write in it." : "Select a note to see its details."}</p>}
         </>}
       </WorkspaceContextRail>
     </div>

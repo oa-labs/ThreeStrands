@@ -29,7 +29,7 @@ use crate::notes::{
 };
 
 const NOTE_COLUMNS: &str =
-    "id, title, body, daily_date, created_at, updated_at, trashed, trashed_at, authored_title, starred";
+    "id, title, body, daily_date, created_at, updated_at, trashed, trashed_at, authored_title, starred, exclude_from_ai";
 /// Most characters of a note's body shown under its title in the list.
 const PREVIEW_CHARS: usize = 140;
 /// Most rows one list or search returns.
@@ -54,6 +54,7 @@ fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         updated_at: row.get(5)?,
         trashed: row.get(6)?,
         starred: row.get(9)?,
+        exclude_from_ai: row.get(10)?,
         trashed_at: row.get(7)?,
     })
 }
@@ -78,6 +79,7 @@ fn sync_payload(note: &Note) -> Value {
         "body": note.body,
         "trashed": note.trashed,
         "starred": note.starred,
+        "excludeFromAi": note.exclude_from_ai,
     });
     match &note.daily_date {
         Some(date) => payload["dailyDate"] = json!(date),
@@ -267,13 +269,13 @@ fn store(
     }
     let note = &projected;
     tx.execute(
-        "INSERT INTO notes(id, title, title_key, body, daily_date, created_at, updated_at, trashed, trashed_at, sync_bytes, replica_dirty_fields, authored_title, starred)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+        "INSERT INTO notes(id, title, title_key, body, daily_date, created_at, updated_at, trashed, trashed_at, sync_bytes, replica_dirty_fields, authored_title, starred, exclude_from_ai)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
          ON CONFLICT(id) DO UPDATE SET title=excluded.title, title_key=excluded.title_key,
             body=excluded.body, daily_date=excluded.daily_date, created_at=excluded.created_at,
             updated_at=excluded.updated_at, trashed=excluded.trashed, trashed_at=excluded.trashed_at,
             sync_bytes=excluded.sync_bytes, replica_dirty_fields=excluded.replica_dirty_fields,
-            authored_title=excluded.authored_title, starred=excluded.starred",
+            authored_title=excluded.authored_title, starred=excluded.starred, exclude_from_ai=excluded.exclude_from_ai",
         params![
             note.id,
             note.title,
@@ -288,6 +290,7 @@ fn store(
             stored_pending,
             authored_payload["title"].as_str().unwrap_or_default(),
             note.starred,
+            note.exclude_from_ai,
         ],
     )?;
     index(tx, note)?;
@@ -545,6 +548,7 @@ pub(super) fn save_daily_in(
                     updated_at: now,
                     trashed: false,
                     starred: false,
+                    exclude_from_ai: false,
                     trashed_at: None,
                     authored_title: None,
                 },
@@ -630,6 +634,7 @@ impl Database {
             updated_at: now,
             trashed: false,
             starred: false,
+            exclude_from_ai: false,
             trashed_at: None,
             authored_title: None,
         };
@@ -874,6 +879,29 @@ impl Database {
             }
             note.starred = starred;
             let changed = BTreeSet::from(["starred".to_string()]);
+            let bytes = check_sync_limits(tx, &note, &write_payload(tx, &note, &changed)?)?;
+            store(tx, &note, bytes, Some(&changed))?;
+            get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))
+        })
+    }
+
+    /// Marks or clears a note's per-note AI exclusion without advancing its edit version.
+    pub fn set_note_exclude_from_ai(&self, id: &str, excluded: bool) -> DbResult<Note> {
+        self.with_transaction(|tx| {
+            let mut note = get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))?;
+            if note.trashed {
+                return Err(DatabaseError::invalid(
+                    "Restore this note before changing its AI exclusion",
+                ));
+            }
+            if note.exclude_from_ai == excluded {
+                return Ok(note);
+            }
+            if field_in_conflict(tx, id, "excludeFromAi")? {
+                return Err(DatabaseError::invalid(CONFLICTED));
+            }
+            note.exclude_from_ai = excluded;
+            let changed = BTreeSet::from(["excludeFromAi".to_string()]);
             let bytes = check_sync_limits(tx, &note, &write_payload(tx, &note, &changed)?)?;
             store(tx, &note, bytes, Some(&changed))?;
             get(tx, id)?.ok_or(DatabaseError::NotFound("Note"))
@@ -1217,6 +1245,10 @@ impl Database {
                 created_at,
                 starred: payload
                     .get("starred")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                exclude_from_ai: payload
+                    .get("excludeFromAi")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
                 trashed,

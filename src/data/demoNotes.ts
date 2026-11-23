@@ -9,7 +9,7 @@ import { appendBlock, composeAddition } from "../noteAdditions";
 import type { MailClient } from "./client";
 import type { DemoNoteSeed } from "./demoDataset";
 
-type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "addToNote" | "undoAddToNote" | "addMeetingToDailyNote" | "listRecentNotes" | "listStarredNotes" | "setNoteStarred" | "listNotesDoneBetween" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
+type DemoNotes = Pick<MailClient, "noteTaskWarnings" | "noteLinkChoices" | "resolveNoteEvent" | "noteDocument" | "listNoteTasks" | "patchNoteItem" | "noteBacklinks" | "resolveNoteConversation" | "resolveNoteContact" | "addToNote" | "undoAddToNote" | "addMeetingToDailyNote" | "listRecentNotes" | "listStarredNotes" | "setNoteStarred" | "setNoteExcludeFromAi" | "listNotesDoneBetween" | "getNote" | "getDailyNote" | "createNote" | "updateNote" | "saveDailyNote" | "recordNoteVisit" | "searchNotes" | "listTrashedNotes" | "listDailyNoteDates" | "trashNote" | "restoreNote" | "deleteNote" | "suggestNoteTitles" | "findNoteByTitle" | "noteLinks" | "notesStorage" | "chooseNotesExportFolder" | "exportNotes" | "chooseNotesImportFolder" | "importNotes" | "importNoteFile" | "addNoteAttachment" | "noteAttachment" | "noteAttachmentImage" | "openNoteAttachment" | "saveNoteAttachment" | "noteAttachmentPreview" | "setNoteAttachmentStar">;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const clean = collapseWhitespace;
@@ -236,6 +236,12 @@ export function createDemoNotes(sources: { threads(): Thread[]; tasks(): ThreadT
       const note = existing(id);
       if (note.trashed) throw new Error("Restore this note before starring it");
       note.starred = starred;
+      return structuredClone(note);
+    },
+    async setNoteExcludeFromAi(id, excluded) {
+      const note = existing(id);
+      if (note.trashed) throw new Error("Restore this note before changing its AI exclusion");
+      note.excludeFromAi = excluded;
       return structuredClone(note);
     },
     async listTrashedNotes(limit) {

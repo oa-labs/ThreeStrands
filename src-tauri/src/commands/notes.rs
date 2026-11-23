@@ -41,6 +41,17 @@ pub(crate) fn set_note_starred(
     Ok(note)
 }
 
+#[tauri::command(async)]
+pub(crate) fn set_note_exclude_from_ai(
+    id: String,
+    excluded: bool,
+    state: State<'_, AppState>,
+) -> AppResult<Note> {
+    let note = state.database.set_note_exclude_from_ai(&id, excluded)?;
+    kick_replicated_sync(&state);
+    Ok(note)
+}
+
 /// Notes created or starred notes last edited during `[start, end)`.
 #[tauri::command]
 pub(crate) async fn list_notes_done_between(

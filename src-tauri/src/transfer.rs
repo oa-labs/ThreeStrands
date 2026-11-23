@@ -148,6 +148,9 @@ pub struct AiFeaturePreferences {
     // thread chat off.
     #[serde(default)]
     pub thread_chat: bool,
+    // Added under format version 3; earlier exports import with meeting AI off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub meeting_assistance: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1505,6 +1508,7 @@ mod tests {
                     proactive_briefs: false,
                     proactive_known_senders_only: false,
                     thread_chat: false,
+                    meeting_assistance: false,
                 },
                 availability_preferences: default_availability_preferences(),
                 calendar_colors: CalendarColors::new(),
@@ -1705,6 +1709,27 @@ mod tests {
         )
         .unwrap();
         assert!(round_trip.preferences.ai_features.thread_chat);
+    }
+
+    #[test]
+    fn an_export_from_before_meeting_assistance_imports_with_it_off() {
+        let mut legacy = serde_json::to_value(payload()).unwrap();
+        legacy["preferences"]["aiFeatures"]
+            .as_object_mut()
+            .unwrap()
+            .remove("meetingAssistance");
+        let decoded: TransferPayload = serde_json::from_value(legacy).unwrap();
+        decoded.validate().unwrap();
+        assert!(!decoded.preferences.ai_features.meeting_assistance);
+
+        let mut current = payload();
+        current.preferences.ai_features.meeting_assistance = true;
+        let round_trip = decrypt(
+            &encrypt(&current, "correct horse").unwrap(),
+            "correct horse",
+        )
+        .unwrap();
+        assert!(round_trip.preferences.ai_features.meeting_assistance);
     }
 
     #[test]
@@ -2738,6 +2763,7 @@ mod tests {
                     proactive_briefs: true,
                     proactive_known_senders_only: true,
                     thread_chat: true,
+                    meeting_assistance: false,
                 },
                 availability_preferences: AvailabilityPreferences {
                     time_zone: "Asia/Tokyo".to_string(),

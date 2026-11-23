@@ -1392,5 +1392,16 @@ describe("Notes workspace", () => {
       await waitFor(() => expect(links.getByText("Marketing Power Hour")).toBeInTheDocument());
       expect(links.queryByRole("button", { name: /^Prepare Meeting:/ })).not.toBeInTheDocument();
     });
+    it("toggles per-note Exclude from AI in Note Details", async () => {
+      const note = await mailClient.createNote(uniqueTitle("Private note"), "Sensitive details");
+      render(<NotesWorkspace request={{ kind: "note", id: 1, noteId: note.id }} />);
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(note.title));
+      const toggle = screen.getByRole("checkbox", { name: "Exclude from AI" });
+      expect(toggle).not.toBeChecked();
+      expect(toggle).toHaveAccessibleDescription();
+      fireEvent.click(toggle);
+      await waitFor(() => expect(toggle).toBeChecked());
+      expect((await mailClient.getNote(note.id))?.excludeFromAi).toBe(true);
+    });
   });
 });

@@ -1,4 +1,4 @@
-import type { FollowThroughRecord, FollowThroughSave, MeetingCommitment, MeetingContext, MeetingConversation, MeetingLimits, MeetingNoteSource, MeetingOccurrence, MeetingReadiness, MeetingSection, PrepReservation, ScheduleEvent, Thread, ThreadTask, Note } from "../domain";
+import type { FollowThroughRecord, FollowThroughSave, MeetingCommitment, MeetingContext, MeetingConversation, MeetingLimits, MeetingNoteSource, MeetingOccurrence, MeetingPrepSelection, MeetingPrepSourceItem, MeetingReadiness, MeetingSection, MeetingSourcePreview, PrepReservation, ScheduleEvent, Thread, ThreadTask, Note } from "../domain";
 import { boundedText, insertPrepTask, meetingBlocks, occurrenceBlocks, PREP_TASK_PREFIX, type MeetingBlock } from "../meetingExcerpt";
 import { insertMeetingLine, meetingLine } from "../noteMeetings";
 import { MAX_READINESS_EVENTS } from "../meetingReadinessPolicy";
@@ -35,7 +35,7 @@ const instant = (start: string) => /^\d{4}-\d{2}-\d{2}$/.test(start) ? new Date(
 const localDate = (time: number) => { const d = new Date(time); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 /** Meeting preparation for the browser demo: the native rules over in-memory data. */
-export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingContext" | "meetingReadiness" | "reserveMeetingPrep" | "saveMeetingFollowThrough" | "undoMeetingFollowThrough"> {
+export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingContext" | "meetingSourcePreview" | "meetingReadiness" | "reserveMeetingPrep" | "saveMeetingFollowThrough" | "undoMeetingFollowThrough"> {
   /** Receipts, as natively: a retry with the same operation returns its first result. */
   const receipts = new Map<string, { scope: string; result: FollowThroughSave; undone: boolean }>();
   const cached = (reference: NoteReference) => sources.events().find((event) => event.accountId === reference.account && event.calendarId === reference.calendar && event.id === reference.id) ?? null;
@@ -235,6 +235,42 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
       return { note: saved.note, added: true, addedMeetingLine, previousBody, taskId: await prepTaskId(saved.note, entry.event) };
     },
     meetingContext: (reference, mailScope = null) => context(reference, mailScope),
+    async meetingSourcePreview(reference, mailScope = null, selection: MeetingPrepSelection | null = null): Promise<MeetingSourcePreview> {
+      const ctx = await context(reference, mailScope);
+      if (!ctx.event) throw new Error("This meeting isn't in this device's calendar cache, so an agenda can't be prepared.");
+      const budgetCharacters = 36_000;
+      const items: MeetingPrepSourceItem[] = [];
+      const excludedNoteTitles: string[] = [];
+      let totalSelectedCharacters = 0;
+      const seenNotes = new Set<string>();
+      const noteCandidates = [
+        ...ctx.thisMeeting.items.map((item) => ({ item, label: "This meeting", def: true })),
+        ...ctx.previousMeetings.items.flatMap((occ) => occ.sources.map((item) => ({ item, label: "Previous meeting", def: true }))),
+        ...ctx.seriesNotes.items.map((item) => ({ item, label: "Series note", def: true })),
+        ...(ctx.relatedNotes?.items ?? []).map((item, index) => ({ item, label: "Related note", def: index < 3 })),
+      ];
+      for (const { item, label, def } of noteCandidates) {
+        if (seenNotes.has(item.noteId)) continue;
+        seenNotes.add(item.noteId);
+        const full = await sources.notes.getNote(item.noteId);
+        const excluded = Boolean(full?.excludeFromAi);
+        if (excluded) excludedNoteTitles.push(item.title);
+        const chars = item.text.length;
+        const selected = excluded ? false : selection?.noteIds ? selection.noteIds.includes(item.noteId) : def && totalSelectedCharacters + chars <= budgetCharacters;
+        if (selected) totalSelectedCharacters += chars;
+        items.push({ sourceId: `note:${item.noteId}`, kind: "note", id: item.noteId, title: item.dailyDate ?? item.title, detail: label, revision: item.revision, characters: chars, truncated: item.truncated, selected, excludedByNoteSetting: excluded });
+      }
+      const anyRelated = ctx.conversations.items.some((item) => item.related);
+      for (const [index, conv] of ctx.conversations.items.entries()) {
+        const text = conv.snippet ?? conv.subject;
+        const chars = text.length;
+        const selected = selection?.threadIds ? selection.threadIds.includes(conv.threadId) : (anyRelated ? conv.related : index < 5) && totalSelectedCharacters + chars <= budgetCharacters;
+        if (selected) totalSelectedCharacters += chars;
+        items.push({ sourceId: `thread:${conv.threadId}`, kind: "conversation", id: conv.threadId, title: conv.subject || "(No subject)", detail: conv.lastMessageAt, revision: conv.lastMessageAt, characters: chars, truncated: false, selected, excludedByNoteSetting: false });
+      }
+      const payloadRevision = `demo:${items.filter((i) => i.selected).map((i) => `${i.sourceId}@${i.revision}`).join("|")}`;
+      return { payloadRevision, sources: items, excludedNoteTitles, totalSelectedCharacters, budgetCharacters, overBudget: totalSelectedCharacters > budgetCharacters };
+    },
     async saveMeetingFollowThrough(reference, destination, expectedRevision, operationId, accepted) {
       const scope = noteReferenceKey(reference);
       const receipt = receipts.get(operationId);

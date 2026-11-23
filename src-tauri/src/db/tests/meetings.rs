@@ -977,6 +977,64 @@ fn step_a_carries_over_prior_tasks_promotes_group_threads_and_surfaces_promises_
 }
 
 #[test]
+fn meeting_source_preview_enforces_exclude_from_ai_natively_even_when_explicitly_selected() {
+    let curr = event(
+        "evt-ai",
+        None,
+        "Marketing Power Hour",
+        "2026-11-16T14:00:00Z",
+        &["taylor@example.org"],
+    );
+    let db = setup(&[curr]);
+    let private_note = db
+        .create_note(
+            "Private Marketing Notes",
+            &format!(
+                "- [2pm]({})\n  - Confidential salary info\n  - ( ) Private action\n",
+                href("evt-ai", None)
+            ),
+        )
+        .unwrap();
+    let shared_note = db
+        .create_note(
+            "Shared Marketing Plan",
+            &format!("- [2pm]({})\n  - Public Q4 plan\n", href("evt-ai", None)),
+        )
+        .unwrap();
+    db.set_note_exclude_from_ai(&private_note.id, true).unwrap();
+
+    // Even if a caller explicitly passes the excluded note's ID, native enforcement denies it.
+    let explicit = crate::db::meetings::MeetingPrepSelection {
+        note_ids: Some(vec![private_note.id.clone(), shared_note.id.clone()]),
+        ..Default::default()
+    };
+    let (preview, prepared, _) = db
+        .meeting_source_preview(&occurrence("evt-ai", None), None, Some(&explicit), now())
+        .unwrap();
+    assert!(preview
+        .excluded_note_titles
+        .contains(&"Private Marketing Notes".to_string()));
+    let private_item = preview
+        .sources
+        .iter()
+        .find(|s| s.kind == "note" && s.id == private_note.id)
+        .expect("excluded note listed as excluded");
+    assert!(private_item.excluded_by_note_setting);
+    assert!(!private_item.selected);
+    let shared_item = preview
+        .sources
+        .iter()
+        .find(|s| s.kind == "note" && s.id == shared_note.id)
+        .expect("non-excluded note listed");
+    assert!(!shared_item.excluded_by_note_setting);
+    assert!(shared_item.selected);
+    // Neither the excluded note's body nor its tasks may enter the outbound payload.
+    assert!(!prepared.payload.contains("Confidential salary info"));
+    assert!(!prepared.payload.contains("Private action"));
+    assert!(prepared.payload.contains("Public Q4 plan"));
+}
+
+#[test]
 fn an_attendee_is_found_in_headers_only_as_a_whole_address() {
     assert!(mentions_address("ann <ann@example.org>", "ann@example.org"));
     assert!(mentions_address(

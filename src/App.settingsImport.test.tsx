@@ -64,6 +64,7 @@ describe("settings import navigation", () => {
           proactiveBriefs: false,
           proactiveKnownSendersOnly: false,
           threadChat: false,
+          meetingAssistance: false,
         },
         availabilityPreferences: {
           timeZone: "UTC",

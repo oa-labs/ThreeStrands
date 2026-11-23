@@ -29,7 +29,7 @@ export type NoteSaveState =
 
 const sameText = (a: NoteText, b: NoteText) => a.title === b.title && a.body === b.body;
 // A resolved conflict or a trip through Trash can change a note without a newer save time.
-const sameNote = (a: Note | null, b: Note | null) => a === b || (a !== null && b !== null && a.updatedAt === b.updatedAt && a.title === b.title && a.body === b.body && a.trashed === b.trashed);
+const sameNote = (a: Note | null, b: Note | null) => a === b || (a !== null && b !== null && a.updatedAt === b.updatedAt && a.title === b.title && a.body === b.body && a.trashed === b.trashed && Boolean(a.excludeFromAi) === Boolean(b.excludeFromAi));
 
 /**
  * Loads a note into the editor and saves edits: after typing pauses, on

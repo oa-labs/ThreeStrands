@@ -23,7 +23,8 @@
     "contactEnrichment": true,
     "proactiveBriefs": true,
     "proactiveKnownSendersOnly": true,
-    "threadChat": true
+    "threadChat": true,
+    "meetingAssistance": true
   },
   "availabilityPreferences": {
     "timeZone": "America/New_York",

@@ -1098,6 +1098,7 @@ fn two_devices_importing_one_note_agree_except_on_text_that_differs() {
         updated_at: created_at.into(),
         trashed: false,
         starred: false,
+        exclude_from_ai: false,
         trashed_at: None,
     };
     // Each device read the file with its own modification time.
@@ -2295,6 +2296,7 @@ fn note_created(id: &str, title: &str, created_at: &str, daily: Option<&str>) ->
         updated_at: created_at.into(),
         trashed: false,
         starred: false,
+        exclude_from_ai: false,
         trashed_at: None,
     }
 }
