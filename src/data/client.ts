@@ -42,6 +42,7 @@ import type {
   ContactGroup,
   ContactGroupRecipients,
   ContactProfile,
+  CommitmentReply,
   ContactTimelineItem,
   SaveContactRequest,
   ContactEnrichmentResult,
@@ -171,6 +172,7 @@ export interface MailClient extends CorrespondenceClient {
   listTodayMail(accountId?: string): Promise<TodayMailPage>;
   /** Promises in the user's sent mail from the last two weeks that nothing sent since appears to keep, newest first. */
   listOpenPromises(accountId?: string): Promise<OpenPromise[]>;
+  listCommitmentReplies(accountId: string | null, cachedAi: boolean): Promise<CommitmentReply[]>;
   getThread(id: string): Promise<ThreadDetail>;
   openAttachment(messageId: string, attachmentId: string): Promise<void>;
   saveAttachment(messageId: string, attachmentId: string): Promise<void>;
@@ -571,6 +573,7 @@ const tauriClient: MailClient = {
   mailboxUnreadCounts: (accountId) => read("mailbox_unread_counts", { accountId }),
   listTodayMail: (accountId) => read("list_today_mail", { accountId }),
   listOpenPromises: (accountId) => read("list_open_promises", { accountId }),
+  listCommitmentReplies: (accountId, cachedAi) => read("list_commitment_replies", { accountId, cachedAi }),
   getThread: (id) => complete("get_thread", { id }),
   openAttachment: (messageId, attachmentId) => complete("open_attachment", { messageId, attachmentId }),
   saveAttachment: (messageId, attachmentId) => complete("save_attachment", { messageId, attachmentId }),

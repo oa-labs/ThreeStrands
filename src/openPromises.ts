@@ -20,14 +20,15 @@ export function readDismissedPromises(): string[] {
   }
 }
 
-export function dismissPromise(messageId: string): string[] {
-  const dismissed = [...readDismissedPromises().filter((id) => id !== messageId), messageId].slice(-MAX_DISMISSED_PROMISES);
+export function dismissPromise(messageId: string, dismissed = true): string[] {
+  const remaining = readDismissedPromises().filter((id) => id !== messageId);
+  const next = dismissed ? [...remaining, messageId].slice(-MAX_DISMISSED_PROMISES) : remaining;
   try {
-    localStorage.setItem(DISMISSED_KEY, JSON.stringify(dismissed));
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify(next));
   } catch {
     // Dismissed for this session only.
   }
-  return dismissed;
+  return next;
 }
 
 /** Who the promise was made to, by name where the To line gives one: "Jill", "Jill and Pete". */

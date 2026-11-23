@@ -42,14 +42,15 @@ The plan remains the **Plan** section of today's daily note in [Notes](notes.htm
 
 ### Filter the Inbox {#add-to-the-plan}
 
-Use four filters above the list:
+Use the filters above the list:
 
-- **All** combines the other three categories, with each item appearing once.
+- **All** combines tasks, emails, and contacts, with each item appearing once.
 - **Tasks** includes open tasks, including goal tasks and tasks in any note. Square `[ ]` checklists stay local to their notes.
 - **Emails** includes starred conversations and promises not yet turned into tasks. A conversation that already has an open task appears under **Tasks**. Scheduling a starred conversation opens its task form first; **Cancel** writes nothing and books no time.
 - **Contacts** includes people due for a check-in, and says when you're up to date with your keep-in-touch goals.
+- **Commitments** shows recent promises, tracked commitments, follow-ups due, and possible replies to starred conversations. Open a row for its source or task. Use **⋯** to draft a reply or dismiss a suggestion. Dismissal is device-local and applies to that message. Reply suggestions can use a Brief you already ran and work with local mail even when AI is off.
 
-The count follows the active filter and counts only unscheduled items. A plus means more items can be read with **Show More**. Arrow keys, Home, and End move between filters, and Today remembers your choice.
+The count follows the active filter. Work with time already booked lives on the agenda. A plus means more items can be read with **Show More**. Arrow keys, Home, and End move between filters, and Today remembers your choice.
 
 ### Book Time by Dragging {#book-time-by-dragging}
 

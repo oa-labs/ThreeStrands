@@ -124,6 +124,7 @@ describe("TodayWorkspace", () => {
     vi.spyOn(mailClient, "listNoteTasks").mockResolvedValue([]);
     vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([]);
     vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listCommitmentReplies").mockResolvedValue([]);
     vi.spyOn(mailClient, "listSentBetween").mockResolvedValue([]);
     vi.spyOn(mailClient, "listNotesDoneBetween").mockResolvedValue([]);
     vi.spyOn(mailClient, "listEventsCreatedBetween").mockResolvedValue({ events: [], errors: [] });
@@ -761,6 +762,59 @@ describe("TodayWorkspace", () => {
     });
   });
 
+  describe("commitments", () => {
+    const reply = {
+      threadId: "estimate", accountId: "you@example.com", messageId: "question", sender: "Mira <mira@example.test>",
+      sentAt: "2026-11-16T12:00:00Z", subject: "the estimate", excerpt: "Could you confirm the estimate?", suggestedTitle: null,
+    };
+
+    it("opens the source, offers the right actions, and skips a tracked duplicate and a future follow-up", async () => {
+      vi.mocked(mailClient.listCommitmentReplies).mockResolvedValue([reply, { ...reply, threadId: "tracked", messageId: "already-tracked" }]);
+      vi.mocked(mailClient.listOpenPromises).mockResolvedValue([{
+        thread: todayThread("promise-thread", { accountId: "you@example.com" }), messageId: "promise",
+        sentAt: reply.sentAt, recipients: ["ann@example.test"], excerpt: "I'll send the price list",
+      }]);
+      const due = task("waiting", { threadId: "tracked", kind: "waiting_for", title: "Approval from Imani", dueKind: "date", dueValue: localDate(0) });
+      vi.mocked(mailClient.listTasks).mockResolvedValue([due, task("future", { threadId: "future", kind: "follow_up", title: "Follow up next week", dueKind: "date", dueValue: localDate(7) })]);
+      const onOpenMessage = vi.fn(), onDraftCommitmentReply = vi.fn(), onDraftCommitmentFollowUp = vi.fn();
+      const { onEditTask } = renderToday({ cachedCommitmentAi: true, onOpenMessage, onDraftCommitmentReply, onDraftCommitmentFollowUp });
+      expect(mailClient.listCommitmentReplies).not.toHaveBeenCalled();
+      chooseSource("Commitments");
+      fireEvent.click(await screen.findByRole("button", { name: /^Reply to Mira about the estimate/ }));
+      expect(onOpenMessage).toHaveBeenCalledWith("estimate", "question");
+      expect(mailClient.listCommitmentReplies).toHaveBeenCalledWith("you@example.com", true);
+      expect(screen.getByText(/Possible reply · .*Could you confirm the estimate/)).toBeInTheDocument();
+      expect(inbox().getAllByRole("article")).toHaveLength(3);
+      expect(screen.queryByText("Follow up next week")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /^Approval from Imani/ }));
+      expect(onEditTask).toHaveBeenCalledWith(due);
+      await cardAction("Approval from Imani", "Draft Follow-up");
+      expect(onDraftCommitmentFollowUp).toHaveBeenCalledWith(due);
+      await cardAction("Reply to Mira about the estimate", "Draft Reply");
+      expect(onDraftCommitmentReply).toHaveBeenCalledWith(reply);
+    });
+
+    it("dismisses a reply by source message, undoes it, and keeps later requests visible after reopening", async () => {
+      vi.mocked(mailClient.listCommitmentReplies).mockResolvedValue([reply]);
+      const onNotice = vi.fn();
+      renderToday({ onNotice });
+      chooseSource("Commitments");
+      await cardAction("Reply to Mira about the estimate", "Dismiss");
+      expect(screen.queryByText("Reply to Mira about the estimate")).not.toBeInTheDocument();
+      await act(async () => onNotice.mock.lastCall?.[0].undo?.());
+      expect(await screen.findByText("Reply to Mira about the estimate")).toBeInTheDocument();
+      await cardAction("Reply to Mira about the estimate", "Dismiss");
+
+      cleanup();
+      renderToday();
+      await screen.findByText("No commitments to review.");
+      cleanup();
+      vi.mocked(mailClient.listCommitmentReplies).mockResolvedValue([{ ...reply, messageId: "new-question" }]);
+      renderToday();
+      expect(await screen.findByText("Reply to Mira about the estimate")).toBeInTheDocument();
+    });
+  });
+
   describe("plan", () => {
     beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(2026, 9, 28, 10, 0)); });
     afterEach(() => { vi.useRealTimers(); });
@@ -908,10 +962,10 @@ describe("TodayWorkspace", () => {
   });
 
   describe("source switcher", () => {
-    it("moves through four filters with arrows, Home, and End and remembers the choice", async () => {
+    it("moves through inbox filters with arrows, Home, and End and remembers the choice", async () => {
       renderToday();
       const tabs = inbox().getAllByRole("tab");
-      expect(tabs.map((tab) => tab.textContent)).toEqual(["All", "Tasks", "Emails", "Contacts"]);
+      expect(tabs.map((tab) => tab.textContent)).toEqual(["All", "Tasks", "Emails", "Contacts", "Commitments"]);
       expect(tabs[0]).toHaveAttribute("aria-selected", "true");
       expect(inbox().getByRole("tabpanel")).toHaveAccessibleName("All");
       expect(screen.queryByRole("button", { name: "More Sources" })).not.toBeInTheDocument();
@@ -921,11 +975,11 @@ describe("TodayWorkspace", () => {
       expect(inbox().getByRole("tab", { name: "Emails" })).toHaveAttribute("aria-selected", "true");
       expect(inbox().getByRole("tab", { name: "Emails" })).toHaveFocus();
       fireEvent.keyDown(document.activeElement!, { key: "End" });
-      expect(inbox().getByRole("tab", { name: "Contacts" })).toHaveFocus();
+      expect(inbox().getByRole("tab", { name: "Commitments" })).toHaveFocus();
       fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
       expect(inbox().getByRole("tab", { name: "All" })).toHaveFocus();
       fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
-      expect(inbox().getByRole("tab", { name: "Contacts" })).toHaveFocus();
+      expect(inbox().getByRole("tab", { name: "Commitments" })).toHaveFocus();
       fireEvent.keyDown(document.activeElement!, { key: "Home" });
       expect(inbox().getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
       chooseSource("Emails"); cleanup(); renderToday();
@@ -1265,15 +1319,15 @@ describe("TodayWorkspace", () => {
       expect(inbox().queryByRole("article")).not.toBeInTheDocument();
     });
 
-    it("keeps every inbox category directly reachable from the four-tab keyboard row", async () => {
+    it("keeps every inbox filter directly reachable from the keyboard row", async () => {
       renderToday();
       const tabs = within(screen.getByRole("tablist", { name: "Planning Inbox Filters" })).getAllByRole("tab");
       tabs[0].focus(); fireEvent.keyDown(tabs[0], { key: "End" });
-      expect(inbox().getByRole("tab", { name: "Contacts" })).toHaveFocus();
+      expect(inbox().getByRole("tab", { name: "Commitments" })).toHaveFocus();
       fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
-      expect(inbox().getByRole("tab", { name: "Emails" })).toHaveFocus();
+      expect(inbox().getByRole("tab", { name: "Contacts" })).toHaveFocus();
       expect(screen.queryByRole("button", { name: "More Sources" })).not.toBeInTheDocument();
-      expect(tabs).toHaveLength(4);
+      expect(tabs).toHaveLength(5);
     });
   });
 

@@ -47,8 +47,9 @@ type ComposeOptions = {
   replyAssistInstruction?: string;
   followUpTaskId?: string;
   prefill?: MailtoRequest;
-  /** Edit as New only: the account that sent the source, when no conversation is selected (the Outbox). */
+  /** Explicit source account for a message outside the current conversation. */
   sourceAccount?: string;
+  standaloneReply?: boolean;
 };
 
 /**
@@ -205,7 +206,7 @@ export function useCorrespondence(
         ? await mailClient.createDraft(mode, undefined, activeAccountId ?? undefined)
         : mode === "editAsNew"
           ? await draftFromSent(messageId ?? sourceId, options?.sourceAccount ?? sourceAccountId)
-          : await mailClient.createDraft(mode, messageId ?? sourceId, sourceAccountId);
+          : await mailClient.createDraft(mode, messageId ?? sourceId, options?.sourceAccount ?? sourceAccountId);
       const quoted = options?.selectedQuote ? draftWithSelectedQuote(created, options.selectedQuote) : null;
       const filled = quoted ?? (options?.prefill ? { ...created, ...options.prefill } : null);
       const prepared = filled ? await mailClient.saveDraft(filled) : created;
@@ -216,10 +217,14 @@ export function useCorrespondence(
       setActiveAvailabilityText(options?.availabilityText ?? null);
       setActiveReplyAssistInstruction(options?.replyAssistInstruction ?? null);
       setActiveFollowUpTaskId(options?.followUpTaskId ?? null);
-      setActiveThreadId(mode === "new" || mode === "editAsNew" ? null : selectedThreadId);
+      setActiveThreadId(mode === "new" || mode === "editAsNew" || options?.standaloneReply ? null : selectedThreadId);
       setActive(d); setError("");
+      return true;
     }
-    catch (e) { setError(String(e)); }
+    catch (e) {
+      if (options?.standaloneReply) throw e;
+      setError(String(e));
+    }
     finally { opening.current = false; }
   }, [sourceId, sourceAccountId, selectedThreadId, activeAccountId]);
   useEffect(() => {
@@ -339,7 +344,7 @@ export function useCorrespondence(
   // the one-at-a-time guard in start.
   const mailtoQueue = useRef(Promise.resolve());
   const composeMailto = useCallback((request: MailtoRequest) => {
-    mailtoQueue.current = mailtoQueue.current.then(() => start("new", undefined, { prefill: request }));
+    mailtoQueue.current = mailtoQueue.current.then(async () => { await start("new", undefined, { prefill: request }); });
   }, [start]);
   const reply = useCallback((messageId?: string, selectedQuote?: string) => { void start("reply", messageId, { selectedQuote }); }, [start]);
   const replyAll = useCallback((messageId?: string, selectedQuote?: string) => { void start("replyAll", messageId, { selectedQuote }); }, [start]);
@@ -356,6 +361,8 @@ export function useCorrespondence(
       followUpTaskId: taskId,
     });
   }, [start]);
+  const replyFromOutside = useCallback((messageId: string, accountId: string, instruction?: string, followUpTaskId?: string) =>
+    start("reply", messageId, { sourceAccount: accountId, standaloneReply: true, replyAssistInstruction: instruction, followUpTaskId }), [start]);
   const forward = useCallback((messageId?: string, selectedQuote?: string) => { void start("forward", messageId, { selectedQuote }); }, [start]);
   const editAsNew = useCallback((messageId: string, sourceAccount?: string) => { void start("editAsNew", messageId, { sourceAccount }); }, [start]);
   const openInbox = useCallback(() => {
@@ -509,6 +516,7 @@ export function useCorrespondence(
     replyWithAvailability,
     replyWithText,
     replyWithFollowUp,
+    replyFromOutside,
     drafts,
     outbox,
     outboxDetails: outboxBodies.details,

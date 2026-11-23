@@ -2,10 +2,13 @@
 //! the promises in the user's sent mail still waiting on them.
 
 use super::messages::resolve_body;
-use super::threads::{thread_from_row, THREAD_COLUMNS};
+use super::threads::{thread_from_row, STARRED_FILTER, THREAD_COLUMNS};
 use super::{normalize_sender, sending_addresses_for_account, Database, DbResult};
 use crate::mime::readable_body_text;
-use crate::models::{MessageAttachment, OpenPromise, SentInRange, TodayMail, TodayMailPage};
+use crate::models::{
+    ActionAnalysis, ActionProposal, CommitmentReply, MessageAttachment, OpenPromise, SentInRange,
+    TodayMail, TodayMailPage,
+};
 use crate::quoted_history::ThreadHistory;
 use rusqlite::{params, OptionalExtension};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -19,6 +22,9 @@ pub(crate) const PROMISE_LOOKBACK_DAYS: i64 = 14;
 
 /// Most open promises Today lists, newest first.
 pub(crate) const MAX_OPEN_PROMISES: usize = 20;
+/// The most recently active starred conversations inspected for reply suggestions.
+const COMMITMENT_STARRED_LIMIT: i64 = 32;
+const COMMITMENT_EXCERPT_LIMIT: usize = 160;
 
 const UNREAD_FILTER: &str = "archived = 0 AND trashed = 0 AND unread = 1 AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=t.id AND json_extract(s.record_json, '$.state')='active')";
 
@@ -144,6 +150,69 @@ impl Database {
 }
 
 impl Database {
+    pub(crate) fn list_commitment_replies(
+        &self,
+        account_id: Option<&str>,
+        cached_ai: bool,
+    ) -> DbResult<Vec<CommitmentReply>> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(&format!(
+                "SELECT t.id, t.account_id, t.subject, m.id, m.sender, m.sent_at, m.recipients_json,
+                        m.body_text, m.body_text_z, m.attachments_json, a.analysis_json
+                 FROM (SELECT t.* FROM threads t
+                       WHERE {STARRED_FILTER} AND (?1 IS NULL OR t.account_id = ?1)
+                         AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=t.id AND json_extract(s.record_json, '$.state')='active')
+                       ORDER BY last_message_at DESC, id LIMIT ?3) t
+                 JOIN messages m ON m.id = (SELECT id FROM messages WHERE thread_id = t.id ORDER BY sent_at DESC, rowid DESC LIMIT 1)
+                 LEFT JOIN ai_thread_analyses a ON ?2 AND a.thread_id = t.id AND a.last_message_at = t.last_message_at
+                 WHERE m.unsubscribe_json IS NULL
+                   AND NOT EXISTS(SELECT 1 FROM tasks k WHERE k.thread_id=t.id AND
+                       (k.status IN ('open', 'in_progress') OR k.source_message_id=m.id))
+                 ORDER BY t.last_message_at DESC, t.id"
+            ))?;
+            let mut rows = statement.query(params![account_id, cached_ai, COMMITMENT_STARRED_LIMIT])?;
+            let mut identities = HashMap::new();
+            let mut replies = Vec::new();
+            while let Some(row) = rows.next()? {
+                let owner: String = row.get(1)?;
+                let mine = identities.entry(owner.clone()).or_insert_with(|| sending_addresses_for_account(connection, &owner));
+                let sender: String = row.get(4)?;
+                let sender_address = normalize_sender(&sender).0;
+                let recipients: Vec<String> = super::decode_json(row.get::<_, String>(6)?)?;
+                if !sender_address.contains('@') || mine.contains(&sender_address)
+                    || recipients.len() != 1 || !mine.contains(&normalize_sender(&recipients[0]).0) {
+                    continue;
+                }
+                let attachments: Vec<MessageAttachment> = serde_json::from_str(&row.get::<_, String>(9)?).map_err(super::serialization_error)?;
+                if attachments.iter().any(is_calendar_attachment) {
+                    continue;
+                }
+                let message_id: String = row.get(3)?;
+                let text = readable_body_text(resolve_body(8, row.get(7)?, row.get(8)?)?);
+                let authored = &text[..ThreadHistory::default().preview_text_len(&text)];
+                let analysis = row.get::<_, Option<String>>(10)?.and_then(|json| serde_json::from_str::<ActionAnalysis>(&json).ok());
+                let saved = analysis.as_ref().and_then(|analysis| analysis.proposals.iter().find_map(|proposal| {
+                    let ActionProposal::Task(task) = proposal else { return None };
+                    let excerpt = task.evidence.excerpt.trim();
+                    let verb = task.title.split_whitespace().next().unwrap_or_default().to_ascii_lowercase();
+                    (matches!(task.kind.as_str(), "action" | "follow_up") && task.confidence >= 0.75
+                        && matches!(verb.as_str(), "reply" | "respond" | "answer")
+                        && task.evidence.source_message_id == message_id && !excerpt.is_empty() && authored.contains(excerpt))
+                        .then_some((excerpt, task.title.as_str()))
+                }));
+                let (excerpt, suggested_title) = match saved {
+                    Some((excerpt, title)) => (excerpt, Some(title.to_owned())),
+                    None => match explicit_reply_request(authored) { Some(excerpt) => (excerpt, None), None => continue },
+                };
+                replies.push(CommitmentReply {
+                    thread_id: row.get(0)?, account_id: owner, message_id, sender, sent_at: row.get(5)?,
+                    subject: row.get(2)?, excerpt: excerpt.chars().take(COMMITMENT_EXCERPT_LIMIT).collect(), suggested_title,
+                });
+            }
+            Ok(replies)
+        })
+    }
+
     /// Promises the user made in mail they sent since `since` (RFC 3339) that
     /// still look open, newest first. Only each conversation's newest sent
     /// message is read, and only its own text, never the quoted history under
@@ -232,6 +301,38 @@ impl Database {
             Ok(promises)
         })
     }
+}
+
+fn explicit_reply_request(text: &str) -> Option<&str> {
+    text.split_inclusive(['.', '!', '?', '\n'])
+        .map(str::trim)
+        .find(|sentence| {
+            let lower = sentence.to_ascii_lowercase();
+            [
+                "please reply",
+                "please respond",
+                "please confirm",
+                "please let me know",
+                "can you confirm",
+                "could you confirm",
+                "would you confirm",
+                "can you tell me",
+                "could you tell me",
+                "would you tell me",
+                "can you let me know",
+                "could you let me know",
+                "would you let me know",
+                "can you reply",
+                "could you reply",
+                "please get back to me",
+            ]
+            .iter()
+            .any(|prefix| {
+                lower
+                    .strip_prefix(prefix)
+                    .is_some_and(|tail| !tail.starts_with(char::is_alphanumeric))
+            })
+        })
 }
 
 /// The same test as Files and the reader's invitation card: a text/calendar part or an .ics file.

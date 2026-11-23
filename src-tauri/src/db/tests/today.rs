@@ -719,3 +719,126 @@ fn sent_between_skips_trashed_conversations() {
     database.upsert_thread(ME, &[message]).unwrap();
     assert!(sent_between(&database, Some(ME)).is_empty());
 }
+
+#[test]
+fn commitments_only_surface_unanswered_direct_requests_in_starred_mail() {
+    let db = database();
+    clear_seed_threads(&db);
+    let make = |id, thread, body: &str, from, to: &[&str], date| {
+        let mut message = unread(id, thread, date, from, to);
+        message.labels.push("STARRED".into());
+        message.body_text = body.into();
+        message
+    };
+    let first = "2026-10-23T09:00:00Z";
+    let second = "2026-10-23T10:00:00Z";
+    db.upsert_thread(
+        ME,
+        &[make(
+            "request",
+            "estimate",
+            "Could you confirm the estimate?",
+            "mira@example.test",
+            &[ME],
+            first,
+        )],
+    )
+    .unwrap();
+    db.upsert_thread(
+        ME,
+        &[make(
+            "copy",
+            "team",
+            "Please reply today.",
+            "pat@example.test",
+            &[ME, "other@example.test"],
+            first,
+        )],
+    )
+    .unwrap();
+    db.upsert_thread(
+        ME,
+        &[
+            make(
+                "before",
+                "answered",
+                "Please confirm the deadline.",
+                "pat@example.test",
+                &[ME],
+                first,
+            ),
+            make(
+                "answer",
+                "answered",
+                "Yes, Friday works.",
+                ME,
+                &["pat@example.test"],
+                second,
+            ),
+        ],
+    )
+    .unwrap();
+    db.upsert_thread(
+        ME,
+        &[make(
+            "quote",
+            "forward",
+            "For your files.\n\n---------- Forwarded message ----------\nPlease reply tomorrow.",
+            "pat@example.test",
+            &[ME],
+            first,
+        )],
+    )
+    .unwrap();
+    let rows = db.list_commitment_replies(Some(ME), false).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].message_id, "request");
+    assert_eq!(rows[0].excerpt, "Could you confirm the estimate?");
+    assert!(db
+        .list_commitment_replies(Some("other@example.test"), false)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn commitments_use_cached_ai_only_for_the_current_message_and_when_enabled() {
+    let db = database();
+    clear_seed_threads(&db);
+    let date = "2026-10-23T09:00:00Z";
+    let mut request = unread("request", "delivery", date, "mira@example.test", &[ME]);
+    request.body_text = "Which delivery date works for you?".into();
+    request.labels.push("STARRED".into());
+    db.upsert_thread(ME, &[request.clone()]).unwrap();
+    let thread_id = super::super::threads::local_thread_id(ME, "delivery");
+    let analysis = serde_json::from_value(serde_json::json!({
+        "proposals": [{"type": "task", "kind": "action", "title": "Reply with a delivery date", "confidence": 0.9,
+            "evidence": {"sourceMessageId": "request", "excerpt": "Which delivery date works for you?"}}],
+        "hiddenCount": 0
+    })).unwrap();
+    db.save_thread_analysis(&thread_id, date, &analysis, date, true, None)
+        .unwrap();
+    assert!(db
+        .list_commitment_replies(Some(ME), false)
+        .unwrap()
+        .is_empty());
+    let rows = db.list_commitment_replies(Some(ME), true).unwrap();
+    assert_eq!(
+        rows[0].suggested_title.as_deref(),
+        Some("Reply with a delivery date")
+    );
+
+    let mut newer = unread(
+        "update",
+        "delivery",
+        "2026-10-23T10:00:00Z",
+        "mira@example.test",
+        &[ME],
+    );
+    newer.body_text = "We found a slot.".into();
+    newer.labels.push("STARRED".into());
+    db.upsert_thread(ME, &[request, newer]).unwrap();
+    assert!(db
+        .list_commitment_replies(Some(ME), true)
+        .unwrap()
+        .is_empty());
+}

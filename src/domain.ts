@@ -722,6 +722,17 @@ export type TodayMail = {
   corresponded: boolean;
 };
 
+export type CommitmentReply = {
+  threadId: string;
+  accountId: string;
+  messageId: string;
+  sender: string;
+  sentAt: string;
+  subject: string;
+  excerpt: string;
+  suggestedTitle: string | null;
+};
+
 /** A promise in the user's sent mail that nothing sent since appears to keep. */
 export type OpenPromise = {
   thread: Thread;

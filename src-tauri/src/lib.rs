@@ -1581,6 +1581,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::mail::list_unread_counts,
         commands::mail::list_today_mail,
         commands::mail::list_open_promises,
+        commands::mail::list_commitment_replies,
         commands::mail::mailbox_unread_counts,
         commands::mail::list_all_mail_page,
         commands::mail::list_trash_page,

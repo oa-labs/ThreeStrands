@@ -18,7 +18,7 @@ use std::collections::HashMap;
 const SENT_FILTER: &str =
     "trashed = 0 AND EXISTS (SELECT 1 FROM json_each(t.labels_json) WHERE value = 'SENT')";
 /// Follow-ups remain visible after reading or archiving; Trash and Spam never qualify.
-const STARRED_FILTER: &str = "t.starred = 1 AND t.trashed = 0 AND NOT EXISTS (SELECT 1 FROM json_each(t.labels_json) WHERE value = 'SPAM')";
+pub(super) const STARRED_FILTER: &str = "t.starred = 1 AND t.trashed = 0 AND NOT EXISTS (SELECT 1 FROM json_each(t.labels_json) WHERE value = 'SPAM')";
 /// The Inbox orders by what others sent; the other folders by latest activity.
 const RECEIVED_ORDER: &str = "last_received_at DESC";
 const LATEST_ORDER: &str = "last_message_at DESC";
