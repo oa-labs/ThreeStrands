@@ -141,6 +141,55 @@ future writes. None of this lets a non-member read or write anything:
 snapshots are sealed with the group's key and signed by a trusted member.
 The previous design had the same trust model; it just exposed less.
 
+## Device authority for external operations
+
+Assign one owner to each operation that can make a conflicting or duplicate
+change outside ThreeStrands. Use the narrowest scope that needs one writer.
+An IMAP rename affects a mailbox namespace, so one device owns structural
+edits for that account. A scheduled send has its own payload and deadline, so
+each message has its own sending device. Ordinary replicated data continues to
+use the merge rules above.
+
+- **Assignment and eligibility.** Define how the initial owner is selected.
+  Check that the device supports the operation and has the required account
+  access and local state before it acts. Keep ownership stable across restarts
+  and periods offline. Expose the owner, whether this device can act, and what
+  the user can do when the owner is unavailable.
+- **Execution.** Check ownership where the external write is issued. Record
+  the operation and its outcome durably so a restart or retry can distinguish
+  work that never started from work that may already have succeeded. Treat a
+  replicated status report as information for the user. Execution requires a
+  separate, valid grant of authority and any local state the operation needs.
+- **Handoff.** Transfer ownership explicitly when the operation supports it.
+  The outgoing owner stops taking new work, settles or reconciles in-flight
+  work, and commits the loss of its permission before the incoming owner can
+  act. Bind the handoff to the current ownership revision so a stale handoff
+  cannot grant permission again. If the operation requires moving a payload
+  or receipt, the incoming owner must have it before starting.
+- **Unavailable owner.** A missed heartbeat, an expired timer, or removal
+  from Replicated Sync cannot establish that the previous owner has stopped
+  acting. An offline device may still have valid provider credentials. Pause
+  the affected operation when safe transfer is unavailable. Any proposed
+  automatic failover needs a way to prevent the old owner from acting or
+  guarantee that concurrent submissions of the same operation have only one
+  effect. A merge winner alone provides neither guarantee.
+
+IMAP structural edits use account-scoped ownership with explicit
+desktop-to-desktop handoff. [IMAP cross-device edits](imap-native-labels.md#cross-device-edits)
+
+Send Later keeps each message on the scheduling installation. Its keychain
+identity works independently of sync enrollment, and peers see status reports
+without receiving the send payload. A future handoff needs its own payload
+transfer and delivery reconciliation design.
+[Send Later ownership](scheduled-send-design.md#ownership-and-local-persistence)
+
+Test ownership with two devices, including an offline owner, a delayed or
+replayed handoff, restart during an external write, and an uncertain provider
+result. Check that each scoped operation has at most one authorized writer and
+that peers can report blocked work without executing it. Reuse the ownership
+and status conventions across features. Extract shared handoff code when
+another operation needs the same transitions.
+
 ## Tests
 
 - **`sync-core`:**

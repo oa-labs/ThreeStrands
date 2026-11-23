@@ -76,6 +76,8 @@ undo/restart contract.
 
 ## Ownership and local persistence
 
+Send Later uses per-message ownership under the [device authority contract](replicated-sync-design.md#device-authority-for-external-operations).
+
 Introduce a stable sending-installation UUID, stored in the OS keychain.
 Exclude restoration of the local identity from settings transfer and SQLite
 backup restoration; a public owner identifier in a summary cannot establish

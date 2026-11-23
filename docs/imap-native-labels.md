@@ -90,6 +90,8 @@ that used the parent can be relinked. [IMAP mailbox commands](https://www.rfc-ed
 
 ## Cross-device edits
 
+IMAP structural edits use the [account-scoped device authority contract](replicated-sync-design.md#device-authority-for-external-operations).
+
 ThreeStrands prefers an active device that introduced the account to
 Replicated Sync as its initial editing device. Every active device
 acknowledges the same assignment before ThreeStrands permits a rename or
