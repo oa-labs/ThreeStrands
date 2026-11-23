@@ -74,6 +74,9 @@ function noteTitle(source: MeetingNoteSource): string {
   return source.dailyDate ? dayLabel(source.dailyDate) : source.title;
 }
 
+/** Maximum attendees shown before collapsing the rest behind a "+N more" toggle. */
+const VISIBLE_ATTENDEE_LIMIT = 5;
+
 /**
  * Read-only preparation for one meeting: its own notes, earlier meetings in
  * its series, related mail, and open commitments, each opening its source.
@@ -86,8 +89,10 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
   const [choosingScope, setChoosingScope] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [drafting, setDrafting] = useState(false);
+  const [expandedAttendeesFor, setExpandedAttendeesFor] = useState<string | null>(null);
   const context = prep.context;
   const occurrenceHref = reference ? noteReferenceHref(reference) : undefined;
+  const showAllAttendees = expandedAttendeesFor !== null && expandedAttendeesFor === (occurrenceHref ?? event.id);
   const openSource = (source: MeetingNoteSource, link?: NoteReference) =>
     onOpenNote(source.noteId, source.kind === "linkedNote" ? undefined : link ? noteReferenceHref(link) : occurrenceHref);
 
@@ -136,6 +141,12 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
   const scopeAction = mailAccounts.length > 1 || conversations?.status === "scopeRequired"
     ? <button type="button" className="btn-link" onClick={() => setChoosingScope(true)}>{conversations?.status === "scopeRequired" ? "Choose Accounts…" : "Mail Accounts…"}</button>
     : null;
+  const attendees = context ? (context.event?.attendees ?? []) : (event.attendees ?? []);
+  const attendeesOmitted = context?.event?.attendeesOmitted ?? 0;
+  const hiddenAttendees = !showAllAttendees && attendees.length > VISIBLE_ATTENDEE_LIMIT
+    ? attendees.length - (VISIBLE_ATTENDEE_LIMIT - 1)
+    : 0;
+  const shownAttendees = hiddenAttendees > 0 ? attendees.slice(0, VISIBLE_ATTENDEE_LIMIT - 1) : attendees;
 
   return <section className="meeting-preparation" aria-label={`Preparation for ${event.title}`} aria-busy={prep.loading}>
     <ContextSectionHeader
@@ -143,8 +154,24 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
       icon={<ClipboardList size={ICON_SIZE.xs} />}
       actions={<button type="button" className="btn-icon btn-icon-sm" aria-label="Close Preparation" title="Close preparation" onClick={onClose}><X size={ICON_SIZE.sm} aria-hidden="true" /></button>}
     />
-    <p className="context-section-note">{event.title} · {formatEventTime(event)}{context?.event?.attendees.length ? ` · ${context.event.attendees.join(", ")}` : ""}</p>
-    {actions ? <div className="meeting-prep-actions" role="group" aria-label="Meeting actions">{actions}</div> : null}
+    <div className="meeting-prep-summary">
+      <h4 className="meeting-prep-title">{event.title}</h4>
+      <p className="meeting-prep-time">{formatEventTime(event)}</p>
+      {shownAttendees.length || attendeesOmitted > 0 ? (
+        <ul className="meeting-prep-attendees" aria-label="Attendees">
+          {shownAttendees.map((attendee) => <li key={attendee} title={attendee}>{attendee}</li>)}
+          {hiddenAttendees > 0 ? (
+            <li className="meeting-prep-attendees-more">
+              <button type="button" className="btn-link" onClick={() => setExpandedAttendeesFor(occurrenceHref ?? event.id)}>+{hiddenAttendees} more</button>
+            </li>
+          ) : null}
+          {hiddenAttendees === 0 && attendeesOmitted > 0 ? (
+            <li className="meeting-prep-attendees-more">+{attendeesOmitted} more</li>
+          ) : null}
+        </ul>
+      ) : null}
+      {actions ? <div className="meeting-prep-actions" role="group" aria-label="Meeting actions">{actions}</div> : null}
+    </div>
     {prep.loading && !context ? <p className="context-status" role="status">Loading preparation…</p> : null}
     {prep.error ? <p className="context-status" role="alert">{prep.error} <button type="button" className="btn-link" onClick={prep.reload}>Try Again</button></p> : null}
     {context ? <>
@@ -157,10 +184,6 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
             ? <p className="context-status"><button type="button" className="btn-link" onClick={onAddNote}>Add Note</button> to start this meeting's notes in its day's note.</p> : null}
         </>} />
       {onFollowThroughSaved || onOpenFollowUp ? <ContextSection id="meeting-prep-follow-through" title="Follow-through" count={context.followThrough.items.length}
-        actions={<>
-          {onFollowThroughSaved ? <button type="button" className="btn-link" onClick={() => setReviewing(true)}>Review Follow-through</button> : null}
-          {onOpenFollowUp ? <button type="button" className="btn-link" onClick={() => setDrafting(true)}>Draft Follow-up</button> : null}
-        </>}
         rows={context.followThrough.items.map((item) => <ContextRow
           key={`${item.noteId}:${item.start}`}
           icon={<ClipboardCheck size={ICON_SIZE.sm} />}
@@ -169,7 +192,11 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
           onActivate={() => onOpenNote(item.noteId, occurrenceHref)}
         />)}
         footer={context.followThrough.status === "unavailable" ? <p className="context-status">{context.followThrough.message}</p>
-          : context.followThrough.items.length ? null : <p className="context-status">Not reviewed yet.</p>} /> : null}
+          : context.followThrough.items.length ? null : <p className="context-status">Not reviewed yet.</p>}
+        closing={<div className="meeting-prep-section-actions">
+          {onFollowThroughSaved ? <button type="button" className="btn btn-sm" onClick={() => setReviewing(true)}>Review Follow-through</button> : null}
+          {onOpenFollowUp ? <button type="button" className="btn btn-sm" onClick={() => setDrafting(true)}>Draft Follow-up</button> : null}
+        </div>} /> : null}
       <ContextSection id="meeting-prep-previous" title="Previous meetings" count={context.previousMeetings.items.length}
         rows={occurrenceRows(context.previousMeetings.items)}
         footer={sectionStatus(context.previousMeetings, context.event?.seriesId ? "No notes from earlier meetings in this series." : "This meeting doesn't repeat.")} />

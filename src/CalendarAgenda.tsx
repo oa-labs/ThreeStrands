@@ -1,7 +1,7 @@
-import { CalendarDays, ClipboardList, ListChecks, NotebookPen } from "lucide-react";
-import { useCallback, useRef, type ReactNode } from "react";
+import { CalendarDays, Check, ClipboardList, ListChecks, ListFilter, NotebookPen } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
-import { calendarColorStyle, useCalendarColors } from "./calendarColors";
+import { calendarColorStyle, useCalendarColors, type CalendarColorMap } from "./calendarColors";
 import { addDays, formatEventTime, startOfLocalDay } from "./calendarTime";
 import { agendaEventsFor, formatClockTime, isDeclined, isPastEvent } from "./agendaEvents";
 import { responseLabel } from "./calendarResponse";
@@ -11,6 +11,10 @@ import type { CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { isWorkingLocation, WorkingLocationIcon } from "./WorkingLocation";
 import { isPreparable, preparationKey } from "./meetingPrep";
+import { meetingEventReference } from "./meetingNoteEntry";
+import { noteReferenceHref } from "./noteEntities";
+import { useEscapeDismiss } from "./useEscapeDismiss";
+import { readLocalStorage, writeLocalStorage } from "./useLocalStorageState";
 
 import { usePullToRefresh } from "./usePullToRefresh";
 import { PullToRefreshStatus } from "./PullToRefreshStatus";
@@ -55,7 +59,62 @@ type AgendaProps = {
    * section's note instead.
    */
   workingLocation?: ScheduleEvent | null;
+  /**
+   * When set, offers a calendar filter in the section heading (when more than
+   * one calendar is selected) and remembers hidden calendars under this key.
+   */
+  calendarFilterKey?: string;
 };
+
+const AGENDA_FILTER_PREFIX = "threestrands.agenda.hiddenCalendars.";
+const EMPTY_HIDDEN = new Set<string>();
+
+/** Stable per-calendar key safe for arbitrary account emails and calendar ids. */
+export function agendaCalendarOptionKey(calendar: Pick<CalendarOption, "accountId" | "id">): string {
+  return JSON.stringify([calendar.accountId, calendar.id]);
+}
+
+function readHiddenCalendars(storageKey: string): Set<string> {
+  return readLocalStorage(storageKey, (raw) => {
+    const saved: unknown = JSON.parse(raw ?? "[]");
+    return new Set(Array.isArray(saved) ? saved.filter((item): item is string => typeof item === "string") : []);
+  }, new Set<string>());
+}
+
+const serializeHiddenCalendars = (keys: ReadonlySet<string>) => JSON.stringify([...keys]);
+
+function useHiddenAgendaCalendars(filterKey?: string) {
+  const storageKey = filterKey ? `${AGENDA_FILTER_PREFIX}${filterKey}` : "";
+  const [state, setState] = useState(() => ({
+    key: storageKey,
+    hidden: storageKey ? readHiddenCalendars(storageKey) : EMPTY_HIDDEN,
+  }));
+  if (state.key !== storageKey) {
+    setState({ key: storageKey, hidden: storageKey ? readHiddenCalendars(storageKey) : EMPTY_HIDDEN });
+  }
+  const hidden = state.key === storageKey ? state.hidden : EMPTY_HIDDEN;
+  const toggle = useCallback((calendar: CalendarOption) => {
+    if (!storageKey) return;
+    const key = agendaCalendarOptionKey(calendar);
+    setState((current) => {
+      const next = new Set(current.key === storageKey ? current.hidden : readHiddenCalendars(storageKey));
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      writeLocalStorage(storageKey, serializeHiddenCalendars(next));
+      return { key: storageKey, hidden: next };
+    });
+  }, [storageKey]);
+  const showAll = useCallback(() => {
+    if (!storageKey) return;
+    setState((current) => {
+      if (current.key === storageKey && current.hidden.size === 0) return current;
+      const next = new Set<string>();
+      writeLocalStorage(storageKey, serializeHiddenCalendars(next));
+      return { key: storageKey, hidden: next };
+    });
+  }, [storageKey]);
+  return { hidden, toggle, showAll };
+}
 
 type AgendaDay = "today" | "tomorrow" | "chosen";
 
@@ -84,14 +143,20 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, taskFor, onOpenTask, selectedKey = null, describe, now, day = "today", id, showDate = true, markConflicts = false, workingLocation, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote, onPrepare, taskFor, onOpenTask, selectedKey = null, describe, now, day = "today", id, showDate = true, markConflicts = false, workingLocation, calendarFilterKey, schedule: { events, loading, error, reload, refresh: refreshSchedule } }: AgendaProps & { schedule: Schedule }) {
   const agendaRef = useRef<HTMLElement>(null);
   const refresh = useCallback(async () => { if (refreshSchedule) await refreshSchedule(); else reload(); }, [refreshSchedule, reload]);
   const pull = usePullToRefresh(agendaRef, pullToRefresh ? refresh : undefined);
   const colors = useCalendarColors();
+  const filter = useHiddenAgendaCalendars(calendarFilterKey);
   const selected = calendars.filter((calendar) => calendar.selected);
-  const agenda = agendaEventsFor(events, today, calendars).filter((event) => workingLocation === undefined || !isWorkingLocation(event));
-  const multipleAccounts = new Set(selected.map((calendar) => calendar.accountId)).size > 1;
+  const canFilterCalendars = Boolean(calendarFilterKey) && selected.length > 1;
+  const visibleCalendars = canFilterCalendars
+    ? selected.filter((calendar) => !filter.hidden.has(agendaCalendarOptionKey(calendar)))
+    : selected;
+  const hiddenSelectedCount = selected.length - visibleCalendars.length;
+  const agenda = agendaEventsFor(events, today, visibleCalendars).filter((event) => workingLocation === undefined || !isWorkingLocation(event));
+  const multipleAccounts = new Set(visibleCalendars.map((calendar) => calendar.accountId)).size > 1;
   // One calendar needs no name on each row; the name (often the account address) only tells calendars apart.
   const multipleCalendars = new Set(agenda.map((event) => `${event.accountId}\u0000${event.calendarId}`)).size > 1;
   const conflicts = markConflicts ? agendaConflicts(agenda) : new Map<ScheduleEvent, ScheduleEvent[]>();
@@ -102,7 +167,7 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
   const rows: ReactNode[] = [];
   agenda.forEach((event, index) => {
     if (now && pastCount > 0 && index === upcomingIndex) rows.push(<NowDivider key="now" now={now} />);
-    const calendar = selected.find((calendar) => calendar.accountId === event.accountId && calendar.id === event.calendarId);
+    const calendar = visibleCalendars.find((calendar) => calendar.accountId === event.accountId && calendar.id === event.calendarId);
     // A calendar named after its account already says which account it is.
     const account = multipleAccounts && calendar?.name.toLocaleLowerCase() !== event.accountId.toLocaleLowerCase() ? event.accountId : null;
     const overlapping = conflicts.get(event) ?? [];
@@ -144,20 +209,123 @@ function Agenda({ pullToRefresh = true, today, calendars, onOpenEvent, onAddNote
     title={text.title}
     note={dateNote}
     count={agenda.length}
+    actions={canFilterCalendars ? <AgendaCalendarFilter calendars={selected} hidden={filter.hidden} colors={colors} onToggle={filter.toggle} onShowAll={filter.showAll} /> : undefined}
     rows={rows}
     limit={day === "tomorrow" ? TOMORROW_AGENDA_ROWS : rows.length}
     status={<PullToRefreshStatus {...pull} />}
     footer={<>
       {loading ? <p className="context-status" role="status">{text.loading}</p> : null}
       {error ? <p className="context-status">{text.title} couldn't be fully loaded. <button type="button" className="btn-link" onClick={reload}>Try Again</button></p> : null}
-      {!loading && !error && agenda.length === 0 ? <p className="context-status">{selected.length ? text.empty : `Select a calendar to see ${day === "chosen" ? "this day's" : "today's"} agenda.`}</p> : null}
+      {!loading && !error && agenda.length === 0 ? <p className="context-status">
+        {!selected.length
+          ? `Select a calendar to see ${day === "chosen" ? "this day's" : "today's"} agenda.`
+          : visibleCalendars.length === 0
+            ? <>All calendars are hidden. <button type="button" className="btn-link" onClick={filter.showAll}>Show All</button></>
+            : hiddenSelectedCount > 0
+              ? <>{text.empty} <button type="button" className="btn-link" onClick={filter.showAll}>Show All</button></>
+              : text.empty}
+      </p> : null}
     </>}
   />;
 }
 
+function AgendaCalendarFilter({ calendars, hidden, colors, onToggle, onShowAll }: {
+  calendars: readonly CalendarOption[];
+  hidden: ReadonlySet<string>;
+  colors: CalendarColorMap;
+  onToggle(calendar: CalendarOption): void;
+  onShowAll(): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const shownCount = calendars.filter((calendar) => !hidden.has(agendaCalendarOptionKey(calendar))).length;
+  const filtered = shownCount < calendars.length;
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (anchorRef.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open]);
+
+  const close = useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
+  const label = filtered ? `Filter calendars, showing ${shownCount} of ${calendars.length}` : "Filter calendars";
+  return (
+    <div className="agenda-filter-anchor" ref={anchorRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`btn-icon btn-icon-sm agenda-filter-trigger${filtered ? " active" : ""}`}
+        aria-label={label}
+        title={filtered ? `Filter calendars (showing ${shownCount} of ${calendars.length})` : "Filter calendars"}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <ListFilter size={ICON_SIZE.sm} aria-hidden="true" />
+      </button>
+      {open ? <AgendaCalendarFilterMenu calendars={calendars} hidden={hidden} colors={colors} filtered={filtered} onToggle={onToggle} onShowAll={onShowAll} onClose={close} /> : null}
+    </div>
+  );
+}
+
+function AgendaCalendarFilterMenu({ calendars, hidden, colors, filtered, onToggle, onShowAll, onClose }: {
+  calendars: readonly CalendarOption[];
+  hidden: ReadonlySet<string>;
+  colors: CalendarColorMap;
+  filtered: boolean;
+  onToggle(calendar: CalendarOption): void;
+  onShowAll(): void;
+  onClose(): void;
+}) {
+  useEscapeDismiss(onClose);
+  const multipleAccounts = new Set(calendars.map((calendar) => calendar.accountId)).size > 1;
+  return (
+    <div className="filters-menu agenda-filter-menu" role="menu" aria-label="Filter calendars">
+      <div className="agenda-filter-menu-header">
+        <span className="filters-menu-title">Calendars</span>
+        {filtered ? <button type="button" className="btn-link" onClick={onShowAll}>Show All</button> : null}
+      </div>
+      {calendars.map((calendar) => {
+        const key = agendaCalendarOptionKey(calendar);
+        const checked = !hidden.has(key);
+        const showAccount = multipleAccounts && calendar.name.toLocaleLowerCase() !== calendar.accountId.toLocaleLowerCase();
+        return (
+          <button
+            key={key}
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={checked}
+            className={`filters-menu-item agenda-filter-item${checked ? " active" : ""}`}
+            onClick={() => onToggle(calendar)}
+          >
+            <span className="filters-menu-item-label agenda-filter-item-label">
+              <span className="filters-menu-item-check" aria-hidden="true">{checked ? <Check size={ICON_SIZE.xs} /> : null}</span>
+              <span className="agenda-filter-swatch" style={calendarColorStyle(colors, calendar.accountId, calendar.id)} aria-hidden="true" />
+              <span className="agenda-filter-text">
+                <span className="agenda-filter-name">{calendar.name}</span>
+                {showAccount ? <small className="agenda-filter-account">{calendar.accountId}</small> : null}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Prepare for one agenda event: its notes, earlier meetings, mail, and commitments. */
 export function PrepareButton({ event, onPrepare, pressed }: { event: ScheduleEvent; onPrepare(event: ScheduleEvent): void; pressed?: boolean }) {
-  return <button type="button" className="btn-icon btn-icon-sm" aria-label={`Prepare for ${event.title}`} title="Prepare" aria-pressed={pressed} onClick={() => onPrepare(event)}><ClipboardList size={ICON_SIZE.sm} aria-hidden="true" /></button>;
+  const reference = meetingEventReference(event);
+  return <button type="button" className="btn-icon btn-icon-sm" data-prepare-trigger={reference ? `agenda:${noteReferenceHref(reference)}` : undefined} aria-label={`Prepare for ${event.title}`} title="Prepare" aria-pressed={pressed} onClick={() => onPrepare(event)}><ClipboardList size={ICON_SIZE.sm} aria-hidden="true" /></button>;
 }
 
 /** Add Note for one agenda event. */

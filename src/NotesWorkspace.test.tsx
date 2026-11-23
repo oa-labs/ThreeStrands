@@ -1331,5 +1331,52 @@ describe("Notes workspace", () => {
       await dayHeading(todayTarget().date);
       expect(screen.queryByRole("region", { name: "Agenda" })).not.toBeInTheDocument();
     });
+
+    it("opens meeting preparation from the daily note agenda and returns focus to that agenda row on close", async () => {
+      const sync = meeting("2031-07-10", "Marketing Power Hour", 14);
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [sync], errors: [] });
+      const preparation = vi.fn((event: ScheduleEvent, close: () => void) => (
+        <section aria-label={`Preparation for ${event.title}`}>
+          <p>{event.title}</p>
+          <button type="button" onClick={close}>Close preparation</button>
+        </section>
+      ));
+      writeLastNoteTarget({ kind: "daily", date: "2031-07-10" });
+      render(<NotesWorkspace calendars={calendars} onOpenEvent={vi.fn()} onAddNote={vi.fn()} renderMeetingPreparation={preparation} />);
+      const agenda = within(await screen.findByRole("region", { name: "Agenda" }));
+      const prepare = await agenda.findByRole("button", { name: "Prepare for Marketing Power Hour" });
+      fireEvent.click(prepare);
+      const panel = await screen.findByRole("region", { name: "Preparation for Marketing Power Hour" });
+      expect(screen.getByRole("group", { name: "Meeting Preparation" })).toHaveFocus();
+      fireEvent.click(within(panel).getByRole("button", { name: "Close preparation" }));
+      expect(screen.queryByRole("region", { name: "Preparation for Marketing Power Hour" })).not.toBeInTheDocument();
+      await waitFor(() => expect(within(screen.getByRole("region", { name: "Agenda" })).getByRole("button", { name: "Prepare for Marketing Power Hour" })).toHaveFocus());
+    });
+
+    it("remembers the daily note agenda calendar filter across days", async () => {
+      const twoCalendars: CalendarOption[] = [
+        { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: true, writable: true },
+        { id: "personal", accountId: "home@example.com", name: "Personal", primary: true, selected: true, writable: true },
+      ];
+      const workToday = { ...meeting("2031-07-11", "Work sync", 10), accountId: "work@example.com", calendarId: "work" };
+      const personalToday = { ...meeting("2031-07-11", "Dentist", 11), accountId: "home@example.com", calendarId: "personal" };
+      const workNext = { ...meeting("2031-07-12", "Planning", 10), accountId: "work@example.com", calendarId: "work" };
+      const personalNext = { ...meeting("2031-07-12", "Haircut", 11), accountId: "home@example.com", calendarId: "personal" };
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [workToday, personalToday, workNext, personalNext], errors: [] });
+      writeLastNoteTarget({ kind: "daily", date: "2031-07-11" });
+      render(<NotesWorkspace calendars={twoCalendars} onOpenEvent={vi.fn()} />);
+      const agenda = within(await screen.findByRole("region", { name: "Agenda" }));
+      await agenda.findByRole("button", { name: /^Dentist/ });
+      fireEvent.click(agenda.getByRole("button", { name: "Filter calendars" }));
+      fireEvent.click(within(screen.getByRole("menu", { name: "Filter calendars" })).getByRole("menuitemcheckbox", { name: /Personal/ }));
+      expect(agenda.queryByText("Dentist")).not.toBeInTheDocument();
+      expect(agenda.getByText("Work sync")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Next Day" }));
+      await dayHeading("2031-07-12");
+      const nextAgenda = within(await screen.findByRole("region", { name: "Agenda" }));
+      await nextAgenda.findByText("Planning");
+      expect(nextAgenda.queryByText("Haircut")).not.toBeInTheDocument();
+    });
   });
 });

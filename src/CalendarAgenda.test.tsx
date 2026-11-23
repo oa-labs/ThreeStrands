@@ -256,3 +256,65 @@ describe("Open task in the agenda", () => {
     expect(screen.queryByRole("button", { name: /^Open task/ })).not.toBeInTheDocument();
   });
 });
+
+describe("Calendar filter in the agenda", () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  const workAndPersonal: CalendarOption[] = [
+    { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: true, writable: true },
+    { id: "personal", accountId: "home@example.com", name: "Personal Event Calendar", primary: true, selected: true, writable: true },
+  ];
+  const mixedEvents = [
+    event("Marketing Power Hour", 14, 15, { accountId: "work@example.com", calendarId: "work" }),
+    event("Call tire rack", 10, 11, { accountId: "home@example.com", calendarId: "personal" }),
+  ];
+
+  it("omits the filter control without a filter key or when only one calendar is selected", () => {
+    localStorage.clear();
+    const { rerender } = render(<CalendarAgenda today={day} day="chosen" calendars={workAndPersonal} onOpenEvent={vi.fn()}
+      schedule={{ events: mixedEvents, loading: false, error: null, reload: vi.fn() }} />);
+    expect(screen.queryByRole("button", { name: /Filter calendars/ })).not.toBeInTheDocument();
+    expect(localStorage.length).toBe(0);
+
+    rerender(<CalendarAgenda today={day} day="chosen" calendarFilterKey="notes-agenda" calendars={calendars} onOpenEvent={vi.fn()}
+      schedule={{ events: [event("Standup", 9, 10)], loading: false, error: null, reload: vi.fn() }} />);
+    expect(screen.queryByRole("button", { name: /Filter calendars/ })).not.toBeInTheDocument();
+  });
+
+  it("filters events by calendar, remembers the choice, and restores all calendars on Show All", () => {
+    const { unmount } = render(<CalendarAgenda today={day} day="chosen" calendarFilterKey="notes-agenda" calendars={workAndPersonal} onOpenEvent={vi.fn()}
+      schedule={{ events: mixedEvents, loading: false, error: null, reload: vi.fn() }} />);
+    const agenda = screen.getByRole("region", { name: "Agenda" });
+    expect(agendaOrder(agenda)).toEqual(["Call tire rack", "Marketing Power Hour"]);
+
+    const trigger = within(agenda).getByRole("button", { name: "Filter calendars" });
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu", { name: "Filter calendars" });
+    const personalItem = within(menu).getByRole("menuitemcheckbox", { name: /Personal Event Calendar/ });
+    expect(personalItem).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(personalItem);
+    expect(personalItem).toHaveAttribute("aria-checked", "false");
+    expect(agendaOrder(agenda)).toEqual(["Marketing Power Hour"]);
+    // When only one calendar remains visible, redundant calendar labels disappear from rows.
+    expect(within(agenda).getByRole("button", { name: /^Marketing Power Hour/ })).not.toHaveTextContent("Work");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Filter calendars" })).not.toBeInTheDocument();
+    expect(within(agenda).getByRole("button", { name: "Filter calendars, showing 1 of 2" })).toHaveFocus();
+    unmount();
+
+    // Remounting reads the remembered filter.
+    render(<CalendarAgenda today={day} day="chosen" calendarFilterKey="notes-agenda" calendars={workAndPersonal} onOpenEvent={vi.fn()}
+      schedule={{ events: mixedEvents, loading: false, error: null, reload: vi.fn() }} />);
+    const reloaded = screen.getByRole("region", { name: "Agenda" });
+    expect(agendaOrder(reloaded)).toEqual(["Marketing Power Hour"]);
+
+    // Hiding the remaining calendar explains why the agenda is empty and offers Show All.
+    fireEvent.click(within(reloaded).getByRole("button", { name: "Filter calendars, showing 1 of 2" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "Filter calendars" })).getByRole("menuitemcheckbox", { name: /Work/ }));
+    expect(within(reloaded).getByText("All calendars are hidden.")).toBeInTheDocument();
+    fireEvent.click(within(reloaded).getAllByRole("button", { name: "Show All" })[0]!);
+    expect(agendaOrder(reloaded)).toEqual(["Call tire rack", "Marketing Power Hour"]);
+    expect(within(reloaded).getByRole("button", { name: "Filter calendars" })).not.toHaveClass("active");
+  });
+});

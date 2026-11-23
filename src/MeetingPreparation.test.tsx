@@ -98,6 +98,8 @@ describe("MeetingPreparation", () => {
     const view = within(await screen.findByRole("region", { name: "Preparation for Meeting evt" }));
     await view.findByText(/Decided to ship/);
     expect(document.activeElement).toBe(document.body);
+    expect(view.getByRole("heading", { name: "Meeting evt" })).toBeInTheDocument();
+    expect(within(view.getByRole("list", { name: "Attendees" })).getByText("ann@example.org")).toBeInTheDocument();
     expect(view.queryByText(/threestrands-task/)).not.toBeInTheDocument();
 
     fireEvent.click(view.getByRole("button", { name: /Decided to ship/ }));
@@ -176,6 +178,29 @@ describe("MeetingPreparation", () => {
     expect(within(view.getByRole("group", { name: "Meeting actions" })).getByRole("button", { name: "Reserve Prep Time" })).toBeInTheDocument();
     fireEvent.click(within(view.getByRole("region", { name: "This meeting" })).getByRole("button", { name: "Add Note" }));
     expect(onAddNote).toHaveBeenCalled();
+  });
+
+  it("collapses long attendee lists behind a toggle and places follow-through actions inside the section body", async () => {
+    const base = context();
+    const six = ["a@example.org", "b@example.org", "c@example.org", "d@example.org", "e@example.org", "f@example.org"];
+    vi.spyOn(mailClient, "meetingContext").mockResolvedValue(context({
+      event: { ...base.event!, attendees: six },
+    }));
+    renderPrep({ onFollowThroughSaved: vi.fn(), onOpenFollowUp: vi.fn() });
+    const view = within(await screen.findByRole("region", { name: "Preparation for Meeting evt" }));
+    const attendees = within(await view.findByRole("list", { name: "Attendees" }));
+    expect(attendees.getByText("a@example.org")).toBeInTheDocument();
+    expect(attendees.queryByText("e@example.org")).not.toBeInTheDocument();
+    fireEvent.click(attendees.getByRole("button", { name: "+2 more" }));
+    expect(attendees.getByText("e@example.org")).toBeInTheDocument();
+    expect(attendees.getByText("f@example.org")).toBeInTheDocument();
+
+    const followThrough = view.getByRole("region", { name: "Follow-through" });
+    const header = followThrough.querySelector(".context-section-header") as HTMLElement;
+    expect(within(header).queryByRole("button", { name: "Review Follow-through" })).not.toBeInTheDocument();
+    expect(within(header).queryByRole("button", { name: "Draft Follow-up" })).not.toBeInTheDocument();
+    expect(within(followThrough).getByRole("button", { name: "Review Follow-through" })).toBeInTheDocument();
+    expect(within(followThrough).getByRole("button", { name: "Draft Follow-up" })).toBeInTheDocument();
   });
 
   it("offers Try Again after a failure", async () => {

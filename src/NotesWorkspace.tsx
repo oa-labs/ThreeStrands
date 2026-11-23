@@ -44,6 +44,8 @@ import { NotesDayCalendar } from "./NotesDayCalendar";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { parseCalendarDate } from "./DatePickerField";
 import { addDays, dateInputValue } from "./calendarTime";
+import { meetingEventReference } from "./meetingNoteEntry";
+import { noteReferenceHref } from "./noteEntities";
 
 /** Most notes the Recent list shows. */
 const RECENT_LIMIT = 200;
@@ -479,7 +481,7 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
   const stale = editor.saveState.kind === "stale" ? editor.saveState : null;
   const daily = target.kind === "daily";
   const readOnly = Boolean(stale) || editor.loading || inTrash || noteConflicts.length > 0;
-  const preparationVisible = Boolean(preparing?.noteId === noteId && !inTrash && renderMeetingPreparation && railVisible);
+  const preparationVisible = Boolean(preparing?.noteId === selectedKey && !inTrash && renderMeetingPreparation && railVisible);
   useLayoutEffect(() => {
     onPreparationVisibilityChange?.(preparationVisible);
     return () => onPreparationVisibilityChange?.(false);
@@ -490,12 +492,25 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
       preparationPane.current?.focus();
     }
   }, [preparationVisible]);
+  const openAgendaPreparation = (event: ScheduleEvent) => {
+    const reference = meetingEventReference(event);
+    if (!reference || !renderMeetingPreparation || inTrash || readOnly) return;
+    const targetKey = selectedKey;
+    void act(async () => {
+      await editor.flush();
+      if (editor.unsaved()) throw new Error("Resolve your unsaved note first.");
+      if (openKey.current !== targetKey) return;
+      preparationTrigger.current = `agenda:${noteReferenceHref(reference)}`;
+      focusPreparation.current = true;
+      setPreparing({ noteId: targetKey, event });
+    });
+  };
   const closePreparation = () => {
     if (!preparationVisible) return;
     setPreparing(null);
     requestAnimationFrame(() => {
-      const trigger = [...document.querySelectorAll<HTMLButtonElement>("[data-prepare-reference]")]
-        .find((button) => button.dataset.prepareReference === preparationTrigger.current && !button.closest("[hidden]"));
+      const trigger = [...document.querySelectorAll<HTMLButtonElement>("[data-prepare-trigger]")]
+        .find((button) => button.dataset.prepareTrigger === preparationTrigger.current && !button.closest("[hidden]"));
       if (trigger) trigger.focus();
       else focusSelectedRow();
     });
@@ -686,14 +701,14 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
       {textSelected && !readOnly && !editor.loading ? <div className="notes-format-note"><FormattingHints /></div> : null}
       </div>
       <WorkspaceContextRail label="Note context" onReturn={focusSelectedRow} onVisibilityChange={setRailVisible}>
-        {preparing?.noteId === noteId && !inTrash && renderMeetingPreparation ? <div ref={preparationPane} className="notes-meeting-preparation" tabIndex={-1} role="group" aria-label="Meeting Preparation" onKeyDown={(event) => {
+        {preparing?.noteId === selectedKey && !inTrash && renderMeetingPreparation ? <div ref={preparationPane} className="notes-meeting-preparation" tabIndex={-1} role="group" aria-label="Meeting Preparation" onKeyDown={(event) => {
           if (event.key === "Escape" && !event.nativeEvent.isComposing && !event.defaultPrevented && event.currentTarget.contains(event.target as Node) && !escapeDismissPending()) {
             event.preventDefault(); event.stopPropagation(); closePreparation();
           }
         }}>{renderMeetingPreparation(preparing.event, closePreparation, preparing.noteId)}</div> : <>
         <NotesDayCalendar selected={daily ? target.date : null} today={today.date} onSelect={selectDay} revision={searchRevision} reveal={dayChosen} />
-        {daily && calendars?.length && onOpenEvent ? <CalendarAgenda key={target.date} today={parseCalendarDate(target.date) ?? new Date()} day="chosen" id="notes-agenda" showDate={false}
-          calendars={calendars} onOpenEvent={onOpenEvent} onAddNote={onAddNote} /> : null}
+        {daily && calendars?.length && onOpenEvent ? <CalendarAgenda key={target.date} today={parseCalendarDate(target.date) ?? new Date()} day="chosen" id="notes-agenda" calendarFilterKey="notes-agenda" showDate={false}
+          calendars={calendars} onOpenEvent={onOpenEvent} onAddNote={onAddNote} onPrepare={renderMeetingPreparation && !inTrash ? openAgendaPreparation : undefined} /> : null}
         <ContextSectionHeader title="Note Details" icon={<NotebookText size={ICON_SIZE.xs} />} />
         {entityDocument?.warning ? <p role="alert" className="form-error">{entityDocument.warning}</p> : null}
         {entityLinks.length || !readOnly ? <ContextSection id="note-links" title="Links" count={entityLinks.length || undefined}
@@ -703,16 +718,19 @@ export function NotesWorkspace({ request = null, onRequestConsumed, refreshKey =
           </div> : undefined}
           actions={entityLinks.length && !readOnly ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Link to…" title="Link to a contact, conversation, task, or event" onClick={() => setLinkPicker(true)}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
           rows={entityLinks.map((link) => <ContextRow key={link.href} icon={LINK_ICON[link.reference.kind as keyof typeof LINK_ICON]} title={link.label} detail={link.reference.account}
-            actions={link.reference.kind === "event" && renderMeetingPreparation && !inTrash ? [<button key="prepare" type="button" className="btn-icon btn-icon-sm" data-prepare-reference={link.href} aria-label={`Prepare Meeting: ${link.label}`} title="Prepare meeting" disabled={busy || readOnly} onClick={() => void act(async () => {
-              await editor.flush();
-              if (editor.unsaved()) throw new Error("Resolve your unsaved note first.");
-              const event = await mailClient.resolveNoteEvent(link.reference);
-              if (!event) throw new Error("Unavailable on this device");
-              if (openNoteId.current !== noteId) return;
-              preparationTrigger.current = link.href;
-              focusPreparation.current = true;
-              setPreparing({ noteId: noteId!, event });
-            })}><ClipboardList size={ICON_SIZE.sm} /></button>] : undefined}
+            actions={link.reference.kind === "event" && renderMeetingPreparation && !inTrash ? [<button key="prepare" type="button" className="btn-icon btn-icon-sm" data-prepare-reference={link.href} data-prepare-trigger={`link:${link.href}`} aria-label={`Prepare Meeting: ${link.label}`} title="Prepare meeting" disabled={busy || readOnly} onClick={() => {
+              const targetKey = selectedKey;
+              void act(async () => {
+                await editor.flush();
+                if (editor.unsaved()) throw new Error("Resolve your unsaved note first.");
+                const event = await mailClient.resolveNoteEvent(link.reference);
+                if (!event) throw new Error("Unavailable on this device");
+                if (openKey.current !== targetKey) return;
+                preparationTrigger.current = `link:${link.href}`;
+                focusPreparation.current = true;
+                setPreparing({ noteId: targetKey, event });
+              });
+            }}><ClipboardList size={ICON_SIZE.sm} /></button>] : undefined}
             onActivate={() => void act(async () => { await editor.flush(); if (editor.unsaved()) throw new Error("Resolve your unsaved note first."); await onOpenEntity?.(link.href); })} />)} /> : null}
         {entityDocument?.noteId === noteId && entityDocument?.items.length && !inTrash ? <NoteChecklistSection key={noteId} items={entityDocument.items}
           disabled={readOnly || busy || !entityItemsCurrent} onChange={(item, patch) => void act(async () => { await changeNoteItem(noteId!, item.id, editor.note!.updatedAt, patch); })} /> : null}
