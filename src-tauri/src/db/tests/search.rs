@@ -862,50 +862,157 @@ fn search_supports_offset_pagination() {
     assert_ne!(first_page[0].id, second_page[0].id);
 }
 
-#[test]
-fn search_results_are_ordered_by_recency_over_relevance() {
-    let database = database();
-    // The older thread repeats the query term, which FTS5's bm25 rank
-    // would normally score as more relevant than a single mention — but
-    // recency should still win, since a newer email is more likely to be
-    // what the user is looking for.
-    database
-        .upsert_thread(
-            "default",
-            &[message(
-                "old-message",
-                "old-thread",
-                "2026-01-01T00:00:00Z",
-                "recency-sort-term recency-sort-term recency-sort-term",
-            )],
-        )
-        .unwrap();
-    database
-        .upsert_thread(
-            "default",
-            &[message(
-                "new-message",
-                "new-thread",
-                "2026-02-01T00:00:00Z",
-                "recency-sort-term",
-            )],
-        )
-        .unwrap();
+/// RFC 3339 timestamp `days` before the real clock, which the ranking's
+/// `julianday('now')` also reads, so the age factors cannot drift.
+fn days_ago(days: i64) -> String {
+    (chrono::Utc::now() - chrono::Duration::days(days))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
 
-    let matches = database
+fn search_provider_ids(database: &Database, query: &str) -> Vec<String> {
+    database
         .search_threads(
             &SearchThreadsRequest {
-                query: "recency-sort-term".into(),
+                query: query.into(),
                 limit: None,
                 offset: None,
                 include_archived: None,
             },
             Some("default"),
         )
+        .unwrap()
+        .into_iter()
+        .map(|thread| thread.provider_thread_id)
+        .collect()
+}
+
+fn add_search_thread(database: &Database, id: &str, date: &str, body: &str) {
+    database
+        .upsert_thread(
+            "default",
+            &[message(&format!("{id}-message"), id, date, body)],
+        )
         .unwrap();
-    assert_eq!(matches.len(), 2);
-    assert_eq!(matches[0].provider_thread_id, "new-thread");
-    assert_eq!(matches[1].provider_thread_id, "old-thread");
+}
+
+#[test]
+fn search_results_rank_high_relevance_over_modest_recency() {
+    let database = database();
+    // The older thread (11 days apart) repeats the term many times, so its
+    // much higher bm25 relevance beats the newer single mention.
+    add_search_thread(
+        &database,
+        "old-thread",
+        &days_ago(14),
+        &"recency-sort-term ".repeat(12),
+    );
+    add_search_thread(&database, "new-thread", &days_ago(3), "recency-sort-term");
+    assert_eq!(
+        search_provider_ids(&database, "recency-sort-term"),
+        vec!["old-thread", "new-thread"]
+    );
+}
+
+#[test]
+fn search_recency_wins_when_relevance_is_equal() {
+    let database = database();
+    for (id, age) in [("tie-a", 200), ("tie-b", 5), ("tie-c", 60)] {
+        add_search_thread(&database, id, &days_ago(age), "tiebreak-sort-term");
+    }
+    assert_eq!(
+        search_provider_ids(&database, "tiebreak-sort-term"),
+        vec!["tie-b", "tie-c", "tie-a"]
+    );
+}
+
+#[test]
+fn search_very_old_thread_loses_to_recent_one_with_modest_relevance_gap() {
+    let database = database();
+    // Three years old with only a modestly higher term count (3 vs 1); the
+    // age discount (about 13x) outweighs the relevance edge.
+    add_search_thread(
+        &database,
+        "ancient-thread",
+        &days_ago(3 * 365),
+        "age-sort-term age-sort-term age-sort-term",
+    );
+    add_search_thread(&database, "recent-thread", &days_ago(2), "age-sort-term");
+    assert_eq!(
+        search_provider_ids(&database, "age-sort-term"),
+        vec!["recent-thread", "ancient-thread"]
+    );
+}
+
+#[test]
+fn search_ranking_handles_unparseable_and_future_dates() {
+    let database = database();
+    add_search_thread(&database, "recent-thread", &days_ago(1), "edge-sort-term");
+    add_search_thread(&database, "future-thread", &days_ago(-30), "edge-sort-term");
+    add_search_thread(&database, "bad-date-thread", &days_ago(1), "edge-sort-term");
+    database
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE threads SET last_received_at = 'not a date' WHERE id = 'default:bad-date-thread'",
+            [],
+        )
+        .unwrap();
+    let ids = search_provider_ids(&database, "edge-sort-term");
+    assert_eq!(ids.len(), 3);
+    // An unparseable date sorts as very old; the future-dated thread counts
+    // as age 0, so it is not penalised below the recent one.
+    assert_eq!(ids[2], "bad-date-thread");
+    assert_eq!(ids[0], "future-thread");
+}
+
+#[test]
+fn structured_search_ranks_relevance_before_recency() {
+    let database = database();
+    crate::db::test_support::clear_seed_threads(&database);
+    for (id, date, body) in [
+        ("rel-old", days_ago(14), "structsort ".repeat(12)),
+        ("rel-new", days_ago(3), "structsort".to_string()),
+    ] {
+        database
+            .upsert_thread(
+                "default",
+                &[NormalizedMessage {
+                    id: format!("{id}-message"),
+                    thread_id: id.into(),
+                    subject: "Update".into(),
+                    from: "alice@example.com".into(),
+                    to: vec!["bob@example.com".into()],
+                    cc: Vec::new(),
+                    cc_bcc: Vec::new(),
+                    date: date.clone(),
+                    body_html: String::new(),
+                    body_text: body.clone(),
+                    snippet: body,
+                    labels: vec!["INBOX".into()],
+                    metadata_json: "{}".into(),
+                    unsubscribe: None,
+                    attachments: vec![],
+                }],
+            )
+            .unwrap();
+    }
+    // Free text plus an operator takes the structured path.
+    assert_eq!(
+        search_ids(&database, "from:alice structsort"),
+        vec![
+            local_thread_id("default", "rel-old"),
+            local_thread_id("default", "rel-new")
+        ]
+    );
+    // Operator-only queries (no MATCH) stay newest first.
+    assert_eq!(
+        search_ids(&database, "from:alice"),
+        vec![
+            local_thread_id("default", "rel-new"),
+            local_thread_id("default", "rel-old")
+        ]
+    );
 }
 
 fn quoting_thread_messages() -> Vec<NormalizedMessage> {

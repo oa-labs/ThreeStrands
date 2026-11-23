@@ -16,6 +16,24 @@ use rusqlite::{params, types::Value, OptionalExtension};
 /// `(cc, cc_bcc)` recipients when the metadata parses.
 type IndexedMessageRow = (String, String, String, Option<(Vec<String>, Vec<String>)>);
 
+/// Age, in days, at which a thread's relevance counts for half as much as an
+/// identical match received right now. A MATCH query orders by
+/// `rank / (1 + age_days / RECENCY_HALF_WEIGHT_DAYS)`: FTS5 `rank` is bm25, so
+/// it is negative and more negative means more relevant. Dividing by a factor
+/// that is 1 for fresh mail and grows with age pulls older threads toward 0,
+/// so a thread this many days old needs twice the bm25 relevance of a fresh one
+/// to tie with it. Future dates clamp to age 0 and an unparseable or missing
+/// `last_received_at` counts as the Julian epoch (very old).
+const RECENCY_HALF_WEIGHT_DAYS: f64 = 90.0;
+
+/// The ORDER BY terms for MATCH queries. The constant is formatted in; it is
+/// not user input.
+fn match_order_by() -> String {
+    format!(
+        "rank / (1.0 + MAX(0.0, julianday('now') - COALESCE(julianday(t.last_received_at), 0.0)) / {RECENCY_HALF_WEIGHT_DAYS:?}), t.last_received_at DESC, t.id"
+    )
+}
+
 impl Database {
     /// `account_id` merges every account when `None` — the unified inbox —
     /// or scopes to just that account when set, same as [`Self::list_threads`].
@@ -77,13 +95,14 @@ impl Database {
             // hit on the body or a recipient still produces a relevant snippet.
             // The match itself is wrapped in \u{1}/\u{2} rather than HTML markup
             // so the frontend can highlight it without ever parsing untrusted HTML.
+            let order_by = match_order_by();
             let sql = format!(
                 "SELECT {THREAD_COLUMNS},
                         snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet
                  FROM thread_search s
                  JOIN threads t ON t.id = s.thread_id
                  WHERE thread_search MATCH ?1 {archived_filter} {account_filter}
-                 ORDER BY t.last_received_at DESC, rank
+                 ORDER BY {order_by}
                  LIMIT ?2 OFFSET ?3"
             );
             let mut statement = connection.prepare(&sql)?;
@@ -175,19 +194,21 @@ impl Database {
             // When MATCH is used, read from the FTS table joined to `threads`
             // exactly as the legacy path does: `snippet()` and `rank` only work
             // inside the MATCH query itself, so a correlated subquery cannot
-            // supply them. With no MATCH there is no rank and no snippet, so
-            // order on recency then a deterministic `t.id`, and return NULL.
+            // supply them. With MATCH, order by recency-weighted relevance (see
+            // `match_order_by`), then recency, then a deterministic `t.id`. With no
+            // MATCH there is no rank and no snippet, so order on recency then
+            // `t.id`, and return NULL.
             let (from_clause, snippet_select, order_by) = if uses_match {
                 (
                     "thread_search s JOIN threads t ON t.id = s.thread_id",
                     "snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet",
-                    "ORDER BY t.last_received_at DESC, rank, t.id",
+                    format!("ORDER BY {}", match_order_by()),
                 )
             } else {
                 (
                     "threads t",
                     "NULL AS match_snippet",
-                    "ORDER BY t.last_received_at DESC, t.id",
+                    "ORDER BY t.last_received_at DESC, t.id".to_string(),
                 )
             };
 
