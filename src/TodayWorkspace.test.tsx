@@ -2095,6 +2095,105 @@ describe("TodayWorkspace", () => {
       expect(screen.queryByRole("group", { name: "Preparation" })).not.toBeInTheDocument();
     });
   });
+
+  describe("Today keyboard shortcuts", () => {
+    const bindToday = (overrides: Partial<Parameters<typeof commandContext>[0]> = {}) => {
+      const context = commandContext({ focusedPane: "today", ...overrides });
+      renderHook(() => useShortcutHandler(context, (command) => { void command.run(context); }));
+      return context;
+    };
+
+    it("returns to today on t without toggling Mail's schedule, and opens New Event on b and Shift+N", async () => {
+      const toggleSchedule = vi.fn();
+      renderToday({
+        calendarConnected: true,
+        calendarAccounts,
+      });
+      bindToday({ toggleSchedule });
+      await screen.findByRole("group", { name: "Day view" });
+
+      fireEvent.keyDown(document.body, { key: "=" });
+      expect(readDayChoice(localDate(0))?.day).toBe(localDate(1));
+      fireEvent.keyDown(document.body, { key: "t" });
+      expect(readDayChoice(localDate(0))).toBeNull();
+      expect(toggleSchedule).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Today" })).toHaveAttribute("aria-keyshortcuts", "t");
+
+      const newEventButton = screen.getByRole("button", { name: "New Event" });
+      expect(newEventButton).toHaveAttribute("aria-keyshortcuts", "b");
+      fireEvent.keyDown(document.body, { key: "b" });
+      expect(await screen.findByRole("dialog", { name: "New Event" })).toBeInTheDocument();
+      fireEvent.keyDown(screen.getByRole("dialog", { name: "New Event" }), { key: "Escape" });
+      expect(screen.queryByRole("dialog", { name: "New Event" })).not.toBeInTheDocument();
+
+      fireEvent.keyDown(document.body, { key: "N", shiftKey: true });
+      expect(await screen.findByRole("dialog", { name: "New Event" })).toBeInTheDocument();
+    });
+
+    it("coordinates Planning Inbox selection with Tab to Daily Note, Enter, o, e, a, #, and d quick-add", async () => {
+      vi.spyOn(mailClient, "getDailyNote").mockImplementation(async (date) => ({ ...note(`daily:${date}`), dailyDate: date, body: "Daily body" }));
+      vi.spyOn(mailClient, "saveDailyNote").mockImplementation(async (date, body) => ({ saved: true, note: { ...note(`daily:${date}`, "v2"), dailyDate: date, body } }));
+      vi.mocked(mailClient.listTasks).mockResolvedValue([
+        task("t1", { title: "Review deck", threadId: "thread-1", sourceMessageId: "msg-1" }),
+      ]);
+      vi.spyOn(mailClient, "addToDailyPlan").mockResolvedValue({ note: note(`daily:${localDate(0)}`, "r2"), changed: ["k"], already: [], previousBody: "" });
+      vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (id, status) => task(id, { title: "Review deck", status, completedAt: status === "completed" ? new Date().toISOString() : null }));
+
+      const onOpenMessage = vi.fn();
+      const onEditTask = vi.fn();
+      const onNotice = vi.fn();
+      renderToday({
+        onOpenMessage,
+        onEditTask,
+        onNotice,
+        mailAccounts: [{ email: "you@example.com" } as Account],
+      });
+      bindToday();
+
+      await screen.findByText("Review deck");
+      // j selects the first card; Enter opens the task editor and o opens its source message.
+      fireEvent.keyDown(document.body, { key: "j" });
+      const selectedCard = inbox().getByRole("article", { current: true });
+      fireEvent.keyDown(selectedCard, { key: "Enter" });
+      expect(onEditTask).toHaveBeenCalledWith(expect.objectContaining({ id: "t1" }));
+      fireEvent.keyDown(selectedCard, { key: "o" });
+      expect(onOpenMessage).toHaveBeenCalledWith("thread-1", "msg-1");
+
+      // a adds the candidate to today's plan.
+      await act(async () => { fireEvent.keyDown(selectedCard, { key: "a" }); });
+      await waitFor(() => expect(mailClient.addToDailyPlan).toHaveBeenCalledOnce());
+
+      // Tab to Daily Note clears Planning Inbox selection so Enter enters the Daily Note editor.
+      fireEvent.keyDown(selectedCard, { key: "Tab" });
+      expect(panelHeading("Daily Note")).toBeInTheDocument();
+      expect(inbox().queryByRole("article", { current: true })).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Daily Note Text" })).not.toHaveAttribute("readonly"));
+      fireEvent.keyDown(document.body, { key: "Enter" });
+      expect(screen.getByRole("textbox", { name: "Daily Note Text" })).toHaveFocus();
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Daily Note Text" }), { key: "Escape" });
+
+      // While Daily Note is open, selecting a Planning Inbox item routes Enter to that item until Escape clears it.
+      fireEvent.keyDown(document.activeElement!, { key: "j" });
+      expect(inbox().getByRole("article", { current: true })).toHaveFocus();
+      fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+      expect(onEditTask).toHaveBeenCalledTimes(2);
+      fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+      expect(inbox().queryByRole("article", { current: true })).not.toBeInTheDocument();
+      fireEvent.keyDown(document.body, { key: "Enter" });
+      expect(screen.getByRole("textbox", { name: "Daily Note Text" })).toHaveFocus();
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Daily Note Text" }), { key: "Escape" });
+
+      // d focuses the inline quick-add input.
+      fireEvent.keyDown(document.activeElement!, { key: "d" });
+      expect(screen.getByRole("textbox", { name: "Add a task" })).toHaveFocus();
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Add a task" }), { key: "Escape" });
+
+      // e completes the selected item.
+      fireEvent.keyDown(document.body, { key: "j" });
+      await act(async () => { fireEvent.keyDown(document.activeElement!, { key: "e" }); });
+      await waitFor(() => expect(mailClient.setTaskStatus).toHaveBeenCalledWith("t1", "completed"));
+    });
+  });
 });
 
 describe("nextMeeting", () => {

@@ -218,8 +218,8 @@ const SIDE_PANEL_PANES: readonly FocusedPane[] = ["mail", "contacts", "notes", "
 export const commands: Command[] = [
   {
     id: "calendar.new", title: "New Event", keywords: ["calendar"], keys: ["b", "Shift+n"], group: "Application",
-    enabled: (c) => !c.composerActive && (c.focusedPane === "calendar" || (c.focusedPane === "mail" && Boolean(c.createCalendarEvent))),
-    run: (c) => complete(() => c.focusedPane === "calendar" ? runWorkspaceCommand("calendar.new") : c.createCalendarEvent?.()),
+    enabled: (c) => !c.composerActive && (c.focusedPane === "calendar" || (c.focusedPane === "today" && workspaceCommandAvailable("today.newEvent")) || (c.focusedPane === "mail" && Boolean(c.createCalendarEvent))),
+    run: (c) => complete(() => c.focusedPane === "calendar" ? runWorkspaceCommand("calendar.new") : c.focusedPane === "today" ? runWorkspaceCommand("today.newEvent") : c.createCalendarEvent?.()),
   },
   workspaceCommand("contacts.new", "New Contact", ["Shift+n"], "contacts"),
   workspaceCommand("contacts.newGroup", "New Group", ["Shift+g"], "contacts"),
@@ -230,6 +230,17 @@ export const commands: Command[] = [
   { ...workspaceCommand("today.write", "Write Daily Note", ["Enter"], "today"), enabled: (c) => c.focusedPane === "today" && !c.composerActive && workspaceCommandAvailable("today.write") },
   { ...workspaceCommand("today.previousDay", "Previous Day in Today", ["-"], "today"), group: "Navigation", repeatable: true },
   { ...workspaceCommand("today.nextDay", "Next Day in Today", ["="], "today"), group: "Navigation", repeatable: true },
+  { ...workspaceCommand("today.nextInboxTab", "Next Planning Inbox Tab", ["ArrowRight", "]"], "today"), group: "Navigation", repeatable: true },
+  { ...workspaceCommand("today.previousInboxTab", "Previous Planning Inbox Tab", ["ArrowLeft", "["], "today"), group: "Navigation", repeatable: true },
+  { ...workspaceCommand("today.nextItem", "Next Planning Item", ["j", "ArrowDown"], "today"), group: "Navigation", repeatable: true, enabled: (c) => c.focusedPane === "today" && !c.meetingPrepOpen && !c.composerActive },
+  { ...workspaceCommand("today.previousItem", "Previous Planning Item", ["k", "ArrowUp"], "today"), group: "Navigation", repeatable: true, enabled: (c) => c.focusedPane === "today" && !c.meetingPrepOpen && !c.composerActive },
+  { ...workspaceCommand("today.clearSelection", "Clear Planning Selection", ["Escape"], "today"), group: "Navigation", enabled: (c) => c.focusedPane === "today" && !c.meetingPrepOpen && !c.canGoBack && !c.composerActive && workspaceCommandAvailable("today.clearSelection") },
+  { ...workspaceCommand("today.openSelected", "Open Selected Planning Item", ["Enter"], "today"), group: "Navigation", enabled: (c) => c.focusedPane === "today" && !c.composerActive && workspaceCommandAvailable("today.openSelected") },
+  { ...workspaceCommand("today.openSource", "Open Planning Item Source", ["o"], "today"), group: "Navigation", enabled: (c) => c.focusedPane === "today" && !c.composerActive && workspaceCommandAvailable("today.openSource") },
+  { ...workspaceCommand("today.completeSelected", "Complete Selected Planning Item", ["e"], "today"), group: "Triage", enabled: (c) => c.focusedPane === "today" && !c.composerActive && workspaceCommandAvailable("today.completeSelected") },
+  { ...workspaceCommand("today.scheduleSelected", "Schedule Selected Planning Item", ["s"], "today"), group: "Triage", enabled: (c) => c.focusedPane === "today" && !c.composerActive && workspaceCommandAvailable("today.scheduleSelected") },
+  { ...workspaceCommand("today.addToPlan", "Add Selected Item to Today's Plan", ["a"], "today"), group: "Triage", enabled: (c) => c.focusedPane === "today" && !c.composerActive && workspaceCommandAvailable("today.addToPlan") },
+  { ...workspaceCommand("today.removeOrDismiss", "Remove From Plan or Dismiss", ["#"], "today"), group: "Triage", enabled: (c) => c.focusedPane === "today" && !c.composerActive && workspaceCommandAvailable("today.removeOrDismiss") },
   { ...workspaceCommand("notes.next", "Next Note", ["j", "ArrowDown"], "notes"), group: "Navigation", repeatable: true },
   { ...workspaceCommand("notes.previous", "Previous Note", ["k", "ArrowUp"], "notes"), group: "Navigation", repeatable: true },
   workspaceCommand("notes.new", "New Note", ["Shift+n"], "notes"),
@@ -656,12 +667,14 @@ export const commands: Command[] = [
   },
   {
     id: "calendar.today",
-    title: "Today in Calendar or Notes / Toggle Schedule",
+    title: "Go to Today or Toggle Schedule",
+    keywords: ["calendar", "notes", "today", "schedule"],
     keys: ["t"],
     group: "Application",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(() => context.focusedPane === "calendar" ? runWorkspaceCommand("calendar.goToday")
       : context.focusedPane === "notes" ? runWorkspaceCommand("notes.goToday")
+      : context.focusedPane === "today" ? runWorkspaceCommand("today.goToday")
       : context.toggleSchedule()),
   },
   {
@@ -773,16 +786,16 @@ export const commands: Command[] = [
     title: "Add Task From Conversation",
     keys: ["d"],
     group: "Application",
-    keywords: ["new", "create", "todo", "email", "message", "thread"],
-    enabled: (context) => (context.focusedPane === "tasks" || context.selectedId !== null) && !context.composerActive,
-    run: (context) => complete(context.newTask),
+    keywords: ["new", "create", "todo", "email", "message", "thread", "today"],
+    enabled: (context) => (context.focusedPane === "tasks" || (context.focusedPane === "today" && workspaceCommandAvailable("today.addTask")) || (context.focusedPane === "mail" && context.selectedId !== null)) && !context.composerActive,
+    run: (context) => complete(() => context.focusedPane === "today" ? runWorkspaceCommand("today.addTask") : context.newTask()),
   },
   {
     id: "actions.open",
     title: "Get Suggestions",
     keys: ["Shift+a", "Mod+Shift+j"],
     group: "Application",
-    enabled: (context) => context.selectedId !== null && !context.composerActive && context.aiBriefEnabled,
+    enabled: (context) => context.focusedPane === "mail" && isThreadMailbox(context) && context.selectedId !== null && !context.composerActive && context.aiBriefEnabled,
     run: (context) => complete(context.getSuggestions),
   },
   {

@@ -1,7 +1,14 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlanningInbox, uniqueInboxEntries, interleaveInboxCategories, INBOX_FILTER_KEY, INBOX_PAGE_SIZE, type InboxEntry } from "./PlanningInbox";
 import { ICON_SIZE } from "./iconSizes";
+import { commandContext } from "./test/commandContext";
+import { useShortcutHandler } from "./useShortcutHandler";
+
+const bindTodayShortcuts = () => {
+  const context = commandContext({ focusedPane: "today" });
+  return renderHook(() => useShortcutHandler(context, (command) => { void command.run(context); }));
+};
 
 const entry = (id: string, category: InboxEntry["category"] = "tasks", identities = [id]): InboxEntry => ({ id, identities, category, title: id, source: null, row: { onActivate: vi.fn() }, schedule: vi.fn(), actions: [{ label: "Add to Today's Plan", onSelect: vi.fn() }] });
 const defaults = { scope: undefined, status: () => null, loading: () => false, hasMore: () => false, onLoadMore: vi.fn(), drag: { startDrag: vi.fn(), clickSuppressed: () => false, draggingId: null as string | null, enabled: true } };
@@ -235,6 +242,118 @@ describe("PlanningInbox", () => {
       expect(field()).toHaveValue("");
       expect(onAddTask).not.toHaveBeenCalled();
       expect(navigate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("keyboard navigation and actions", () => {
+    it("cycles filter tabs with ArrowLeft/ArrowRight and [ / ] from read mode without stealing focus", () => {
+      render(<PlanningInbox {...defaults} entries={[entry("Task"), entry("Email", "emails"), entry("Contact", "contacts")]} />);
+      bindTodayShortcuts();
+      expect(document.body).toHaveFocus();
+      fireEvent.keyDown(document.body, { key: "ArrowRight" });
+      expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute("aria-selected", "true");
+      expect(document.body).toHaveFocus();
+      fireEvent.keyDown(document.body, { key: "]" });
+      expect(screen.getByRole("tab", { name: "Emails" })).toHaveAttribute("aria-selected", "true");
+      fireEvent.keyDown(document.body, { key: "[" });
+      expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute("aria-selected", "true");
+      fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+      expect(screen.getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
+      // When focus is on a tab, bracket keys keep tab focus on the newly selected tab.
+      const all = screen.getByRole("tab", { name: "All" });
+      all.focus();
+      fireEvent.keyDown(all, { key: "]" });
+      expect(screen.getByRole("tab", { name: "Tasks" })).toHaveFocus();
+    });
+
+    it("navigates items with j/k and Up/Down, expands past the first page, clears on Escape, and advances when an item leaves", () => {
+      const entries = Array.from({ length: INBOX_PAGE_SIZE + 2 }, (_, i) => entry(`Item ${i}`));
+      const onSelectionChange = vi.fn();
+      const view = render(<PlanningInbox {...defaults} entries={entries} onSelectionChange={onSelectionChange} />);
+      bindTodayShortcuts();
+      expect(screen.queryByRole("article", { current: true })).not.toBeInTheDocument();
+      fireEvent.keyDown(document.body, { key: "j" });
+      let articles = screen.getAllByRole("article");
+      expect(articles[0]).toHaveAttribute("aria-current", "true");
+      expect(articles[0]).toHaveFocus();
+      expect(articles[0]).toHaveAttribute("data-mailbox-tab-shortcut");
+      expect(onSelectionChange).toHaveBeenLastCalledWith(true);
+
+      fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+      expect(screen.getAllByRole("article")[1]).toHaveAttribute("aria-current", "true");
+      fireEvent.keyDown(document.activeElement!, { key: "k" });
+      expect(screen.getAllByRole("article")[0]).toHaveAttribute("aria-current", "true");
+
+      // Stepping past the initial page automatically reveals more loaded items.
+      for (let step = 0; step < INBOX_PAGE_SIZE; step++) fireEvent.keyDown(document.activeElement!, { key: "j" });
+      articles = screen.getAllByRole("article");
+      expect(articles).toHaveLength(entries.length);
+      expect(articles[INBOX_PAGE_SIZE]).toHaveAttribute("aria-current", "true");
+
+      // Removing the selected item advances selection cleanly.
+      view.rerender(<PlanningInbox {...defaults} entries={entries.filter((_, i) => i !== INBOX_PAGE_SIZE)} onSelectionChange={onSelectionChange} />);
+      expect(screen.getAllByRole("article")[INBOX_PAGE_SIZE]).toHaveAttribute("aria-current", "true");
+
+      // Escape clears selection and returns focus off the card.
+      fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+      expect(screen.queryByRole("article", { current: true })).not.toBeInTheDocument();
+      expect(onSelectionChange).toHaveBeenLastCalledWith(false);
+    });
+
+    it("runs Enter, o, e, s, a, and # on the selected item and preserves native button activation", async () => {
+      const onComplete = vi.fn();
+      const onOpenSource = vi.fn();
+      const onAddToPlan = vi.fn();
+      const onRemoveOrDismiss = vi.fn();
+      const item: InboxEntry = {
+        ...entry("Follow up"),
+        openSource: onOpenSource,
+        addToPlan: onAddToPlan,
+        removeOrDismiss: onRemoveOrDismiss,
+        row: {
+          onActivate: vi.fn(),
+          control: <input type="checkbox" aria-label="Mark Follow up Done" checked={false} onChange={onComplete} />,
+        },
+      };
+      render(<PlanningInbox {...defaults} entries={[item]} />);
+      bindTodayShortcuts();
+      fireEvent.keyDown(document.body, { key: "j" });
+      const card = screen.getByRole("article", { current: true });
+      fireEvent.keyDown(card, { key: "Enter" });
+      expect(item.row.onActivate).toHaveBeenCalledOnce();
+      fireEvent.keyDown(card, { key: "o" });
+      expect(onOpenSource).toHaveBeenCalledOnce();
+      fireEvent.keyDown(card, { key: "e" });
+      expect(onComplete).toHaveBeenCalledOnce();
+      await act(async () => { fireEvent.keyDown(card, { key: "s" }); });
+      expect(item.schedule).toHaveBeenCalledOnce();
+      await act(async () => { fireEvent.keyDown(card, { key: "a" }); });
+      expect(onAddToPlan).toHaveBeenCalledOnce();
+      await act(async () => { fireEvent.keyDown(card, { key: "#" }); });
+      expect(onRemoveOrDismiss).toHaveBeenCalledOnce();
+
+      // Focusing the Schedule button keeps native Enter activation without firing row openSelected.
+      const scheduleButton = screen.getByRole("button", { name: "Schedule: Follow up" });
+      expect(scheduleButton).toHaveAttribute("aria-keyshortcuts", "s");
+      scheduleButton.focus();
+      expect(fireEvent.keyDown(scheduleButton, { key: "Enter" })).toBe(true);
+      expect(item.row.onActivate).toHaveBeenCalledOnce();
+    });
+
+    it("focuses the inline quick-add input on d from any tab and marks it as an explicit modal shortcut scope", () => {
+      render(<PlanningInbox {...defaults} entries={[entry("Task"), entry("Email", "emails")]} onAddTask={vi.fn()} />);
+      bindTodayShortcuts();
+      fireEvent.click(screen.getByRole("tab", { name: "Emails" }));
+      expect(screen.queryByRole("textbox", { name: "Add a task" })).not.toBeInTheDocument();
+      fireEvent.keyDown(document.body, { key: "d" });
+      expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute("aria-selected", "true");
+      const input = screen.getByRole("textbox", { name: "Add a task" });
+      expect(input).toHaveFocus();
+      expect(input).toHaveAttribute("aria-keyshortcuts", "d");
+      expect(input.closest("[data-shortcut-scope]")).toHaveAttribute("data-shortcut-scope", "modal");
+      // Letter and arrow shortcuts stay suspended while typing in the quick-add input.
+      for (const key of ["j", "k", "e", "s", "ArrowRight", "]"]) expect(fireEvent.keyDown(input, { key })).toBe(true);
+      expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute("aria-selected", "true");
     });
   });
 });

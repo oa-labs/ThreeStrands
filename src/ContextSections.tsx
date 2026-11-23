@@ -110,7 +110,7 @@ function revealIfTruncated(line: HTMLElement | null) {
  * off shows its full text on hover. A small icon `action` sits at the end of
  * the detail line, under the date, so dates keep the panel's right edge.
  */
-export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, pressed, disabled, onPointerDown, actions, trailing, wrapTitle, className, rowKey }: {
+export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, pressed, disabled, onPointerDown, actions, trailing, wrapTitle, className, rowKey, current, tabIndex, allowTabShortcut, rowRef }: {
   as?: "div" | "article";
   /** A decorative glyph, drawn inside the row's button. */
   icon?: ReactNode;
@@ -139,6 +139,12 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   className?: string;
   /** Names what the row stands for, so a command can act on the row in focus. */
   rowKey?: string;
+  /** Marks the row as the active keyboard selection. */
+  current?: boolean;
+  tabIndex?: number;
+  /** Keeps workspace Tab switching active while the row itself holds focus. */
+  allowTabShortcut?: boolean;
+  rowRef?(node: HTMLElement | null): void;
 }) {
   const titleRef = useRef<HTMLElement>(null);
   const detailRef = useRef<HTMLElement>(null);
@@ -155,7 +161,7 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
     </span>
   </>;
   return (
-    <Element className={classes} data-row-key={rowKey} style={actions?.length ? { "--context-row-action-count": actions.length } as CSSProperties : undefined} onMouseEnter={revealTruncated} onPointerDown={onPointerDown}>
+    <Element ref={rowRef as never} className={classes} data-row-key={rowKey} aria-current={current ? "true" : undefined} tabIndex={tabIndex} data-mailbox-tab-shortcut={allowTabShortcut ? "" : undefined} style={actions?.length ? { "--context-row-action-count": actions.length } as CSSProperties : undefined} onMouseEnter={revealTruncated} onPointerDown={onPointerDown}>
       {control ? <span className="context-row-glyph context-row-control">{control}</span> : null}
       {onActivate
         ? <button type="button" className="context-row-main" aria-pressed={pressed} disabled={disabled} onClick={onActivate}>{body}</button>

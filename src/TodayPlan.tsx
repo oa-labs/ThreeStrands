@@ -30,6 +30,8 @@ export type PlanCandidate = {
   taskId?: string | null;
   /** The add button's name when adding first creates something, such as "New Task for Goal". */
   addLabel?: string;
+  /** Opens the conversation, note, or contact this item came from, when one exists. */
+  openSource?(): void;
   /** How its row reads; Add to Today's Plan and dragging are added by the switcher. */
   row: Omit<RowProps, "title" | "onPointerDown" | "trailing">;
 };

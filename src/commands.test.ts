@@ -269,32 +269,35 @@ describe("command registry", () => {
     expect(Object.fromEntries([...owners].filter(([, ids]) => ids.length > 1))).toEqual({
       "-": ["today.previousDay", "notes.previousDay"],
       "=": ["today.nextDay", "notes.nextDay"],
-      j: ["notes.next", "thread.next", "tasks.next"],
+      j: ["today.nextItem", "notes.next", "thread.next", "tasks.next"],
       // Meeting preparation moves between meetings only on Today, while preparing.
-      arrowdown: ["notes.next", "meetings.next", "thread.next", "tasks.next"],
-      k: ["notes.previous", "thread.previous", "tasks.previous"],
-      arrowup: ["notes.previous", "meetings.previous", "thread.previous", "tasks.previous"],
-      e: ["tasks.completeSelected", "thread.archive"],
+      arrowdown: ["today.nextItem", "notes.next", "meetings.next", "thread.next", "tasks.next"],
+      k: ["today.previousItem", "notes.previous", "thread.previous", "tasks.previous"],
+      arrowup: ["today.previousItem", "notes.previous", "meetings.previous", "thread.previous", "tasks.previous"],
+      e: ["today.completeSelected", "tasks.completeSelected", "thread.archive"],
       "shift+e": ["tasks.reopenSelected", "thread.unarchive"],
-      o: ["files.open", "tasks.openSelected", "thread.toggleOlderMessages"],
+      o: ["today.openSource", "files.open", "tasks.openSelected", "thread.toggleOlderMessages"],
       // Previous Message in Mail; Prepare for Meeting on Today and in Calendar.
       p: ["message.previous", "meetings.prepare"],
-      s: ["notes.star", "files.star", "thread.star"],
+      s: ["today.scheduleSelected", "notes.star", "files.star", "thread.star"],
+      a: ["today.addToPlan", "draft.replyAll"],
       "shift+n": ["calendar.new", "contacts.new", "agents.new", "notes.new"],
       "shift+g": ["contacts.newGroup", "tasks.linkGoal"],
       "mod+enter": ["contacts.save", "draft.send"],
-      enter: ["today.write", "notes.write", "tasks.openDetails"],
+      enter: ["today.write", "today.openSelected", "notes.write", "tasks.openDetails"],
       space: ["notes.pageDown", "thread.pageDown"],
       "shift+space": ["notes.pageUp", "thread.pageUp"],
-      "#": ["notes.trash", "draft.discard", "thread.trash"],
-      arrowright: ["tasks.nextColumn", "message.next"],
-      arrowleft: ["tasks.previousColumn", "message.previous"],
+      "#": ["today.removeOrDismiss", "notes.trash", "draft.discard", "thread.trash"],
+      arrowright: ["today.nextInboxTab", "tasks.nextColumn", "message.next"],
+      "]": ["today.nextInboxTab", "tasks.moveForward"],
+      arrowleft: ["today.previousInboxTab", "tasks.previousColumn", "message.previous"],
+      "[": ["today.previousInboxTab", "tasks.moveBack"],
       "mod+j": ["draft.replyAssist", "chat.open"],
       tab: ["today.nextView", "notes.nextView", "mailbox.nextSplit", "tasks.nextView", "contacts.nextView"],
       "shift+tab": ["today.previousView", "notes.previousView", "mailbox.previousSplit", "contacts.previousView", "tasks.previousView"],
       // Close Search stands aside while Back is available; closing meeting
       // preparation comes first while it is open.
-      escape: ["meetings.closePrepare", "navigation.back", "search.close"],
+      escape: ["today.clearSelection", "meetings.closePrepare", "navigation.back", "search.close"],
     });
 
     for (const focusedPane of ["mail", "tasks", "notes", "contacts", "files", "calendar", "agents", "today"] as const) {
@@ -508,7 +511,7 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "labels.open")?.keys).toEqual(["l"]);
   });
 
-  it("uses d for adding a task from the conversation", async () => {
+  it("uses d for adding a task from Mail, Tasks, or Today without leaking across workspaces", async () => {
     const openTasks = commands.find((command) => command.id === "tasks.open");
     const newTask = commands.find((command) => command.id === "tasks.new");
     expect(openTasks?.keys).toEqual(["g then k"]);
@@ -517,6 +520,44 @@ describe("command registry", () => {
     await newTask?.run({ ...noopContext(), selectedId: "thread-1", newTask: start });
     expect(start).toHaveBeenCalledTimes(1);
     expect(newTask?.enabled({ ...noopContext(), focusedPane: "tasks", selectedId: null })).toBe(true);
+    // A background Mail selection must not leak d into non-Mail workspaces.
+    for (const focusedPane of ["calendar", "notes", "contacts", "files", "agents", "today"] as const) {
+      expect(newTask?.enabled({ ...noopContext(), focusedPane, selectedId: "thread-1" })).toBe(false);
+    }
+  });
+
+  it("scopes Get Suggestions (Shift+A) to Mail threads so it never leaks into Today or other workspaces", () => {
+    const suggestions = commands.find((command) => command.id === "actions.open")!;
+    expect(suggestions.enabled({ ...noopContext(), focusedPane: "mail", mailbox: "inbox", selectedId: "thread-1" })).toBe(true);
+    expect(suggestions.enabled({ ...noopContext(), focusedPane: "mail", mailbox: "drafts", selectedId: "thread-1" })).toBe(false);
+    for (const focusedPane of ["today", "tasks", "notes", "contacts", "files", "calendar", "agents"] as const) {
+      expect(suggestions.enabled({ ...noopContext(), focusedPane, selectedId: "thread-1" })).toBe(false);
+    }
+  });
+
+  it("routes Today Planning Inbox navigation and t/b commands only in Today read mode", () => {
+    const todayContext = { ...noopContext(), focusedPane: "today" as const };
+    const nextTab = commands.find((command) => command.id === "today.nextInboxTab")!;
+    const prevTab = commands.find((command) => command.id === "today.previousInboxTab")!;
+    const nextItem = commands.find((command) => command.id === "today.nextItem")!;
+    const prevItem = commands.find((command) => command.id === "today.previousItem")!;
+    expect(nextTab.keys).toEqual(["ArrowRight", "]"]);
+    expect(prevTab.keys).toEqual(["ArrowLeft", "["]);
+    expect(nextItem.keys).toEqual(["j", "ArrowDown"]);
+    expect(prevItem.keys).toEqual(["k", "ArrowUp"]);
+    expect(nextItem.repeatable).toBe(true);
+    expect(prevItem.repeatable).toBe(true);
+    expect(nextTab.enabled(todayContext)).toBe(true);
+    expect(prevTab.enabled(todayContext)).toBe(true);
+    expect(nextItem.enabled(todayContext)).toBe(true);
+    expect(prevItem.enabled(todayContext)).toBe(true);
+    expect(nextItem.enabled({ ...todayContext, meetingPrepOpen: true })).toBe(false);
+    expect(prevItem.enabled({ ...todayContext, meetingPrepOpen: true })).toBe(false);
+    expect(nextTab.enabled(noopContext())).toBe(false);
+    expect(nextItem.enabled({ ...todayContext, composerActive: true })).toBe(false);
+    for (const id of ["today.completeSelected", "today.scheduleSelected", "today.addToPlan", "today.removeOrDismiss"] as const) {
+      expect(commands.find((command) => command.id === id)?.repeatable).toBeFalsy();
+    }
   });
 
   it("opens thread chat with q or Mod+J in read mode while Mod+J keeps drafting in the composer", () => {

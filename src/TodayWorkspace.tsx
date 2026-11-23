@@ -45,7 +45,7 @@ import { activeDayChoice, clearDayChoice, localDay, readDayChoice, writeDayChoic
 import { useTaskBlockDrag } from "./useTaskBlockDrag";
 import { TaskDragChip } from "./TaskDragChip";
 import { isFinished, itemBlock, carriedLabel, linkKey, type PlanCandidate, type PlanDragSource } from "./TodayPlan";
-import { PlanningInbox, readInboxFilter, uniqueInboxEntries, interleaveInboxCategories, type InboxCategory, type InboxEntry, type InboxFilter } from "./PlanningInbox";
+import { PlanningInbox, readInboxFilter, uniqueInboxEntries, interleaveInboxCategories, type InboxCategory, type InboxEntry, type InboxFilter, type PlanningInboxHandle } from "./PlanningInbox";
 import { TodayDayView } from "./TodayDayView";
 import { EventNoteAction } from "./NoteEntityContext";
 import { refreshSyncedData } from "./refreshSyncedData";
@@ -160,13 +160,19 @@ function TodayLayout({
   const [panel, setPanel] = useLocalStorageState<"agenda" | "note">("threestrands.today.panel", () => readLocalStorage("threestrands.today.panel", (raw) => raw === "note" ? "note" : "agenda", "agenda"));
   const [noteVisited, setNoteVisited] = useState(panel === "note");
   const dailyNote = useRef<TodayDailyNoteHandle>(null);
+  const inboxRef = useRef<PlanningInboxHandle>(null);
+  const [inboxSelected, setInboxSelected] = useState(false);
   const agendaPanel = useRef<HTMLDivElement>(null);
   const notePanel = useRef<HTMLDivElement>(null);
   const focusShownPanel = useRef(false);
   // Switching never focuses a control. Focus moves only when it sat inside the panel being hidden, so it is not lost.
   const selectPanel = (next: "agenda" | "note") => {
     if (next === panel) return;
-    if (next === "note") setNoteVisited(true);
+    if (next === "note") {
+      setNoteVisited(true);
+      inboxRef.current?.clearSelection();
+      setInboxSelected(false);
+    }
     const hiding = (panel === "agenda" ? agendaPanel : notePanel).current;
     focusShownPanel.current = Boolean(hiding?.contains(document.activeElement));
     setPanel(next);
@@ -361,18 +367,6 @@ function TodayLayout({
       ...state(event),
     };
   };
-  useWorkspaceCommands({
-    "today.nextView": () => selectPanel(otherPanel),
-    "today.previousView": () => selectPanel(otherPanel),
-    ...(panel === "note" ? { "today.write": () => dailyNote.current?.focus() } : {}),
-    "today.previousDay": () => onChangeDay?.(addDays(shownDay, -1)),
-    "today.nextDay": () => onChangeDay?.(addDays(shownDay, 1)),
-    "meetings.prepare": () => {
-      const focused = document.activeElement instanceof HTMLElement ? document.activeElement.closest("[data-row-key]")?.getAttribute("data-row-key") : null;
-      const target = meetings.find((event) => focused === `meeting:${preparationKey(event)}`) ?? next ?? ahead[0] ?? meetings[0];
-      if (target) onAddNote?.(target);
-    },
-  });
   // Booking: Book takes the next free half hour today; a drop takes the slot under the pointer.
   const booking = { accounts: calendarAccounts, calendars, onNotice: notice };
   const undoBooking = (undo: () => Promise<void>) => () => void undo().then(
@@ -495,6 +489,11 @@ function TodayLayout({
   };
 
   // Sources: each a tab of cards that can be added to the plan or dragged onto the day.
+  const showSource = (threadId: string, messageId?: string | null) => {
+    if (messageId && onOpenMessage) onOpenMessage(threadId, messageId);
+    else onOpenThread(threadId);
+  };
+  const taskSourceOpener = (task: ThreadTask | undefined) => task?.threadId ? () => showSource(task.threadId!, task.sourceMessageId) : undefined;
   /** A task's due date for a row; an overdue one is marked in color and named for screen readers. */
   const dueRow = (task: ThreadTask | undefined): { date?: ReactNode; dateClassName?: string } => {
     const due = task ? formatDue(task) : null;
@@ -511,6 +510,7 @@ function TodayLayout({
       title: task.title,
       planKey: planItemKey(taskReference(task.id)),
       resolve: async () => resolved,
+      openSource: taskSourceOpener(task),
       row: {
         as: "article",
         className: done ? "context-task context-task-done" : "context-task",
@@ -531,6 +531,7 @@ function TodayLayout({
     title: promise.excerpt,
     // A promise isn't a task yet, so nothing in the plan can name it.
     planKey: null,
+    openSource: () => showSource(promise.thread.id, promise.messageId),
     resolve: async () => {
       const created = await trackPromise(promise);
       return created ? { addition: { kind: "link", reference: taskReference(created.id), label: created.title }, block: { title: created.title, sourceTaskId: created.id, accountId: created.accountId }, title: created.title } : null;
@@ -560,6 +561,7 @@ function TodayLayout({
       id: `contact:${profile.id}`,
       title: name,
       planKey: reference ? planItemKey(reference) : null,
+      openSource: () => onOpenContact(profile.id),
       resolve: async () => reference ? { addition: { kind: "link", reference, label: name }, block: { title: `Check in with ${name}`, sourceTaskId: null, accountId: null, sourcePlanKey: reference ? planItemKey(reference) : undefined }, title: name } : null,
       row: {
         icon: <ContactRound size={ICON_SIZE.sm} />,
@@ -644,6 +646,8 @@ function TodayLayout({
       const created = await createForPlan({ kind: "conversation", threadId: action.threadId, accountId: action.accountId });
       return created ? taskResolution(created) : null;
     };
+    const task = candidate.taskId ? tasks.find((item) => item.id === candidate.taskId) : undefined;
+    const noteParts = candidate.taskId ? noteTaskParts(candidate.taskId) : null;
     return {
       id: `${remoteKind}:${candidate.key}`,
       taskId: candidate.taskId,
@@ -651,12 +655,16 @@ function TodayLayout({
       planKey: candidate.key,
       inPlan: candidate.planned,
       resolve,
+      openSource: candidate.threadId ? () => onOpenThread(candidate.threadId!)
+        : noteParts ? () => onOpenNote?.(noteParts.noteId)
+          : taskSourceOpener(task)
+            ?? (candidate.contactId ? () => onOpenContact(candidate.contactId!) : undefined),
       row: {
         as: "article",
         icon: candidate.reason === "starred" ? <Star size={ICON_SIZE.sm} /> : candidate.reason === "noteTask" ? <NotebookPen size={ICON_SIZE.sm} />
           : candidate.reason === "promise" ? <Send size={ICON_SIZE.sm} /> : candidate.reason === "keepInTouch" ? <ContactRound size={ICON_SIZE.sm} /> : undefined,
         wrapTitle: true,
-        ...dueRow(tasks.find((task) => task.id === candidate.taskId)),
+        ...dueRow(task),
         detail: [candidate.detail, candidate.goal?.title, accountId === null ? candidate.accountId : null].filter(Boolean).join(" · ") || undefined,
         // A card opens its task, its note, or the starred conversation; adding never unstars or archives it.
         onActivate: candidate.taskId ? () => void openCandidateTask(candidate.taskId!) : candidate.threadId ? () => onOpenThread(candidate.threadId!)
@@ -679,13 +687,19 @@ function TodayLayout({
     const checkable = item.taskId && ["task", "noteTask", "newTask"].includes(item.kind) && item.state !== "unavailable";
     const usable = item.state !== "unavailable" && item.kind !== "text";
     const source = { id: `plan:${item.key}`, title: item.title, kind: "item" as const, item };
+    const noteParts = noteTaskParts(item.taskId);
+    const linkedTask = item.taskId ? tasks.find((task) => task.id === item.taskId) : undefined;
     return {
       id: source.id, identities: identities(item.key, item.taskId), category: item.kind === "contact" ? "contacts" : "tasks", title: item.title,
       source: usable && !done ? source : null, schedule: usable && !done ? () => bookNext(itemBlock(item)) : undefined,
+      openSource: noteParts ? () => onOpenNote?.(noteParts.noteId)
+        : item.kind === "contact" && item.contactId ? () => onOpenContact(item.contactId!)
+          : taskSourceOpener(linkedTask),
+      removeOrDismiss: () => removeItem(item),
       actions: [{ label: "Remove from Today's Plan", onSelect: () => void removeItem(item) }],
       row: {
         rowKey: source.id, wrapTitle: true, className: "context-task today-plan-card",
-        ...(done ? {} : dueRow(tasks.find((task) => task.id === item.taskId))),
+        ...(done ? {} : dueRow(linkedTask)),
         control: checkable ? <TodayCompletionCheckbox checked={done} transition={completion} label={`Mark ${item.title} ${done ? "Not Done" : "Done"}`} save={() => togglePlanItem(item)} /> : undefined,
         icon: item.kind === "contact" ? <ContactRound size={ICON_SIZE.sm} /> : item.kind === "noteTask" || item.kind === "newTask" ? <NotebookPen size={ICON_SIZE.sm} /> : undefined,
         detail: [item.state === "unavailable" ? "Unavailable on this device" : item.kind === "noteTask" || item.kind === "newTask" ? "Note" : (accountId === null || item.accountId !== accountId) ? item.accountId : null, item.goal?.title, carriedLabel(item.carryCount ?? 0)].filter(Boolean).join(" · ") || undefined,
@@ -694,16 +708,20 @@ function TodayLayout({
     };
   };
   const plannedEntries = (plan?.items ?? []).filter((item) => !isFinished(item) && !completedIds.has(item.taskId ?? "") && !scheduled(item.key, item.taskId)).map(planEntry);
-  const candidateEntry = (candidate: PlanCandidate, category: InboxCategory, actions: InboxEntry["actions"] = []): InboxEntry | null => {
+  const candidateEntry = (candidate: PlanCandidate, category: InboxCategory, actions: InboxEntry["actions"] = [], removeOrDismiss?: () => Promise<unknown> | void): InboxEntry | null => {
     if (completedIds.has(candidate.taskId ?? "") || scheduled(candidate.planKey, candidate.taskId)) return null;
     const planItem = (plan?.items ?? []).find((item) => item.key === candidate.planKey || (item.taskId && item.taskId === candidate.taskId));
     if (planItem && isFinished(planItem)) return null;
     const keys = identities(candidate.planKey, candidate.taskId);
+    const canAdd = !planItem && !candidate.inPlan;
     return {
       id: candidate.id, identities: keys.length ? keys : [candidate.id], category, title: candidate.title,
       row: candidate.row, source: { id: candidate.id, title: candidate.title, kind: "candidate", candidate },
       schedule: () => scheduleCandidate(candidate),
-      actions: [...(!planItem && !candidate.inPlan ? [{ label: "Add to Today's Plan", onSelect: () => void addCandidate(candidate) }] : []), ...actions],
+      openSource: candidate.openSource,
+      addToPlan: canAdd ? () => addCandidate(candidate) : undefined,
+      removeOrDismiss,
+      actions: [...(canAdd ? [{ label: "Add to Today's Plan", onSelect: () => void addCandidate(candidate) }] : []), ...actions],
     };
   };
   const setNoteTaskDone = async (taskId: string | null | undefined, title: string, checked: boolean) => {
@@ -741,18 +759,14 @@ function TodayLayout({
         return created ? { taskId: created.id } : null;
       })} /> };
       const entry = candidateEntry(candidate, "emails", [
-      { label: "Make a Task", onSelect: () => void trackPromise(promise) },
-      { label: "Dismiss", onSelect: () => setDismissed(dismissPromise(promise.messageId)) },
-      ]);
+        { label: "Make a Task", onSelect: () => void trackPromise(promise) },
+        { label: "Dismiss", onSelect: () => setDismissed(dismissPromise(promise.messageId)) },
+      ], () => setDismissed(dismissPromise(promise.messageId)));
       return entry ? { ...entry, busy: busyEmails.has(candidate.id) } : null;
     }),
     ...reconnect.map((profile) => candidateEntry(contactCandidate(profile), "contacts")),
   ];
   const inboxEntries = uniqueInboxEntries([...plannedEntries, ...interleaveInboxCategories(candidates.filter((entry): entry is InboxEntry => entry !== null))]);
-  const showSource = (threadId: string, messageId: string) => {
-    if (onOpenMessage) onOpenMessage(threadId, messageId);
-    else onOpenThread(threadId);
-  };
   const dismissCommitment = (key: string) => {
     setDismissed(dismissPromise(key));
     notice({ message: "Commitment dismissed", undo: () => setDismissed(dismissPromise(key, false)) });
@@ -785,7 +799,7 @@ function TodayLayout({
       const entry = candidateEntry(candidate, "emails", [
         { label: "Make a Task", onSelect: () => void trackPromise(promise) },
         { label: "Dismiss", onSelect: () => dismissCommitment(promise.messageId) },
-      ]);
+      ], () => dismissCommitment(promise.messageId));
       if (entry) commitmentEntries.push(entry);
     }
     const promisedThreads = new Set(openPromises.map((promise) => promise.thread.id));
@@ -797,6 +811,8 @@ function TodayLayout({
       const open = () => showSource(reply.threadId, reply.messageId);
       commitmentEntries.push({
         id: key, identities: [key], category: "emails", title, source: null,
+        openSource: open,
+        removeOrDismiss: () => dismissCommitment(key),
         row: { icon: <Mail size={ICON_SIZE.sm} />, wrapTitle: true, date: formatArrival(reply.sentAt, now),
           detail: [`Possible reply · “${reply.excerpt}”`, accountId === null ? reply.accountId : null].filter(Boolean).join(" · "), onActivate: open },
         actions: [
@@ -877,6 +893,20 @@ function TodayLayout({
     return created;
   };
   const canCreateEvents = Boolean(schedule) && calendarAccounts.some((account) => account.status === "connected");
+  useWorkspaceCommands({
+    "today.nextView": () => selectPanel(otherPanel),
+    "today.previousView": () => selectPanel(otherPanel),
+    ...(panel === "note" && !inboxSelected ? { "today.write": () => dailyNote.current?.focus() } : {}),
+    "today.previousDay": () => onChangeDay?.(addDays(shownDay, -1)),
+    "today.nextDay": () => onChangeDay?.(addDays(shownDay, 1)),
+    "today.goToday": () => onChangeDay?.(null),
+    ...(canCreateEvents ? { "today.newEvent": startNewEvent } : {}),
+    "meetings.prepare": () => {
+      const focused = document.activeElement instanceof HTMLElement ? document.activeElement.closest("[data-row-key]")?.getAttribute("data-row-key") : null;
+      const target = meetings.find((event) => focused === `meeting:${preparationKey(event)}`) ?? next ?? ahead[0] ?? meetings[0];
+      if (target) onAddNote?.(target);
+    },
+  });
 
   return <section ref={pageRef} className="today-workspace" data-backdrop={backdrop ? skyPhase(now) : undefined} aria-label="Today" aria-busy={pull.refreshing}>
     <div className="today-page today-page-planning">
@@ -892,7 +922,7 @@ function TodayLayout({
     <div className="today-columns">
       <div className="today-column today-stack">
       <div className="today-work">
-        <PlanningInbox onAddTask={taskAccounts.length ? async (title) => {
+        <PlanningInbox ref={inboxRef} onSelectionChange={setInboxSelected} onAddTask={taskAccounts.length ? async (title) => {
           if (!defaultTaskAccount) { setAddingTask(title); return; }
           await createStandaloneTask({ title, kind: "action", dueKind: "none", dueValue: null }, defaultTaskAccount);
           setAnnouncement(`Task added: ${title}`);
@@ -919,9 +949,9 @@ function TodayLayout({
         <div className="today-schedule-navigation">
           <div className="today-schedule-actions" role="group" aria-label="Schedule Date">
             <button type="button" className="btn btn-sm" aria-label="Previous Day" aria-keyshortcuts="-" onClick={() => onChangeDay?.(addDays(shownDay, -1))}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" /></button>
-            <button type="button" className="btn btn-sm" onClick={() => onChangeDay?.(null)}>Today</button>
+            <button type="button" className="btn btn-sm" aria-keyshortcuts="t" title={`Go to today (${formatShortcut("t")})`} onClick={() => onChangeDay?.(null)}>Today</button>
             <button type="button" className="btn btn-sm" aria-label="Next Day" aria-keyshortcuts="=" onClick={() => onChangeDay?.(addDays(shownDay, 1))}><ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button>
-            {panel === "agenda" && canCreateEvents ? <button type="button" className="btn btn-sm" aria-label="New Event" title="New event" onClick={startNewEvent}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
+            {panel === "agenda" && canCreateEvents ? <button type="button" className="btn btn-sm" aria-label="New Event" aria-keyshortcuts="b" title={`New event (${formatShortcut("b")})`} onClick={startNewEvent}><Plus size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
           </div>
           {/* Keep controls on the left for every day. The page heading already names today. */}
           <span className={showingToday ? "sr-only" : undefined} aria-live="polite">{shownDay.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>

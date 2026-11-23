@@ -3671,9 +3671,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-done .context-task-done .context-row-title { text-decoration: none; }
 .today-work .today-panel-heading { padding-inline: var(--space-1); }
 .today-work .today-inbox-card, .today-work .today-plan-card { margin-block: var(--space-1-5); border: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); min-height: var(--control-h); }
-/* Row actions appear on hover or focus, or while a menu is open; they keep their space so rows don't shift, and stay in the tab order. Touch screens always show them. */
+.today-work .today-inbox-card.today-inbox-card-selected { background: var(--selected); border-color: var(--accent); outline: none; }
+.today-work .today-inbox-card.today-inbox-card-selected:focus-visible { box-shadow: var(--focus-ring); }
+/* Row actions appear on hover, selection, or focus, or while a menu is open; they keep their space so rows don't shift, and stay in the tab order. Touch screens always show them. */
 .today-work .today-inbox-card .context-row-action > * { opacity: 0; transition: opacity var(--duration-fast) ease; }
 .today-work .today-inbox-card:hover .context-row-action > *,
+.today-work .today-inbox-card.today-inbox-card-selected .context-row-action > *,
 .today-work .today-inbox-card:focus-within .context-row-action > *,
 .today-work .today-inbox-card .context-row-action > :has([aria-expanded="true"]),
 .today-work .today-inbox-card .context-row-action > [aria-expanded="true"] { opacity: 1; }

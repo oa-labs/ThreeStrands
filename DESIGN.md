@@ -260,17 +260,19 @@ Current primary commands are:
 - `Shift+N` in Notes: name a new note in a dialog;
 - `#`: move the selected conversation to Trash in Mail, or the open note in
   Notes;
-- `-` and `=`: the previous and next day in Calendar, or the previous and
+- `-` and `=`: the previous and next day in Today, Calendar, or the previous and
   next day's note in Notes;
-- `d`: add a task linked to the selected conversation in Mail, or a blank,
-  standalone task in the Tasks view;
+- `d`: add a task linked to the selected conversation in Mail, a blank,
+  standalone task in the Tasks view, or focus the inline quick-add field in
+  Today;
 - `w` in Mail: add to a note from the message being read, or the one holding
   the text selection. A dialog picks the note (an upcoming meeting's note,
   today's, a recent one, or a new one), shows what will be added (the
   selected passage as a quote, or a link to the conversation), and offers the
   message's attachments and inline images. Nothing is written until the
   dialog is submitted;
-- `t`: go to today in Calendar and Notes, otherwise toggle Calendar;
+- `t`: go to today in Today, Calendar, and Notes, otherwise toggle Calendar;
+- `b` or `Shift+N` in Calendar, Today, or Mail: create a new calendar event;
 - `\`: hide or show the side panel (in Mail, open or close the drawer in a
   narrow window);
 - `Shift+A`: show the conversation's suggestions in the context panel,
@@ -287,12 +289,21 @@ Current primary commands are:
   Note, as with split inbox views. The heading names the shown view and a
   quiet hint beside it (also a button) advertises the key. The switch never
   focuses a control; focus moves to the shown panel only when it was inside
-  the hidden one. Enter enters the daily note and Escape returns to the Daily
-  Note panel. While writing, Tab belongs to the editor. Other focused controls retain native Tab movement;
+  the hidden one. Switching to Daily Note clears any Planning Inbox selection
+  so Enter enters the daily note and Escape returns to the Daily Note panel.
+  While writing, Tab belongs to the editor. Other focused controls retain
+  native Tab movement;
+- Planning Inbox in Today read mode: `ArrowLeft` / `ArrowRight` (or `[` / `]`)
+  switch filter tabs, `j` / `k` and Up/Down move selection across items,
+  `Escape` clears selection, `Enter` opens or edits the selected item, `o`
+  opens its linked conversation, note, or contact, `e` completes it, `s`
+  schedules it in the next free half hour, `a` adds it to today's plan, `#`
+  removes it from today's plan or dismisses it, and `d` focuses the inline
+  quick-add field (explicit `modal` shortcut scope);
 - `Cmd/Ctrl+K`: open the command palette.
 
-The focused-pane model routes `j`/`k` and Up/Down to conversations, tasks, or
-notes.
+The focused-pane model routes `j`/`k` and Up/Down to conversations, tasks,
+notes, or Today's Planning Inbox.
 Tasks use the same list-and-reader structure as mail: selection shows read-only
 details, Enter opens the edit modal, `e` completes, `Shift+e` reopens, and `o`
 opens the linked conversation when one exists. Keep these commands in the central command
