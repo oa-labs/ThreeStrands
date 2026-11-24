@@ -25,6 +25,7 @@ describe("SenderFeedback", () => {
     render(<SenderFeedback messageId="m" feedback={feedback({ patterns: [pattern("p1", ["https://b.example"])] })} />);
     expect(screen.getByRole("button", { name: "Trust this address for this account" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Forget confirmation" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Trust this address for this account" })).toHaveAccessibleDescription(expect.stringContaining("a year"));
   });
 
   it("offers no trust button when earlier confirmations cover the message, and lets each be forgotten", async () => {

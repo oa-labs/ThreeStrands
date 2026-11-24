@@ -15,6 +15,8 @@ export const TRUST_MISMATCH_LIMIT = 3;
 export const TRUST_ATTACHMENT_LIMIT = 3;
 /** Distinct links read from one message. */
 export const TRUST_LINK_LIMIT = 500;
+/** Days a delivery confirmation stays trusted, counted from the day the user confirmed it. */
+export const DELIVERY_TRUST_DAYS = 365;
 /** Disguised subject words the Trust section names before counting the rest. */
 export const TRUST_SUBJECT_WORD_LIMIT = 3;
 
@@ -277,6 +279,8 @@ export type TrustInput = {
   subject: string;
   attachments: readonly MessageAttachment[];
   bulk: boolean;
+  /** The current time, for tests. Trust ages from here, never from the sender-chosen sentAt. */
+  now?: Date;
   /** When this message was sent, to tell how long its sender has been writing. */
   sentAt: string;
 };
@@ -487,7 +491,7 @@ function linkTrick(fact: LinkFact, known: KnownSites | null): Omit<TrustFinding,
  * Reply-To at another organization. The sender's history with the user
  * follows. The sites links open and tracking images sit in the details.
  */
-export function trustReport({ messageId, trust, links, familiarity, sender, subject, attachments, sentAt }: TrustInput): TrustReport {
+export function trustReport({ messageId, trust, links, familiarity, sender, subject, attachments, sentAt, now = new Date() }: TrustInput): TrustReport {
   const from = parseAddress(sender);
   const email = from.email.toLocaleLowerCase();
   const domain = email.split("@")[1] ?? "";
@@ -507,15 +511,23 @@ export function trustReport({ messageId, trust, links, familiarity, sender, subj
   const patterns = familiarity?.deliveryPatterns;
   const linkOrigins = deliveryLinkOrigins(links);
   const requester = trust?.replyTo?.toLocaleLowerCase() || email;
-  const matching = patterns?.find((pattern) => pattern.senderEmail === email
+  const fresh = (pattern: SenderDeliveryPattern) => {
+    const age = Date.parse(pattern.confirmedAt);
+    return !Number.isNaN(age) && (now.getTime() - age) / DAY_MS <= DELIVERY_TRUST_DAYS;
+  };
+  const exact = patterns?.find((pattern) => pattern.senderEmail === email
     && pattern.replyTo === (trust?.replyTo?.toLocaleLowerCase() ?? null)
     && pattern.linkOrigins.length === linkOrigins.length
     && pattern.linkOrigins.every((origin, index) => origin === linkOrigins[index])) ?? null;
   // Trust grows: each confirmation adds its origins for the same sender
   // address and Reply-To. Forgetting a confirmation shrinks the set again.
-  const sameIdentity = patterns?.filter((pattern) => pattern.authenticated
+  // Expired confirmations stop counting, but still make the warning fire so
+  // stale trust asks again rather than lapsing silently.
+  const matching = exact && fresh(exact) ? exact : null;
+  const everConfirmed = patterns?.filter((pattern) => pattern.authenticated
     && pattern.senderEmail === email
     && pattern.replyTo === (trust?.replyTo?.toLocaleLowerCase() ?? null)) ?? [];
+  const sameIdentity = everConfirmed.filter(fresh);
   const confirmedOrigins = new Set(sameIdentity.flatMap((pattern) => pattern.linkOrigins));
   const newOrigins = linkOrigins.filter((origin) => !confirmedOrigins.has(origin));
   const covered = sameIdentity.length > 0 && newOrigins.length === 0;
@@ -523,11 +535,13 @@ export function trustReport({ messageId, trust, links, familiarity, sender, subj
     ? { requester, replyTo: trust.replyTo, linkOrigins, patterns, matching, covered, relevant: Boolean(trust.replyTo || patterns.length) }
     : undefined;
   const recognizedDelivery = Boolean(feedback && covered && trust?.authentication?.dmarc === "pass");
-  const confirmedMessage = Boolean(feedback && messageId && matching?.sourceMessageId === messageId);
+  const confirmedMessage = Boolean(feedback && messageId && exact?.sourceMessageId === messageId);
   if (feedback && !covered && patterns?.some((pattern) => pattern.authenticated)) {
     const listed = newOrigins.slice(0, TRUST_MISMATCH_LIMIT).map(describeOrigin);
     const more = newOrigins.length - listed.length;
-    const detail = sameIdentity.length === 0
+    const detail = everConfirmed.length > 0 && sameIdentity.length === 0
+      ? `You last confirmed ${requester} more than a year ago`
+      : sameIdentity.length === 0
       ? `Sent from ${email}${trust?.replyTo ? ` with replies to ${trust.replyTo}` : ""}, not an address you've confirmed for ${requester}`
       : `Links to ${newOrigins.length} ${newOrigins.length === 1 ? "site" : "sites"} you haven't confirmed for ${requester}: ${listed.join(", ")}${more > 0 ? ` (and ${more} more)` : ""}`;
     warn({ key: "delivery-changed", kind: "delivery", title: "Different delivery pattern", detail });
