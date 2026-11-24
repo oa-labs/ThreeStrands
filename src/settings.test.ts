@@ -110,7 +110,7 @@ describe("availability profiles", () => {
   afterEach(() => localStorage.clear());
 
   const work = { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/Chicago", slotIncrementMinutes: 30 };
-  const church = { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 };
+  const church = { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60 };
   const withChurch = { ...DEFAULT_AVAILABILITY_PROFILES, otherProfiles: [church], accountDefaults: { "home@example.com": "church" } };
   const named = (count: number, name = (index: number) => `Profile ${index}`) => ({
     ...DEFAULT_AVAILABILITY_PROFILES,
@@ -123,6 +123,40 @@ describe("availability profiles", () => {
     expect(readAvailabilityProfiles().defaultProfile.name).toBe("Default");
     expect(readAvailabilityPreferencesFor("home@example.com")).toEqual(work);
     expect(localStorage.getItem("threestrands.settings.availabilityProfiles")).toBeNull();
+  });
+
+  it("moves the largest per-profile buffer stored by an older version into the shared setting, once", () => {
+    saveAvailabilityPreferences({ ...work, driveTimeBufferMinutes: 0 });
+    const legacy = { ...withChurch, otherProfiles: [{ ...church, driveTimeBufferMinutes: 30 }, { ...church, id: "lunch", name: "Lunch", driveTimeBufferMinutes: 15 }] };
+    localStorage.setItem("threestrands.settings.availabilityProfiles", JSON.stringify(legacy));
+
+    expect(readAvailabilityProfiles().otherProfiles.map((profile) => "driveTimeBufferMinutes" in profile)).toEqual([false, false]);
+    expect(readAvailabilityPreferences().driveTimeBufferMinutes).toBe(30);
+    expect(JSON.parse(localStorage.getItem("threestrands.settings.availabilityProfiles")!).otherProfiles[0]).not.toHaveProperty("driveTimeBufferMinutes");
+    expect(readAvailabilityPreferencesFor("home@example.com").driveTimeBufferMinutes).toBe(30);
+
+    // Lowering the shared value is not undone by the profiles' old numbers.
+    saveAvailabilityPreferences({ ...readAvailabilityPreferences(), driveTimeBufferMinutes: 5 });
+    expect(readAvailabilityPreferences().driveTimeBufferMinutes).toBe(5);
+    expect(readAvailabilityProfiles().otherProfiles).toHaveLength(2);
+    expect(readAvailabilityPreferences().driveTimeBufferMinutes).toBe(5);
+  });
+
+  it("keeps a larger shared buffer over smaller per-profile ones, and migrates before any preferences are stored", () => {
+    saveAvailabilityPreferences({ ...work, driveTimeBufferMinutes: 45 });
+    localStorage.setItem("threestrands.settings.availabilityProfiles", JSON.stringify({ ...withChurch, otherProfiles: [{ ...church, driveTimeBufferMinutes: 15 }] }));
+    expect(readAvailabilityPreferences().driveTimeBufferMinutes).toBe(45);
+
+    localStorage.clear();
+    localStorage.setItem("threestrands.settings.availabilityProfiles", JSON.stringify({ ...withChurch, otherProfiles: [{ ...church, driveTimeBufferMinutes: 20 }] }));
+    expect(readAvailabilityPreferences().driveTimeBufferMinutes).toBe(20);
+  });
+
+  it("gives every profile the shared drive time buffer", () => {
+    saveAvailabilityPreferences({ ...work, driveTimeBufferMinutes: 30 });
+    saveAvailabilityProfiles(withChurch);
+    expect(readAvailabilityPreferencesFor("home@example.com").driveTimeBufferMinutes).toBe(30);
+    expect(readAvailabilityPreferencesFor("work@example.com").driveTimeBufferMinutes).toBe(30);
   });
 
   it("persists a 75-minute default duration for an additional profile", () => {
@@ -140,7 +174,7 @@ describe("availability profiles", () => {
       slotIncrementMinutes: 30,
       workingWindows: church.workingWindows,
       defaultDurationMinutes: 60,
-      driveTimeBufferMinutes: 15,
+      driveTimeBufferMinutes: work.driveTimeBufferMinutes,
     });
     expect(readAvailabilityPreferencesFor("work@example.com")).toEqual(work);
     expect(readAvailabilityPreferencesFor(null)).toEqual(work);
@@ -175,7 +209,7 @@ describe("availability profiles", () => {
     saveAvailabilityProfiles(withChurch);
     const brokenHours = { ...church, workingWindows: [{ weekday: 2, start: "21:00", end: "18:30" }] };
     expect(saveAvailabilityProfiles({ ...withChurch, otherProfiles: [brokenHours] })).toEqual(withChurch);
-    expect(saveAvailabilityProfiles({ ...withChurch, otherProfiles: [{ ...church, driveTimeBufferMinutes: MAX_DRIVE_TIME_BUFFER_MINUTES + 1 }] })).toEqual(withChurch);
+    expect(saveAvailabilityProfiles({ ...withChurch, otherProfiles: [{ ...church, driveTimeBufferMinutes: MAX_DRIVE_TIME_BUFFER_MINUTES + 1 } as typeof church] })).toEqual(withChurch);
   });
 
   it("falls back to the Default profile when the stored value is malformed", () => {

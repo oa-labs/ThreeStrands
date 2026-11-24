@@ -171,6 +171,7 @@ function validAvailabilityPreferences(value: unknown): value is AvailabilityPref
 }
 
 export function readAvailabilityPreferences(): AvailabilityPreferencesSetting {
+  migrateStoredProfileDriveTime();
   try {
     const saved = localStorage.getItem(AVAILABILITY_PREFERENCES_KEY);
     if (saved) {
@@ -228,6 +229,55 @@ function validProfileText(value: unknown, limit: number): value is string {
     && value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
+/**
+ * The buffer a profile carried before it became a shared setting, or null when
+ * it has none. Older devices and exports still write one per profile; an
+ * out-of-range value is passed through so validation rejects it as before.
+ */
+function legacyProfileDriveTime(profile: unknown): number | null {
+  const value = (profile as { driveTimeBufferMinutes?: unknown } | null)?.driveTimeBufferMinutes;
+  return value === undefined ? null : (value as number);
+}
+
+/**
+ * The shared drive time buffer after folding in per-profile buffers from older
+ * devices or exports: the largest one, so nobody loses a buffer they relied on.
+ */
+export function sharedDriveTimeBuffer(sharedMinutes: number | undefined, profiles: { otherProfiles: readonly unknown[] } | undefined): number {
+  return Math.max(sharedMinutes ?? 0, ...(profiles?.otherProfiles ?? []).map((profile) => {
+    const value = legacyProfileDriveTime(profile);
+    return Number.isInteger(value) && value! > 0 && value! <= MAX_DRIVE_TIME_BUFFER_MINUTES ? value! : 0;
+  }));
+}
+
+/**
+ * Moves buffers that older versions stored on each profile into the shared
+ * setting, once: the largest wins, then the profiles are rewritten without one.
+ */
+function migrateStoredProfileDriveTime(): void {
+  try {
+    const saved = localStorage.getItem(AVAILABILITY_PROFILES_KEY);
+    if (!saved) return;
+    const parsed: unknown = JSON.parse(saved);
+    const others = (parsed as { otherProfiles?: unknown } | null)?.otherProfiles;
+    if (!Array.isArray(others) || !others.some((profile) => legacyProfileDriveTime(profile) !== null)) return;
+    const stored = localStorage.getItem(AVAILABILITY_PREFERENCES_KEY);
+    const current = stored ? normalizeAvailabilityPreferences(JSON.parse(stored)) : null;
+    if (validAvailabilityPreferences(current)) {
+      const shared = sharedDriveTimeBuffer(current.driveTimeBufferMinutes, { otherProfiles: others });
+      if (shared !== current.driveTimeBufferMinutes) localStorage.setItem(AVAILABILITY_PREFERENCES_KEY, JSON.stringify({ ...current, driveTimeBufferMinutes: shared }));
+    } else {
+      const shared = sharedDriveTimeBuffer(0, { otherProfiles: others });
+      if (shared > 0) {
+        localStorage.setItem(AVAILABILITY_PREFERENCES_KEY, JSON.stringify({ ...DEFAULT_AVAILABILITY_PREFERENCES, workingWindows: DEFAULT_AVAILABILITY_PREFERENCES.workingWindows.map((window) => ({ ...window })), driveTimeBufferMinutes: shared }));
+      }
+    }
+    if (validAvailabilityProfiles(parsed)) localStorage.setItem(AVAILABILITY_PROFILES_KEY, JSON.stringify(normalizeAvailabilityProfiles(parsed)));
+  } catch {
+    // A blocked or corrupted storage backend leaves everything as it was.
+  }
+}
+
 function validAvailabilityProfiles(value: unknown): value is AvailabilityProfiles {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
@@ -247,7 +297,7 @@ function validAvailabilityProfiles(value: unknown): value is AvailabilityProfile
     slotIncrementMinutes: DEFAULT_AVAILABILITY_PREFERENCES.slotIncrementMinutes,
     workingWindows: profile.workingWindows,
     defaultDurationMinutes: profile.defaultDurationMinutes,
-    driveTimeBufferMinutes: profile.driveTimeBufferMinutes,
+    driveTimeBufferMinutes: legacyProfileDriveTime(profile) ?? 0,
   }))) return false;
   const associations = candidate.meetingTypeProfiles;
   if (associations !== undefined && (typeof associations !== "object" || associations === null || Array.isArray(associations)
@@ -270,7 +320,6 @@ function normalizeAvailabilityProfiles(value: AvailabilityProfiles): Availabilit
       name: profile.name,
       workingWindows: profile.workingWindows.map(({ weekday, start, end }) => ({ weekday, start, end })),
       defaultDurationMinutes: profile.defaultDurationMinutes,
-      driveTimeBufferMinutes: profile.driveTimeBufferMinutes,
     })),
     accountDefaults: Object.fromEntries(Object.entries(value.accountDefaults)
       .map(([account, id]) => [availabilityAccountKey(account), id] as const)
@@ -283,6 +332,7 @@ function defaultAvailabilityProfiles(): AvailabilityProfiles {
 }
 
 export function readAvailabilityProfiles(): AvailabilityProfiles {
+  migrateStoredProfileDriveTime();
   try {
     const saved = localStorage.getItem(AVAILABILITY_PROFILES_KEY);
     if (saved) {
@@ -327,8 +377,8 @@ export function meetingAvailabilityProfileId(
 }
 
 /**
- * The preferences a search uses with one profile: its hours, length, and
- * buffer with the shared timezone and slot increment. The default profile,
+ * The preferences a search uses with one profile: its hours and length with
+ * the shared timezone, slot increment, and drive time buffer. The default profile,
  * or an unknown id, returns `preferences` itself.
  */
 export function availabilityWithProfile(
@@ -343,7 +393,7 @@ export function availabilityWithProfile(
     workingWindows: profile.workingWindows,
     defaultDurationMinutes: profile.defaultDurationMinutes,
     slotIncrementMinutes: preferences.slotIncrementMinutes,
-    driveTimeBufferMinutes: profile.driveTimeBufferMinutes,
+    driveTimeBufferMinutes: preferences.driveTimeBufferMinutes,
   };
 }
 

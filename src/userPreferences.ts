@@ -37,6 +37,7 @@ import {
   saveAutoReadDelaySeconds,
   saveAvailabilityPreferences,
   saveAvailabilityProfiles,
+  sharedDriveTimeBuffer,
   DEFAULT_AVAILABILITY_PROFILES,
   saveFontFamily,
   saveEmailMinimumFontSize,
@@ -91,11 +92,20 @@ export type ExportablePreferences = {
   /** The shared timezone and slot increment, with the default profile's hours. */
   availabilityPreferences: AvailabilityPreferences;
   /** Optional on the wire: exports with only the default profile omit it. */
-  availabilityProfiles?: AvailabilityProfiles;
+  availabilityProfiles?: AvailabilityProfilesOnTheWire;
   /** Optional on the wire: exports without colors omit it. */
   calendarColors?: CalendarColorMap;
   /** Optional on the wire: exports without writing profiles omit it. */
   writingProfiles?: WritingProfileMap;
+};
+
+/**
+ * Every exported profile still carries `driveTimeBufferMinutes`, equal to the
+ * shared buffer, so older versions that read it per profile see the right
+ * value. Newer versions fold any larger legacy value into the shared one.
+ */
+export type AvailabilityProfilesOnTheWire = Omit<AvailabilityProfiles, "otherProfiles"> & {
+  otherProfiles: (AvailabilityProfiles["otherProfiles"][number] & { driveTimeBufferMinutes: number })[];
 };
 
 export type SettingsImportResult = {
@@ -108,6 +118,8 @@ export type SettingsImportResult = {
 };
 
 export function readExportablePreferences(): ExportablePreferences {
+  const availabilityPreferences = readAvailabilityPreferences();
+  const availabilityProfiles = readAvailabilityProfiles();
   return {
     showStarredInbox: readShowStarredInbox(),
     theme: readTheme(),
@@ -131,8 +143,11 @@ export function readExportablePreferences(): ExportablePreferences {
     aiFastModel: readAiFastModel(),
     aiEndpoint: readAiEndpoint(),
     aiFeatures: readAiFeatures(),
-    availabilityPreferences: readAvailabilityPreferences(),
-    availabilityProfiles: readAvailabilityProfiles(),
+    availabilityPreferences,
+    availabilityProfiles: {
+      ...availabilityProfiles,
+      otherProfiles: availabilityProfiles.otherProfiles.map((profile) => ({ ...profile, driveTimeBufferMinutes: availabilityPreferences.driveTimeBufferMinutes })),
+    },
     calendarColors: readCalendarColors(),
     writingProfiles: readWritingProfiles(),
   };
@@ -161,7 +176,11 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveAiFastModel(preferences.aiFastModel ?? "");
   saveAiEndpoint(preferences.aiEndpoint);
   saveAiFeatures(preferences.aiFeatures);
-  saveAvailabilityPreferences(preferences.availabilityPreferences);
+  // Exports from before the buffer was shared hold one per profile; keep the largest.
+  saveAvailabilityPreferences({
+    ...preferences.availabilityPreferences,
+    driveTimeBufferMinutes: sharedDriveTimeBuffer(preferences.availabilityPreferences.driveTimeBufferMinutes, preferences.availabilityProfiles),
+  });
   // Absent from exports made before profiles, or with only the default profile.
   saveAvailabilityProfiles(preferences.availabilityProfiles ?? DEFAULT_AVAILABILITY_PROFILES);
   // Absent from exports made before calendar colors, or with none set.

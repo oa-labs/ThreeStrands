@@ -7,7 +7,7 @@ import { SettingsHarness, settingsAccount } from "./test/settingsHarness";
 
 const withLunch: AvailabilityProfiles = {
   defaultProfile: { id: "default", name: "Meetings" },
-  otherProfiles: [{ id: "lunch", name: "Lunch", workingWindows: [{ weekday: 1, start: "12:00", end: "13:30" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 0 }],
+  otherProfiles: [{ id: "lunch", name: "Lunch", workingWindows: [{ weekday: 1, start: "12:00", end: "13:30" }], defaultDurationMinutes: 60 }],
   accountDefaults: {},
   meetingTypeProfiles: { lunch: "lunch" },
 };

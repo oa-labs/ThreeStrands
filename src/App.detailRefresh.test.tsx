@@ -8,7 +8,7 @@ import { searchedRange, SLOTS_PER_DAY } from "./scheduling";
 import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
 import { DEMO_ACCOUNT_ID } from "./data/demoDataset";
-import { saveAvailabilityProfiles } from "./settings";
+import { readAvailabilityPreferences, saveAvailabilityPreferences, saveAvailabilityProfiles } from "./settings";
 import type { OutboxItem } from "./correspondence";
 import type { ContactProfile, ContactTimelineItem, MeetingProposal } from "./domain";
 
@@ -146,9 +146,10 @@ it("inserts open times from the reply's context panel into that reply instead of
 it("finds times in a conversation's context panel with its account's availability profile", async () => {
   clearScheduleCache();
   const churchHours = [{ weekday: 2, start: "18:30", end: "21:00" }];
+  saveAvailabilityPreferences({ ...readAvailabilityPreferences(), driveTimeBufferMinutes: 15 });
   saveAvailabilityProfiles({
     defaultProfile: { id: "default", name: "Work" },
-    otherProfiles: [{ id: "church", name: "Church", workingWindows: churchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+    otherProfiles: [{ id: "church", name: "Church", workingWindows: churchHours, defaultDurationMinutes: 60 }],
     accountDefaults: { [DEMO_ACCOUNT_ID]: "church" },
   });
   vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
@@ -177,8 +178,9 @@ it("finds times in a conversation's context panel with its account's availabilit
 it("selects the associated lunch hours after Find Times reads the conversation", async () => {
   clearScheduleCache();
   const lunchHours = [{ weekday: 2, start: "12:00", end: "13:30" }];
+  saveAvailabilityPreferences({ ...readAvailabilityPreferences(), driveTimeBufferMinutes: 15 });
   saveAvailabilityProfiles({ defaultProfile: { id: "default", name: "Meetings" },
-    otherProfiles: [{ id: "lunch", name: "Lunch", workingWindows: lunchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+    otherProfiles: [{ id: "lunch", name: "Lunch", workingWindows: lunchHours, defaultDurationMinutes: 60 }],
     accountDefaults: {}, meetingTypeProfiles: { lunch: "lunch" },
   });
   saveAiProvider("openai");
@@ -217,9 +219,10 @@ it("selects the associated lunch hours after Find Times reads the conversation",
 it("searches a conversation with the profile chosen in its context panel", async () => {
   clearScheduleCache();
   const churchHours = [{ weekday: 2, start: "18:30", end: "21:00" }];
+  saveAvailabilityPreferences({ ...readAvailabilityPreferences(), driveTimeBufferMinutes: 15 });
   saveAvailabilityProfiles({
     defaultProfile: { id: "default", name: "Work" },
-    otherProfiles: [{ id: "church", name: "Church", workingWindows: churchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+    otherProfiles: [{ id: "church", name: "Church", workingWindows: churchHours, defaultDurationMinutes: 60 }],
     accountDefaults: {},
   });
   vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([

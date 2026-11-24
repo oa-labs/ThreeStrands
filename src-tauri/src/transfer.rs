@@ -3764,6 +3764,40 @@ mod tests {
         );
     }
 
+    /// The drive time buffer became one shared setting, but exports keep writing it on
+    /// every profile (equal to the shared value) so older versions still read it, and
+    /// exports made when each profile had its own, including a larger one on a non-default
+    /// profile, still validate and reach the webview unchanged for it to migrate.
+    #[test]
+    fn profile_drive_time_buffers_stay_in_the_export_and_a_larger_one_still_imports() {
+        let mut payload = current_fixture_payload();
+        payload
+            .preferences
+            .availability_preferences
+            .drive_time_buffer_minutes = 0;
+        payload.preferences.availability_profiles.other_profiles[0].drive_time_buffer_minutes = 45;
+        payload.preferences.validate().unwrap();
+        let serialized = serde_json::to_value(&payload.preferences).unwrap();
+        assert_eq!(
+            serialized["availabilityProfiles"]["otherProfiles"][0]["driveTimeBufferMinutes"],
+            45
+        );
+        assert_eq!(
+            serialized["availabilityPreferences"]["driveTimeBufferMinutes"],
+            0
+        );
+        let restored: TransferPreferences = serde_json::from_value(serialized).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(
+            restored.availability_profiles.other_profiles[0].drive_time_buffer_minutes,
+            45
+        );
+
+        payload.preferences.availability_profiles.other_profiles[0].drive_time_buffer_minutes =
+            crate::availability::MAX_DRIVE_TIME_BUFFER_MINUTES + 1;
+        assert!(payload.preferences.validate().is_err());
+    }
+
     #[test]
     fn meeting_type_profiles_round_trip_and_preceding_profiles_still_import() {
         let mut payload = current_fixture_payload();

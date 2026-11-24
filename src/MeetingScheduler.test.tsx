@@ -310,14 +310,14 @@ describe("MeetingScheduler", () => {
       const [chosenId, setChosenId] = useState<string>();
       const profiles = {
         defaultProfile: { id: "work", name: "Meetings" },
-        otherProfiles: [{ id: "lunch", name: "Lunch", workingWindows: [{ weekday: 2, start: "12:00", end: "13:30" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+        otherProfiles: [{ id: "lunch", name: "Lunch", workingWindows: [{ weekday: 2, start: "12:00", end: "13:30" }], defaultDurationMinutes: 60 }],
         accountDefaults: {}, meetingTypeProfiles: associated ? { lunch: "lunch" } : {},
       };
       return <AvailabilityProfileChoiceContext.Provider value={{ profiles: [profiles.defaultProfile, ...profiles.otherProfiles],
         selectedId: chosenId ?? "work", scope: "message", onSelect: setChosenId, manual: Boolean(chosenId), onReset: () => setChosenId(undefined),
         forMeetingType: (type) => {
           const id = meetingAvailabilityProfileId(profiles, null, chosenId, type);
-          return { selectedId: id, preferences: availabilityWithProfile(preferences, profiles, id ?? "work") };
+          return { selectedId: id, preferences: availabilityWithProfile({ ...preferences, driveTimeBufferMinutes: 15 }, profiles, id ?? "work") };
         },
       }}>
         <MeetingScheduler plan={{ ...range, meetingType: "lunch", durationIsDefault: true }} preferences={preferences} calendarConnected

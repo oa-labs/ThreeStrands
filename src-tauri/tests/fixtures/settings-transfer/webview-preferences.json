@@ -61,7 +61,7 @@
           }
         ],
         "defaultDurationMinutes": 60,
-        "driveTimeBufferMinutes": 15
+        "driveTimeBufferMinutes": 30
       }
     ],
     "accountDefaults": {
