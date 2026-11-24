@@ -61,9 +61,9 @@ an **Add Profile** button turns the tab into the multi-profile layout:
   edited, with **Add Profile** beside it (disabled at the limit). Below it are
   the profile's **Profile Name** field and, for a profile other than the
   default, **Make Default** and **Delete Profile** buttons. The default
-  profile can't be deleted. The working hours, **Default Duration**, and
-  **Drive Time Buffer** below edit the selected profile.
-- **Shared.** Timezone and **Slot Increment** stay where they were, each
+  profile can't be deleted. The working hours and **Default Duration**
+  below edit the selected profile.
+- **Shared.** Timezone, **Drive Time Buffer**, and **Slot Increment**, each
   described as shared by every profile.
 - **Account Defaults.** At the bottom, one select per mail account (nickname
   and address) listing the profiles. A new account starts on the default

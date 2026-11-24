@@ -60,10 +60,10 @@ When writing to people at your work domain, **Include coworkers** lists them. Ch
 If you meet at different times for different parts of your life, such as work hours on your work account and evenings for a personal one, keep a profile for each:
 
 1. In **Settings → Availability → Profiles**, click **Add Profile**. The new profile starts with your current hours.
-2. Name it, then set its **Available Hours**, **Default Duration** (15 to 120 minutes, including 75), and **Drive Time Buffer**.
+2. Name it, then set its **Available Hours**, and **Default Duration** (15 to 120 minutes, including 75).
 3. In **Settings → Availability → Account Defaults**, choose the profile each mail account usually uses.
 
-Find Times, checks of times someone offered, and **Find a time** in the event editor then use the profile of the account the email or event belongs to. To use other hours for one conversation or message, choose a profile under **Hours** in Find Times; the choice lasts until you quit ThreeStrands. Accounts without a profile of their own use the default one; **Make Default** changes which one that is. Timezone and **Slot Increment**, under **Shared Settings**, apply to every profile, and every calendar used for availability still counts as busy, whichever profile is in use.
+Find Times, checks of times someone offered, and **Find a time** in the event editor then use the profile of the account the email or event belongs to. To use other hours for one conversation or message, choose a profile under **Hours** in Find Times; the choice lasts until you quit ThreeStrands. Accounts without a profile of their own use the default one; **Make Default** changes which one that is. Timezone, **Drive Time Buffer**, and **Slot Increment**, under **Shared Settings**, apply to every profile, and every calendar used for availability still counts as busy, whichever profile is in use.
 
 For invitations to lunch, breakfast, dinner, or coffee, associate a profile in **Settings → Availability → Meeting Types**; **Edit Profile** there opens that profile’s hours. For example, keep lunch out of your normal meeting hours and create a Lunch profile containing only the times you want to offer for lunch. When Find Times with AI recognizes a lunch invitation, it uses that profile’s hours and shows **Hours: Lunch** above the time controls. Calendar conflicts and buffers still apply.
 

@@ -40,7 +40,7 @@ export function windowsOverlap(dayWindows: AvailabilityWindow[]): boolean {
   return sorted.some((window, index) => index > 0 && window.start < sorted[index - 1].end);
 }
 
-type ProfileHours = Pick<AvailabilityProfile, "workingWindows" | "defaultDurationMinutes" | "driveTimeBufferMinutes">;
+type ProfileHours = Pick<AvailabilityProfile, "workingWindows" | "defaultDurationMinutes">;
 
 /** A new profile starting from the default profile's hours, named so it doesn't clash. */
 export function addAvailabilityProfile(preferences: AvailabilityPreferences, profiles: AvailabilityProfiles, id: string): AvailabilityProfiles {
@@ -54,7 +54,6 @@ export function addAvailabilityProfile(preferences: AvailabilityPreferences, pro
       name,
       workingWindows: preferences.workingWindows.map((window) => ({ ...window })),
       defaultDurationMinutes: preferences.defaultDurationMinutes,
-      driveTimeBufferMinutes: preferences.driveTimeBufferMinutes,
     }],
   };
 }
@@ -85,14 +84,12 @@ export function makeDefaultAvailabilityProfile(
     ...profiles.defaultProfile,
     workingWindows: preferences.workingWindows,
     defaultDurationMinutes: preferences.defaultDurationMinutes,
-    driveTimeBufferMinutes: preferences.driveTimeBufferMinutes,
   };
   return {
     preferences: {
       ...preferences,
       workingWindows: chosen.workingWindows,
       defaultDurationMinutes: chosen.defaultDurationMinutes,
-      driveTimeBufferMinutes: chosen.driveTimeBufferMinutes,
     },
     profiles: {
       ...profiles,
@@ -209,6 +206,7 @@ export function AvailabilityProfilesSettings({
   useEffect(() => setTimeZoneDraft(preferences.timeZone), [preferences.timeZone]);
 
   const sharedHintId = useId();
+  const driveHintId = useId();
   const profilesHintId = useId();
   const editorHeadingId = useId();
   const sharedHeadingId = useId();
@@ -290,7 +288,7 @@ export function AvailabilityProfilesSettings({
           <button className="btn btn-sm" type="button" disabled={!canAddProfile} onClick={addProfile}><Plus size={ICON_SIZE.sm} />Add Profile</button>
         </span> : null}
       </div>
-      <p className="settings-hint" id={profilesHintId}>Each profile has its own hours, meeting length, and drive time. Accounts and meeting types choose which profile they use. Every calendar used for availability still counts as busy, whichever profile is in use.</p>
+      <p className="settings-hint" id={profilesHintId}>Each profile has its own hours and meeting length. Accounts and meeting types choose which profile they use. Every calendar used for availability still counts as busy, whichever profile is in use.</p>
       <div className="availability-profile-list" role="group" aria-label="Profiles" aria-describedby={profilesHintId}>
         {allProfiles.map((profile) => {
           const isDefault = profile.id === profiles.defaultProfile.id;
@@ -432,13 +430,6 @@ export function AvailabilityProfilesSettings({
         </div>
         <h4>Meetings</h4>
         <label className="settings-field settings-field-inline settings-field-fixed"><span>Default Duration</span><select value={editing.defaultDurationMinutes} onChange={(event) => updateHours({ defaultDurationMinutes: Number(event.target.value) })}>{DEFAULT_MEETING_DURATION_OPTIONS.map((value) => <option key={value} value={value}>{value} Minutes</option>)}</select></label>
-        <label className="settings-field settings-field-inline settings-field-fixed">
-          <span>Drive Time Buffer</span>
-          <select value={editing.driveTimeBufferMinutes} onChange={(event) => updateHours({ driveTimeBufferMinutes: Number(event.target.value) })}>
-            {[...new Set([...DRIVE_TIME_BUFFER_OPTIONS, editing.driveTimeBufferMinutes])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{value === 0 ? "None" : `${value} Minutes`}</option>)}
-          </select>
-        </label>
-        <p className="settings-hint">Reserve this much time before and after timed calendar events with a location when checking or suggesting meeting times.</p>
       </section>
       <section className="availability-shared-settings" aria-labelledby={sharedHeadingId}>
         <h3 id={sharedHeadingId}>Shared Settings</h3>
@@ -472,6 +463,13 @@ export function AvailabilityProfilesSettings({
           <span className="settings-hint">Times include daylight-saving transitions.</span>
         </div>
         {timeZoneError ? <p className="form-error" role="alert">{timeZoneError}</p> : null}
+        <label className="settings-field settings-field-inline settings-field-fixed">
+          <span>Drive Time Buffer</span>
+          <select value={preferences.driveTimeBufferMinutes} aria-describedby={`${sharedHintId} ${driveHintId}`} onChange={(event) => onChange({ ...preferences, driveTimeBufferMinutes: Number(event.target.value) })}>
+            {[...new Set([...DRIVE_TIME_BUFFER_OPTIONS, preferences.driveTimeBufferMinutes])].sort((x, y) => x - y).map((value) => <option key={value} value={value}>{value === 0 ? "None" : `${value} Minutes`}</option>)}
+          </select>
+        </label>
+        <p className="settings-hint" id={driveHintId}>Reserve this much time before and after timed calendar events with a location, and around in-person meetings such as lunch, when checking or suggesting meeting times.</p>
         <label className="settings-field settings-field-inline settings-field-fixed"><span>Slot Increment</span><select value={preferences.slotIncrementMinutes} aria-describedby={sharedHintId} onChange={(event) => onChange({ ...preferences, slotIncrementMinutes: Number(event.target.value) })}>{[5, 10, 15, 30, 60].map((value) => <option key={value} value={value}>{value} Minutes</option>)}</select></label>
       </section>
     </section>

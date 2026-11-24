@@ -12,7 +12,7 @@ import type { AvailabilityProfiles } from "./domain";
 
 const churchProfiles: AvailabilityProfiles = {
   defaultProfile: { id: "default", name: "Work" },
-  otherProfiles: [{ id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+  otherProfiles: [{ id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60 }],
   accountDefaults: { "home@example.com": "church" },
 };
 
@@ -204,7 +204,11 @@ describe("synced preferences data boundary", () => {
   it("queues availability profiles with the default profile's hours for devices without profiles", () => {
     saveAvailabilityProfiles(churchProfiles);
     queuePortablePreferences();
-    expect(queuedPreferences().availabilityProfiles).toEqual(churchProfiles);
+    // Each profile carries the shared buffer, so devices that read one per profile still accept the record.
+    expect(queuedPreferences().availabilityProfiles).toEqual({
+      ...churchProfiles,
+      otherProfiles: churchProfiles.otherProfiles.map((profile) => ({ ...profile, driveTimeBufferMinutes: readAvailabilityPreferences().driveTimeBufferMinutes })),
+    });
     expect(queuedPreferences().availabilityPreferences).toEqual(readAvailabilityPreferences());
   });
 

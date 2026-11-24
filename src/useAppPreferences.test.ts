@@ -107,7 +107,7 @@ describe("useAppPreferences", () => {
 
   it("gives each account its profile's preferences, the same object until settings change", () => {
     const { result } = renderHook(() => useAppPreferences());
-    const church = { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 };
+    const church = { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60 };
     act(() => result.current.setAvailabilityProfiles({ ...result.current.availabilityProfiles, otherProfiles: [church], accountDefaults: { "home@example.com": "church" } }));
 
     const home = result.current.availabilityFor("Home@example.com");
@@ -117,7 +117,7 @@ describe("useAppPreferences", () => {
       slotIncrementMinutes: shared.slotIncrementMinutes,
       workingWindows: church.workingWindows,
       defaultDurationMinutes: 60,
-      driveTimeBufferMinutes: 15,
+      driveTimeBufferMinutes: shared.driveTimeBufferMinutes,
     });
     expect(result.current.availabilityFor("work@example.com")).toBe(result.current.availabilityPreferences);
     expect(result.current.availabilityFor(null)).toBe(result.current.availabilityPreferences);
@@ -133,7 +133,7 @@ describe("useAppPreferences", () => {
 
   it("uses a profile chosen for one conversation until that profile is deleted", () => {
     const { result } = renderHook(() => useAppPreferences());
-    const church = { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 };
+    const church = { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60 };
     act(() => result.current.setAvailabilityProfiles({ ...result.current.availabilityProfiles, otherProfiles: [church] }));
 
     expect(result.current.availabilityProfileFor("work@example.com", "church")).toBe("church");

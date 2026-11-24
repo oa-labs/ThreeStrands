@@ -41,7 +41,7 @@ const homeAccount: Account = { ...settingsAccount, email: "home@example.com", ni
 const churchHours = [window(2, "18:30", "21:00"), window(6, "08:00", "12:00")];
 const withChurch: AvailabilityProfiles = {
   defaultProfile: { id: "default", name: "Work" },
-  otherProfiles: [{ id: "church", name: "Church", workingWindows: churchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+  otherProfiles: [{ id: "church", name: "Church", workingWindows: churchHours, defaultDurationMinutes: 60 }],
   accountDefaults: { "home@example.com": "church" },
 };
 
@@ -88,17 +88,28 @@ describe("AvailabilitySettings working hours", () => {
     expect(duration).toHaveValue("75");
   });
 
-  it("sets and disables the drive time buffer at the bottom of the profile's settings", () => {
+  it("sets the drive time buffer under Shared Settings, described as shared and by what it reserves", () => {
     const latest = renderSettings();
     const buffer = screen.getByRole("combobox", { name: "Drive Time Buffer" });
-    const fields = within(screen.getByRole("region", { name: DEFAULT_AVAILABILITY_PROFILES.defaultProfile.name })).getAllByRole("combobox");
-    expect(fields.at(-1)).toBe(buffer);
+    expect(within(screen.getByRole("region", { name: "Shared Settings" })).getByRole("combobox", { name: "Drive Time Buffer" })).toBe(buffer);
+    expect(within(screen.getByRole("region", { name: DEFAULT_AVAILABILITY_PROFILES.defaultProfile.name })).queryByRole("combobox", { name: "Drive Time Buffer" })).not.toBeInTheDocument();
+    expect(buffer).toHaveAccessibleDescription(/Shared by every profile/);
+    expect(buffer).toHaveAccessibleDescription(/calendar events with a location/);
     expect(buffer).toHaveValue("0");
     fireEvent.change(buffer, { target: { value: "30" } });
     expect(latest.current).toEqual({ ...basePreferences, driveTimeBufferMinutes: 30 });
     fireEvent.change(buffer, { target: { value: "0" } });
     expect(latest.current).toEqual(basePreferences);
   });
+
+  it("shows the same drive time buffer whichever profile is selected", () => {
+    renderWithProfiles();
+    expect(screen.getAllByRole("combobox", { name: "Drive Time Buffer" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Church" }));
+    expect(screen.getAllByRole("combobox", { name: "Drive Time Buffer" })).toHaveLength(1);
+    expect(screen.getByRole("combobox", { name: "Drive Time Buffer" })).toHaveValue("0");
+  });
+
 
   it("splits a day around lunch with a second slot", () => {
     const latest = renderSettings();
@@ -283,11 +294,11 @@ describe("AvailabilitySettings profiles", () => {
     fireEvent.click(screen.getByRole("button", { name: "Church" }));
     fireEvent.click(screen.getByRole("button", { name: "Make Default" }));
 
-    expect(latest.preferences).toEqual({ ...basePreferences, workingWindows: churchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 });
+    expect(latest.preferences).toEqual({ ...basePreferences, workingWindows: churchHours, defaultDurationMinutes: 60 });
     expect(latest.profiles.defaultProfile).toEqual({ id: "church", name: "Church" });
     expect(latest.profiles.otherProfiles).toEqual([{
       id: "default", name: "Work",
-      workingWindows: basePreferences.workingWindows, defaultDurationMinutes: 30, driveTimeBufferMinutes: 0,
+      workingWindows: basePreferences.workingWindows, defaultDurationMinutes: 30,
     }]);
     // Church is now the default, so neither account needs an entry of its own.
     expect(latest.profiles.accountDefaults).toEqual({});

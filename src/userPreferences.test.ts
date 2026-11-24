@@ -87,7 +87,7 @@ describe("exportable preferences", () => {
       },
       availabilityProfiles: {
         defaultProfile: { id: "default", name: "Work" },
-        otherProfiles: [{ id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+        otherProfiles: [{ id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 30 }],
         accountDefaults: { "person@example.com": "church" },
       },
       calendarColors: { "person@example.com": { primary: "teal", "team@example.com": "gray" } },
@@ -110,8 +110,40 @@ describe("exportable preferences", () => {
   it("imports older availability preferences with drive time disabled", () => {
     const { driveTimeBufferMinutes: _buffer, ...previous } = nativeContractFixture.availabilityPreferences;
     applyExportablePreferences(nativeContractFixture);
-    applyExportablePreferences({ ...nativeContractFixture, availabilityPreferences: previous } as ExportablePreferences);
+    applyExportablePreferences({ ...nativeContractFixture, availabilityPreferences: previous, availabilityProfiles: undefined } as ExportablePreferences);
     expect(readExportablePreferences().availabilityPreferences).toEqual({ ...previous, driveTimeBufferMinutes: 0 });
+  });
+
+  it("imports an export whose non-default profile has the larger buffer, keeping the largest as the shared one", () => {
+    const legacy = {
+      ...nativeContractFixture,
+      availabilityPreferences: { ...nativeContractFixture.availabilityPreferences, driveTimeBufferMinutes: 0 },
+      availabilityProfiles: {
+        ...nativeContractFixture.availabilityProfiles!,
+        otherProfiles: [
+          { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 30 },
+          { id: "lunch", name: "Lunch", workingWindows: [{ weekday: 1, start: "12:00", end: "13:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 },
+        ],
+      },
+    } as ExportablePreferences;
+    applyExportablePreferences(legacy);
+    const restored = readExportablePreferences();
+    expect(restored.availabilityPreferences.driveTimeBufferMinutes).toBe(30);
+    expect(restored.availabilityProfiles!.otherProfiles.map((profile) => profile.driveTimeBufferMinutes)).toEqual([30, 30]);
+  });
+
+  it("exports the shared buffer on every profile so older versions read the same value", () => {
+    applyExportablePreferences(nativeContractFixture);
+    const exported = readExportablePreferences();
+    expect(exported.availabilityPreferences.driveTimeBufferMinutes).toBe(30);
+    expect(exported.availabilityProfiles!.otherProfiles.every((profile) => profile.driveTimeBufferMinutes === 30)).toBe(true);
+    expect(JSON.parse(localStorage.getItem("threestrands.settings.availabilityProfiles")!).otherProfiles[0]).not.toHaveProperty("driveTimeBufferMinutes");
+  });
+
+  it("imports profiles that omit the buffer", () => {
+    const { driveTimeBufferMinutes: _buffer, ...bare } = nativeContractFixture.availabilityProfiles!.otherProfiles[0];
+    applyExportablePreferences({ ...nativeContractFixture, availabilityProfiles: { ...nativeContractFixture.availabilityProfiles!, otherProfiles: [bare] } } as unknown as ExportablePreferences);
+    expect(readExportablePreferences().availabilityPreferences.driveTimeBufferMinutes).toBe(30);
   });
 
   it("imports the preceding preference schema with only the Default profile and keeps its hours", () => {
