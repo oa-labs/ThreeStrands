@@ -3727,6 +3727,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-header[data-sky="dark"] { color: var(--backdrop-ink); }
 .today-header[data-sky="dark"] h1 { color: var(--backdrop-ink); }
 .today-header[data-sky="dark"] .eyebrow { color: var(--backdrop-ink-soft); }
+/* The account chip follows: light ink on a light wash, so its name reads over the dark sky; its dot keeps the account color, ringed in ink. */
+.today-header[data-sky="dark"] .account-scope-chip { background: color-mix(in srgb, var(--backdrop-ink) 16%, transparent); color: var(--backdrop-ink); }
+.today-header[data-sky="dark"] .account-scope-dot { box-shadow: 0 0 0 1px var(--backdrop-ink-soft); }
 
 /* Plan Today: one modal form with a step list. */
 /* A plan card and its booked block highlight each other on hover or focus. */

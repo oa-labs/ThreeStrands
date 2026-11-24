@@ -499,6 +499,18 @@ describe("Today backdrop", () => {
     expect(failures).toEqual([]);
   });
 
+  it("turns the account chip's text light over a dusk or night sky, as it does the heading", () => {
+    const value = (selector: string, prop: string) => {
+      let result: string | undefined;
+      css.walkRules(selector, (r) => { if (r.parent?.type === "root") r.walkDecls(prop, (d) => { result = d.value; }); });
+      return result;
+    };
+    expect(value('.today-header[data-sky="dark"] h1', "color")).toBe("var(--backdrop-ink)");
+    expect(value('.today-header[data-sky="dark"] .account-scope-chip', "color")).toBe("var(--backdrop-ink)");
+    // The chip's wash is drawn from the light ink, not the account color that sits dark on a night sky.
+    expect(value('.today-header[data-sky="dark"] .account-scope-chip', "background")).toMatch(/var\(--backdrop-ink\)/);
+  });
+
   it("draws the art only from those tokens, never from a literal color", () => {
     const literal = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i;
     const raw: string[] = [];
