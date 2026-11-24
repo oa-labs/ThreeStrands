@@ -8,6 +8,7 @@ on:
       - "supply-chain/**"
       - "src-tauri/supply-chain/**"
       - "deny.toml"
+      - "supply-chain-release-age.json"
       - ".devcontainer/Dockerfile"
       - "scripts/supply-chain.mjs"
       - "scripts/supply-chain.test.mjs"
@@ -84,3 +85,9 @@ jobs:
       - name: cargo deny (src-tauri)
         if: ${{ !cancelled() }}
         run: cargo deny --manifest-path src-tauri/Cargo.toml check advisories sources
+
+      # Crates.io versions must be at least 7 days old unless
+      # supply-chain-release-age.json excludes that exact version.
+      - name: Crate release age
+        if: ${{ !cancelled() }}
+        run: node scripts/supply-chain.mjs --only release-age

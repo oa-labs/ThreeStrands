@@ -173,12 +173,12 @@ Both Cargo workspaces (the root `crates/` workspace and `src-tauri`) are
 checked with [`cargo vet`](https://mozilla.github.io/cargo-vet/) and
 [`cargo deny`](https://embarkstudios.github.io/cargo-deny/). Both tools are
 installed in the development container. Elsewhere, `pnpm supply-chain`
-runs all four checks below with pinned, checksum-verified copies of the tools
-(cached under `~/.cache/threestrands/supply-chain-tools`), keeps going after a
+runs the four checks below, plus the crate age rule, with pinned,
+checksum-verified copies of the tools (cached under `~/.cache/threestrands/supply-chain-tools`), keeps going after a
 failure, and prints a pass/fail line per check.
 
 ```sh
-pnpm supply-chain                              # all four checks
+pnpm supply-chain                              # all checks, including crate age
 cargo vet                                      # root workspace
 (cd src-tauri && cargo vet)
 cargo deny check advisories sources            # uses deny.toml
@@ -197,8 +197,19 @@ exemptions that imported audits now cover.
 `cargo deny` fails on RustSec security advisories, yanked crates, and
 dependencies from any source other than crates.io.
 
+Like npm's `minimumReleaseAge`, crates.io versions in either `Cargo.lock` must
+have been published at least 7 days ago (workspace, path, and git packages are
+skipped). `pnpm supply-chain` and CI fail otherwise, listing each version with
+its publish date and the date it becomes eligible. To take an urgent fix sooner,
+add that exact version to `exclude` in `supply-chain-release-age.json` with a
+reason. Exclusions never match the next release, and the check warns when one is
+no longer needed. Publish times come from the crates.io sparse index (`pubtime`),
+with a rate-limited API fallback, and are cached in
+`~/.cache/threestrands/crate-publish-times.json`.
+`node scripts/supply-chain.mjs --only release-age` runs just this check.
+
 The **Supply chain** workflow (`.github/workflows/supply-chain.yml`) runs all
-four checks on pull requests that touch Cargo manifests, lockfiles, audit
+five checks on pull requests that touch Cargo manifests, lockfiles, audit
 files, or the pinned tool versions, on every push to `master`, and weekly,
 since new advisories can fail an unchanged lockfile. It installs pinned, checksum-verified release
 binaries; keep their versions in step with `CARGO_VET_VERSION` and

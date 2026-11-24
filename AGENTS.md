@@ -115,12 +115,15 @@ the developer decide.
 Before handing over a branch that touches any `Cargo.toml`, `Cargo.lock`,
 `supply-chain/`, `src-tauri/supply-chain/`, or `deny.toml`, run `pnpm
 supply-chain`. It runs the same four `cargo vet` and `cargo deny` checks as CI,
-takes seconds, and fetches the pinned tools on first use; run it on any branch
-you like. If a check also fails on `origin/master` (try it in a temporary
+plus a check that no locked crate version is under 7 days old. It takes
+seconds and fetches the pinned tools on first use; run it on any branch you
+like. If a check also fails on `origin/master` (try it in a temporary
 detached worktree, not the primary checkout), the failure isn't the branch's:
 report it in the summary and don't fix it there. Unvetted crates and advisories
 are always reported to the developer, never certified, exempted, or ignored by
-an agent.
+an agent. The same goes for a crate that is too new: never add an exclusion to
+`supply-chain-release-age.json` or downgrade the crate. Report the crate and
+version and let the developer decide.
 
 ## Settings transfer compatibility
 
