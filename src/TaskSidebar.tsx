@@ -658,7 +658,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           </div> : null}
 
         </div>
-        {goalsOpen ? <div ref={goalsDismiss.drawer as RefObject<HTMLDivElement>} onKeyDown={goalsDismiss.onKeyDown} className="workspace-goals-drawer"><button type="button" className="btn-icon btn-icon-sm drawer-close" aria-label="Close Goals" title="Close Goals" onClick={goalsDismiss.close}><X size={ICON_SIZE.sm} aria-hidden="true" /></button><GoalsPane
+        {goalsOpen ? <div ref={goalsDismiss.drawer as RefObject<HTMLDivElement>} className="workspace-goals-drawer"><button type="button" className="btn-icon btn-icon-sm drawer-close" aria-label="Close Goals" title="Close Goals" onClick={goalsDismiss.close}><X size={ICON_SIZE.sm} aria-hidden="true" /></button><GoalsPane
           ref={goalsPane}
           goals={goals}
           accountId={accountId}

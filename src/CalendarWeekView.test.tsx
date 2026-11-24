@@ -831,6 +831,20 @@ describe("CalendarWeekView", () => {
     expect(screen.getByText("Sun 20")).toBeInTheDocument();
   });
 
+  it("jumps the mini month and the displayed week back to today", async () => {
+    renderWeek();
+    await screen.findByText("Sun 20");
+    fireEvent.click(screen.getByRole("button", { name: "Next Month" }));
+    fireEvent.click(screen.getByRole("button", { name: /October 8, 2026/ }));
+    await screen.findByText("Sun 4");
+    fireEvent.click(screen.getByRole("button", { name: "Next Month" }));
+    expect(screen.getByRole("heading", { level: 3, name: "November 2026" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Jump to Today" }));
+    expect(screen.getByRole("heading", { level: 3, name: "September 2026" })).toBeInTheDocument();
+    await screen.findByText("Sun 20");
+  });
+
   it("shows the month as a Sunday-first grid with leading and trailing days", async () => {
     renderWeek();
     await screen.findByText("Sun 20");
@@ -859,14 +873,10 @@ describe("CalendarWeekView", () => {
   describe("calendars drawer dismissal", () => {
     const drawer = () => screen.queryByRole("complementary", { name: "Calendar navigation" });
 
-    it("closes from the corner X and returns focus to the toggle", async () => {
+    it("has no corner close button", async () => {
       renderWeek();
       await screen.findByText("Sun 20");
-      const close = screen.getByRole("button", { name: "Close Calendars" });
-      close.focus();
-      fireEvent.click(close);
-      expect(drawer()).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /^Calendars/ })).toHaveFocus();
+      expect(within(drawer()!).queryByRole("button", { name: /^Close/ })).not.toBeInTheDocument();
     });
 
     it("closes on a pointerdown outside but not inside", async () => {
@@ -898,6 +908,13 @@ describe("CalendarWeekView", () => {
       fireEvent.keyDown(next, { key: "Escape" });
       expect(drawer()).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^Calendars/ })).toHaveFocus();
+    });
+
+    it("closes on Escape with focus outside it", async () => {
+      renderWeek();
+      await screen.findByText("Sun 20");
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      expect(drawer()).not.toBeInTheDocument();
     });
   });
 
@@ -1500,10 +1517,15 @@ describe("CalendarWeekView", () => {
     expect(within(list).getByRole("menu")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(within(list).queryByRole("menu")).not.toBeInTheDocument();
+    // The menu takes Escape first; the Calendars drawer around it stays open.
+    expect(screen.getByRole("complementary", { name: "Calendar navigation" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "Calendar navigation" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Calendars/ }));
 
-    fireEvent.click(trigger);
+    fireEvent.click(within(screen.getByRole("region", { name: "Calendars" })).getByRole("button", { name: "Options for joel@example.com" }));
     fireEvent.mouseDown(screen.getByText("Sun 20"));
-    expect(within(list).queryByRole("menu")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Calendars" })).queryByRole("menu")).not.toBeInTheDocument();
     expect(localStorage.getItem(CALENDAR_COLORS_KEY)).toBeNull();
   });
 

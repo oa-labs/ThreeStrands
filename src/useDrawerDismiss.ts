@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useEscapeDismiss } from "./useEscapeDismiss";
 
 /**
  * Dismissal for a floating drawer opened by a toggle button: a pointerdown
- * outside it (the toggle excepted, since it toggles itself) or Escape while
- * focus is inside closes it. When focus was inside, it returns to the toggle.
- * Spread `onKeyDown` onto the drawer; call `close` for any other close button.
+ * outside it (the toggle excepted, since it toggles itself) or Escape, wherever
+ * focus is, closes it. Escape goes through the shared dismiss stack, so a menu
+ * opened inside the drawer closes first. When focus was inside, it returns to
+ * the toggle. Call `close` for any other close button.
  */
 export function useDrawerDismiss(open: boolean, setOpen: (open: boolean) => void, toggle: RefObject<HTMLElement | null>) {
   const drawer = useRef<HTMLElement | null>(null);
@@ -23,10 +25,6 @@ export function useDrawerDismiss(open: boolean, setOpen: (open: boolean) => void
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, [open, setOpen, toggle]);
-  const onKeyDown = useCallback((event: KeyboardEvent) => {
-    if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    close();
-  }, [close]);
-  return { drawer, close, onKeyDown };
+  useEscapeDismiss(close, open);
+  return { drawer, close };
 }

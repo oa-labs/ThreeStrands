@@ -8,7 +8,7 @@ import { ContextSectionHeader } from "./ContextSections";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { BookedTask, CalendarTasks, useAccountTasks } from "./CalendarTasks";
 import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
-import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Plus, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Plus, Calendar1 } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { isPreparable, preparationKey, type MeetingPreparationHost } from "./meetingPrep";
 import { useCallback, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
@@ -80,12 +80,14 @@ function MiniMonth({
   weekStart,
   onSelect,
   onMonthChange,
+  onToday,
 }: {
   month: Date;
   selected: Date;
   weekStart: number;
   onSelect(date: Date): void;
   onMonthChange(month: Date): void;
+  onToday(): void;
 }) {
   const titleId = useId();
   return (
@@ -93,8 +95,9 @@ function MiniMonth({
       <header>
         <h3 id={titleId}>{monthTitle(month)}</h3>
         <div>
-          <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous Month" onClick={() => onMonthChange(shiftMonth(month, -1))}><ChevronLeft size={ICON_SIZE.sm} /></button>
-          <button type="button" className="btn-icon btn-icon-sm" aria-label="Next Month" onClick={() => onMonthChange(shiftMonth(month, 1))}><ChevronRight size={ICON_SIZE.sm} /></button>
+          <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous Month" title="Previous Month" onClick={() => onMonthChange(shiftMonth(month, -1))}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" /></button>
+          <button type="button" className="btn-icon btn-icon-sm" aria-label="Jump to Today" title={`Jump to Today (${formatShortcut("t")})`} aria-keyshortcuts="t" onClick={onToday}><Calendar1 size={ICON_SIZE.sm} aria-hidden="true" /></button>
+          <button type="button" className="btn-icon btn-icon-sm" aria-label="Next Month" title="Next Month" onClick={() => onMonthChange(shiftMonth(month, 1))}><ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button>
         </div>
       </header>
       <MonthGrid
@@ -512,14 +515,14 @@ export function CalendarWeekView({
           onCreated={(event) => { setNewEventRange(null); setSelectedEvent(event); revalidateScheduleCache(); onCreated?.(); }}
         /> : null}
       </div>
-      {navigationOpen ? <aside ref={navigationDismiss.drawer} onKeyDown={navigationDismiss.onKeyDown} className="calendar-week-side workspace-calendar-navigation" aria-label="Calendar navigation">
-        <button type="button" className="btn-icon btn-icon-sm drawer-close" aria-label="Close Calendars" title="Close Calendars" onClick={navigationDismiss.close}><X size={ICON_SIZE.sm} aria-hidden="true" /></button>
+      {navigationOpen ? <aside ref={navigationDismiss.drawer} className="calendar-week-side workspace-calendar-navigation" aria-label="Calendar navigation">
         <MiniMonth
           month={month}
           selected={anchor}
           weekStart={0}
           onSelect={selectDate}
           onMonthChange={setMonth}
+          onToday={goToToday}
         />
         <CalendarList
           accounts={accounts}
