@@ -8,6 +8,7 @@ import { NoteBacklinks } from "./NoteEntityContext";
 import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import type { CommandResult } from "./commands";
 import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, SquareCheckBig, Target, X } from "lucide-react";
+import { useDrawerDismiss } from "./useDrawerDismiss";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { AgentDetail, Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
@@ -139,6 +140,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [goalLinkTaskId, setGoalLinkTaskId] = useState<string | null>(null);
   const goalsPane = useRef<GoalsPaneHandle>(null);
   const [goalsOpen, setGoalsOpen] = useState(false);
+  const goalsToggle = useRef<HTMLButtonElement>(null);
+  const goalsDismiss = useDrawerDismiss(goalsOpen, setGoalsOpen, goalsToggle);
   const taskDrafts = useRef(restored.current?.drafts ?? new Map<string, TaskDetailDrafts>());
   const [now, setNow] = useState(() => new Date());
   const [loading, setLoading] = useState(true);
@@ -614,7 +617,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           </div>
         </div>
         <div className="tasks-sidebar-header-actions">
-          <button type="button" className="btn" aria-expanded={goalsOpen} onClick={() => setGoalsOpen((value) => !value)}><Target size={ICON_SIZE.sm} />Goals</button>
+          <button ref={goalsToggle} type="button" className="btn" aria-expanded={goalsOpen} onClick={() => setGoalsOpen((value) => !value)}><Target size={ICON_SIZE.sm} />Goals</button>
           <div className="segmented" role="group" aria-label="Task layout">
             <button type="button" className="segment" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={ICON_SIZE.md} />List</button>
             <button type="button" className="segment" aria-pressed={layout === "board"} onClick={() => changeLayout("board")}><Columns3 size={ICON_SIZE.md} />Board</button>
@@ -655,7 +658,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           </div> : null}
 
         </div>
-        {goalsOpen ? <div className="workspace-goals-drawer"><button type="button" className="btn btn-sm" onClick={() => setGoalsOpen(false)}>Close goals</button><GoalsPane
+        {goalsOpen ? <div ref={goalsDismiss.drawer as RefObject<HTMLDivElement>} onKeyDown={goalsDismiss.onKeyDown} className="workspace-goals-drawer"><button type="button" className="btn-icon btn-icon-sm drawer-close" aria-label="Close Goals" title="Close Goals" onClick={goalsDismiss.close}><X size={ICON_SIZE.sm} aria-hidden="true" /></button><GoalsPane
           ref={goalsPane}
           goals={goals}
           accountId={accountId}

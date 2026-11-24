@@ -8,20 +8,20 @@ import { ContextSectionHeader } from "./ContextSections";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { BookedTask, CalendarTasks, useAccountTasks } from "./CalendarTasks";
 import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
-import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Plus } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Plus, X } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { isPreparable, preparationKey, type MeetingPreparationHost } from "./meetingPrep";
-import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useCallback, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { EventViewer, eventCalendarLabel } from "./CalendarSidebar";
 import { HoverTooltip } from "./AppChrome";
 import {
   HOUR_HEIGHT,
   addDays,
   formatEventTime,
+  dateInputValue,
   isSameDay,
   occursOnDay,
   startOfLocalDay,
-  startOfWeek,
 } from "./calendarTime";
 import { isEditableTarget } from "./commands";
 import { useCalendarSchedule } from "./useCalendarSchedule";
@@ -31,6 +31,9 @@ import { CalendarColorRow } from "./CalendarColorMenu";
 import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
 import { errorMessage } from "./errors";
+import { MonthGrid, shiftMonth } from "./MonthGrid";
+import { parseCalendarDate } from "./DatePickerField";
+import { useDrawerDismiss } from "./useDrawerDismiss";
 import { ICON_SIZE } from "./iconSizes";
 import { bookedTaskFor, defaultEventCalendar, openTasksFor, showCalendar, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
 import type { Notice } from "./useNotice";
@@ -71,70 +74,38 @@ function monthTitle(date: Date): string {
   return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(date);
 }
 
-/** Six Sunday-anchored rows covering the month containing `date`. */
-export function monthGridDays(date: Date): Date[] {
-  const first = new Date(date.getFullYear(), date.getMonth(), 1);
-  const start = startOfWeek(first);
-  return Array.from({ length: 42 }, (_, index) => addDays(start, index));
-}
-
 function MiniMonth({
   month,
   selected,
-  today,
+  weekStart,
   onSelect,
-  onMoveMonth,
+  onMonthChange,
 }: {
   month: Date;
   selected: Date;
-  today: Date;
+  weekStart: number;
   onSelect(date: Date): void;
-  onMoveMonth(offset: number): void;
+  onMonthChange(month: Date): void;
 }) {
-  const days = useMemo(() => monthGridDays(month), [month]);
-  const weekdayInitials = useMemo(() => {
-    const formatter = new Intl.DateTimeFormat(undefined, { weekday: "narrow" });
-    const base = startOfWeek(new Date());
-    return Array.from({ length: 7 }, (_, index) => formatter.format(addDays(base, index)));
-  }, []);
+  const titleId = useId();
   return (
     <section className="calendar-mini-month" aria-label="Month picker">
       <header>
-        <h3>{monthTitle(month)}</h3>
+        <h3 id={titleId}>{monthTitle(month)}</h3>
         <div>
-          <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous Month" onClick={() => onMoveMonth(-1)}><ChevronLeft size={ICON_SIZE.sm} /></button>
-          <button type="button" className="btn-icon btn-icon-sm" aria-label="Next Month" onClick={() => onMoveMonth(1)}><ChevronRight size={ICON_SIZE.sm} /></button>
+          <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous Month" onClick={() => onMonthChange(shiftMonth(month, -1))}><ChevronLeft size={ICON_SIZE.sm} /></button>
+          <button type="button" className="btn-icon btn-icon-sm" aria-label="Next Month" onClick={() => onMonthChange(shiftMonth(month, 1))}><ChevronRight size={ICON_SIZE.sm} /></button>
         </div>
       </header>
-      <div className="calendar-mini-month-grid" role="grid">
-        <div className="calendar-mini-month-weekdays" role="row" aria-hidden="true">
-          {weekdayInitials.map((initial, index) => <span key={index}>{initial}</span>)}
-        </div>
-        <div className="calendar-mini-month-days" role="row">
-          {days.map((day) => {
-            const outside = day.getMonth() !== month.getMonth();
-            const className = [
-              "calendar-mini-day",
-              outside && "calendar-mini-day-outside",
-              isSameDay(day, selected) && "calendar-mini-day-selected",
-              isSameDay(day, today) && "calendar-mini-day-today",
-            ].filter(Boolean).join(" ");
-            return (
-              <button
-                type="button"
-                role="gridcell"
-                key={day.toDateString()}
-                className={className}
-                aria-current={isSameDay(day, selected) ? "date" : undefined}
-                aria-label={new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(day)}
-                onClick={() => onSelect(day)}
-              >
-                {day.getDate()}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <MonthGrid
+        labelledBy={titleId}
+        cursor={month}
+        onCursorChange={onMonthChange}
+        selected={dateInputValue(selected)}
+        onSelect={(value) => { const day = parseCalendarDate(value); if (day) onSelect(day); }}
+        weekStart={weekStart}
+        weekdays="narrow"
+      />
     </section>
   );
 }
@@ -267,6 +238,8 @@ export function CalendarWeekView({
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(() => session?.current?.initialEvent===initialEvent ? session?.current?.selected ?? initialEvent ?? null : initialEvent ?? null);
   const [mode, setMode] = useState<CalendarRangeMode>(() => session?.current?.initialEvent===initialEvent && session?.current ? session.current.mode : initialEvent ? rangeForEvent(initialEvent, readCalendarRange()) : readCalendarRange());
   const [navigationOpen, setNavigationOpen] = useState(session?.current?.navigationOpen ?? false);
+  const navigationToggle = useRef<HTMLButtonElement>(null);
+  const navigationDismiss = useDrawerDismiss(navigationOpen, setNavigationOpen, navigationToggle);
   const eventTrigger = useRef<HTMLButtonElement | null>(null);
   const focusAgendaDetails = useRef(false);
   const [newEventRange, setNewEventRange] = useState<{ start: Date; end: Date; task?: ThreadTask } | null>(null);
@@ -478,7 +451,7 @@ export function CalendarWeekView({
           <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account" title={selectedAccountEmails.join(", ") || undefined}>· {accountScope}</span></span><h1>{monthTitle(weekStart)}</h1><p className="calendar-visible-range">{weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })}{days.length > 1 ? ` – ${days.at(-1)!.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</p></div>
           <div className="calendar-week-controls">
             <div className="segmented" role="group" aria-label="Calendar Range">{CALENDAR_RANGES.map((item) => <button key={item.value} type="button" className="segment" aria-pressed={mode === item.value} onClick={() => { setMode(item.value); writeLocalStorage(CALENDAR_RANGE_KEY,item.value); }}>{item.label}</button>)}</div>
-            <button type="button" className="btn" aria-expanded={navigationOpen} aria-label={showsHiddenCount ? `Calendars, ${visibility.shown} of ${visibility.total} accounts shown` : undefined} onClick={() => setNavigationOpen((value) => !value)}><CalendarDays size={ICON_SIZE.sm} />Calendars{showsHiddenCount ? <span className="calendar-shown-count" aria-hidden="true">{visibility.shown}/{visibility.total}</span> : null}</button>
+            <button ref={navigationToggle} type="button" className="btn" aria-expanded={navigationOpen} aria-label={showsHiddenCount ? `Calendars, ${visibility.shown} of ${visibility.total} accounts shown` : undefined} onClick={() => setNavigationOpen((value) => !value)}><CalendarDays size={ICON_SIZE.sm} />Calendars{showsHiddenCount ? <span className="calendar-shown-count" aria-hidden="true">{visibility.shown}/{visibility.total}</span> : null}</button>
             <button type="button" className="btn" title="Today (t)" aria-keyshortcuts="t" onClick={goToToday}>Today</button>
             <div className="calendar-week-nav">
               <HoverTooltip title={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`}><button type="button" className="btn-icon" aria-label={`Previous ${mode === "week" || mode === "workweek" ? "Week" : "Range"} (-)`} onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>
@@ -539,14 +512,14 @@ export function CalendarWeekView({
           onCreated={(event) => { setNewEventRange(null); setSelectedEvent(event); revalidateScheduleCache(); onCreated?.(); }}
         /> : null}
       </div>
-      {navigationOpen ? <aside className="calendar-week-side workspace-calendar-navigation" aria-label="Calendar navigation">
-        <button type="button" className="btn btn-sm" onClick={() => setNavigationOpen(false)}>Close calendars</button>
+      {navigationOpen ? <aside ref={navigationDismiss.drawer} onKeyDown={navigationDismiss.onKeyDown} className="calendar-week-side workspace-calendar-navigation" aria-label="Calendar navigation">
+        <button type="button" className="btn-icon btn-icon-sm drawer-close" aria-label="Close Calendars" title="Close Calendars" onClick={navigationDismiss.close}><X size={ICON_SIZE.sm} aria-hidden="true" /></button>
         <MiniMonth
           month={month}
           selected={anchor}
-          today={today}
+          weekStart={0}
           onSelect={selectDate}
-          onMoveMonth={(offset) => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1))}
+          onMonthChange={setMonth}
         />
         <CalendarList
           accounts={accounts}
