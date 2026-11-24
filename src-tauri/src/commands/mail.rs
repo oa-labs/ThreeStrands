@@ -337,29 +337,37 @@ pub(crate) async fn mutate_thread(
     mutation: ThreadMutation,
     state: State<'_, AppState>,
 ) -> AppResult<models::ThreadMutationsResult> {
-    apply_user_mutations(vec![mutation], None, state).await
+    apply_user_mutations(vec![mutation], None, None, state).await
 }
 
 /// Applies the user's conversation changes. Mark Spam also blocks each
 /// conversation's sender and Not spam unblocks it; `undo_blocks` marks the
-/// call as Undo of a Mark Spam, which removes only the blocks it created.
+/// call as Undo of a Mark Spam, which removes only the blocks it created;
+/// `restore_blocks` marks it as Undo of a Not spam, which puts them back.
 #[tauri::command]
 pub(crate) async fn mutate_threads(
     mutations: Vec<ThreadMutation>,
     undo_blocks: Option<Vec<String>>,
+    restore_blocks: Option<Vec<models::SenderRule>>,
     state: State<'_, AppState>,
 ) -> AppResult<models::ThreadMutationsResult> {
-    apply_user_mutations(mutations, undo_blocks, state).await
+    apply_user_mutations(mutations, undo_blocks, restore_blocks, state).await
 }
 
 async fn apply_user_mutations(
     mutations: Vec<ThreadMutation>,
     undo_blocks: Option<Vec<String>>,
+    restore_blocks: Option<Vec<models::SenderRule>>,
     state: State<'_, AppState>,
 ) -> AppResult<models::ThreadMutationsResult> {
     let database = state.database.clone();
     let changes = run_database_task(move || {
-        let changes = database.apply_user_mutations(&mutations, undo_blocks.as_deref())?;
+        let undo = match (&undo_blocks, &restore_blocks) {
+            (Some(ids), _) => crate::db::sender_rules::BlockUndo::MarkSpam(ids),
+            (None, Some(rules)) => crate::db::sender_rules::BlockUndo::NotSpam(rules),
+            (None, None) => crate::db::sender_rules::BlockUndo::None,
+        };
+        let changes = database.apply_user_mutations_with(&mutations, undo)?;
         database.record_sender_block_changes(&changes)?;
         Ok::<_, crate::db::DatabaseError>(changes)
     })
@@ -370,6 +378,7 @@ async fn apply_user_mutations(
     Ok(models::ThreadMutationsResult {
         blocks_changed: !changes.is_empty(),
         created_block_ids: changes.created_ids,
+        removed_blocks: changes.unblocked,
     })
 }
 

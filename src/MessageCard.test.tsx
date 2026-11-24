@@ -634,6 +634,18 @@ describe("MessageCard", () => {
       expect(buttons).toEqual(["Mark Spam", "Trust this sender"]);
     });
 
+    it("offers Not spam in place of Mark Spam in the banner when the conversation is in Spam", async () => {
+      const onMarkSpam = vi.fn();
+      const onNotSpam = vi.fn();
+      reads({ ...stranger, deliveryPatterns: [] });
+      render(<MessageCard message={{ ...message, threadId: "t9", bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="Invoice" inSpam onMarkSpam={onMarkSpam} onNotSpam={onNotSpam} />);
+      const banner = await screen.findByRole("note", { name: "Be careful" });
+      expect(within(banner).queryByRole("button", { name: "Mark Spam" })).not.toBeInTheDocument();
+      fireEvent.click(within(banner).getByRole("button", { name: "Not spam" }));
+      expect(onNotSpam).toHaveBeenCalledExactlyOnceWith("t9");
+      expect(onMarkSpam).not.toHaveBeenCalled();
+    });
+
     it("shows no Mark Spam in the banner without a handler", async () => {
       reads({ ...stranger, deliveryPatterns: [] });
       render(<MessageCard message={{ ...message, bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="Invoice" />);

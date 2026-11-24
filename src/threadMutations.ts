@@ -62,7 +62,7 @@ export function describeMutation(template: MutationTemplate, count: number, labe
     case "spam":
       return template.value
         ? (many ? `Marked ${count} conversations as spam` : "Conversation marked as spam")
-        : (many ? `Restored ${count} conversations from spam` : "Conversation restored from spam");
+        : (many ? `Moved ${count} conversations to Inbox` : "Moved to Inbox");
     case "star":
       return template.value
         ? (many ? `Starred ${count} conversations` : "Starred")

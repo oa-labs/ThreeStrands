@@ -225,6 +225,41 @@ describe("blocked senders", () => {
     }
   });
 
+  it("Not spam names the unblocked address, and Undo restores the exact blocks and re-reads the lists", async () => {
+    const block = { id: "block-1", accountId: "you@example.com", matchKind: "address" as const, matchValue: "noreply@example.com", action: "block" as const, createdAt: "2026-03-01T00:00:00Z", lastMatchedAt: "2026-03-02T00:00:00Z" };
+    const mutateThreads = vi.spyOn(mailClient, "mutateThreads")
+      .mockResolvedValueOnce({ createdBlockIds: [], blocksChanged: true, removedBlocks: [block] })
+      .mockResolvedValueOnce({ createdBlockIds: [], blocksChanged: true });
+    const changed = vi.fn();
+    window.addEventListener("threestrands:sender-rules-changed", changed);
+    try {
+      const { result } = setup(false);
+      let command!: CommandResult;
+      await act(async () => { command = await result.current.mutate(["unread"], { kind: "spam", value: false }); });
+      expect(mutateThreads).toHaveBeenCalledWith([{ kind: "spam", threadId: "unread", value: false }]);
+      expect(command.message).toBe("Moved to Inbox · Unblocked noreply@example.com");
+      expect(changed).toHaveBeenCalledTimes(1);
+      await act(async () => { await command.undoAction?.(); });
+      expect(mutateThreads).toHaveBeenLastCalledWith(
+        [{ kind: "spam", threadId: "unread", value: true }],
+        { restoreBlocks: [block] },
+      );
+      expect(changed).toHaveBeenCalledTimes(2);
+    } finally {
+      window.removeEventListener("threestrands:sender-rules-changed", changed);
+    }
+  });
+
+  it("Not spam without a block to remove says only that it moved, and Undo restores nothing new", async () => {
+    const mutateThreads = vi.spyOn(mailClient, "mutateThreads").mockResolvedValue({ createdBlockIds: [], blocksChanged: false, removedBlocks: [] });
+    const { result } = setup(false);
+    let command!: CommandResult;
+    await act(async () => { command = await result.current.mutate(["unread", "read"], { kind: "spam", value: false }); });
+    expect(command.message).toBe("Moved 2 conversations to Inbox");
+    await act(async () => { await command.undoAction?.(); });
+    expect(mutateThreads).toHaveBeenLastCalledWith(expect.any(Array), { restoreBlocks: [] });
+  });
+
   it("Undo of other changes doesn't touch blocks", async () => {
     const mutateThreads = vi.spyOn(mailClient, "mutateThreads").mockResolvedValue(undefined);
     const { result } = setup(false);

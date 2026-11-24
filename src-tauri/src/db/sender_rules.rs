@@ -135,6 +135,23 @@ pub struct SenderBlockChanges {
     pub created_ids: Vec<String>,
     /// Blocks removed.
     pub removed_ids: Vec<String>,
+    /// The full rows Not spam removed, so the caller can name the unblocked
+    /// addresses and Undo can put the same rows back.
+    pub unblocked: Vec<SenderRule>,
+}
+
+/// How a call to [`Database::apply_user_mutations_with`] relates to blocks.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum BlockUndo<'a> {
+    /// A direct user action: Mark Spam blocks, Not spam unblocks.
+    #[default]
+    None,
+    /// Undo of a Mark Spam: Not spam keeps the senders' blocks, and only
+    /// these blocks, the ones that Mark Spam created, go.
+    MarkSpam(&'a [String]),
+    /// Undo of a Not spam: marking spam adds no new block; these exact rows,
+    /// the ones Not spam removed, come back with their ids and dates.
+    NotSpam(&'a [SenderRule]),
 }
 
 impl SenderBlockChanges {
@@ -226,25 +243,61 @@ fn block_thread_sender(
 }
 
 /// Not spam: removes every block on the sender of a conversation's latest
-/// inbound message. Returns the removed rules' ids.
-fn unblock_thread_sender(transaction: &Transaction<'_>, thread_id: &str) -> DbResult<Vec<String>> {
+/// inbound message. Returns the removed rules.
+fn unblock_thread_sender(
+    transaction: &Transaction<'_>,
+    thread_id: &str,
+) -> DbResult<Vec<SenderRule>> {
     let Some((account_id, email)) = latest_inbound_sender(transaction, thread_id)? else {
         return Ok(Vec::new());
     };
-    let ids = {
-        let mut statement = transaction.prepare_cached(
-            "SELECT id FROM sender_rules
-             WHERE lower(account_id) = lower(?1) AND action = 'block' AND match_value = ?2",
-        )?;
-        let ids = statement
-            .query_map(params![account_id, email], |row| row.get::<_, String>(0))?
+    let rules = {
+        let mut statement = transaction.prepare_cached(&format!(
+            "SELECT {RULE_COLUMNS} FROM sender_rules
+             WHERE lower(account_id) = lower(?1) AND action = 'block' AND match_value = ?2
+             ORDER BY created_at, id"
+        ))?;
+        let rules = statement
+            .query_map(params![account_id, email], rule_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
-        ids
+        rules
     };
-    for id in &ids {
-        transaction.execute("DELETE FROM sender_rules WHERE id = ?1", [id])?;
+    for rule in &rules {
+        transaction.execute("DELETE FROM sender_rules WHERE id = ?1", [&rule.id])?;
     }
-    Ok(ids)
+    Ok(rules)
+}
+
+/// Undo of Not spam: puts a removed block back as it was. Skipped when the
+/// sender has been blocked again meanwhile, so there is one block per address.
+fn restore_block(transaction: &Transaction<'_>, rule: &SenderRule, now: &str) -> DbResult<bool> {
+    if rule.action != "block" {
+        return Ok(false);
+    }
+    let present: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sender_rules WHERE id = ?1
+            OR (lower(account_id) = lower(?2) AND action = 'block' AND match_value = ?3))",
+        params![rule.id, rule.account_id, rule.match_value],
+        |row| row.get(0),
+    )?;
+    if present {
+        return Ok(false);
+    }
+    transaction.execute(
+        "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at, updated_at, last_matched_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            rule.id,
+            rule.account_id,
+            rule.match_kind,
+            rule.match_value,
+            rule.action,
+            rule.created_at,
+            now,
+            rule.last_matched_at
+        ],
+    )?;
+    Ok(true)
 }
 
 /// Removes blocks idle longer than [`BLOCK_IDLE_DAYS`], then, in each
@@ -543,10 +596,24 @@ impl Database {
     /// blocks. Not spam unblocks that sender. When `undo_blocks` is given
     /// the call is Undo of a Mark Spam: Not spam keeps the senders' blocks,
     /// and only the listed blocks, the ones that Mark Spam created, go.
+    #[cfg(test)]
     pub fn apply_user_mutations(
         &self,
         mutations: &[ThreadMutation],
         undo_blocks: Option<&[String]>,
+    ) -> DbResult<SenderBlockChanges> {
+        self.apply_user_mutations_with(
+            mutations,
+            undo_blocks.map_or(BlockUndo::None, BlockUndo::MarkSpam),
+        )
+    }
+
+    /// [`Self::apply_user_mutations`] that can also be Undo of a Not spam
+    /// ([`BlockUndo::NotSpam`]).
+    pub fn apply_user_mutations_with(
+        &self,
+        mutations: &[ThreadMutation],
+        undo: BlockUndo<'_>,
     ) -> DbResult<SenderBlockChanges> {
         let now = Utc::now();
         let stamp = now.to_rfc3339();
@@ -560,6 +627,9 @@ impl Database {
                     continue;
                 };
                 if *value {
+                    if matches!(undo, BlockUndo::NotSpam(_)) {
+                        continue;
+                    }
                     if let Some((rule, created)) =
                         block_thread_sender(transaction, thread_id, &stamp)?
                     {
@@ -570,15 +640,29 @@ impl Database {
                         changes.written.retain(|written| written.id != rule.id);
                         changes.written.push(rule);
                     }
-                } else if undo_blocks.is_none() {
-                    for id in unblock_thread_sender(transaction, thread_id)? {
-                        if !changes.removed_ids.contains(&id) {
-                            changes.removed_ids.push(id);
+                } else if matches!(undo, BlockUndo::None) {
+                    for rule in unblock_thread_sender(transaction, thread_id)? {
+                        if !changes.removed_ids.contains(&rule.id) {
+                            changes.removed_ids.push(rule.id.clone());
+                            changes.unblocked.push(rule);
                         }
                     }
                 }
             }
-            for id in undo_blocks.unwrap_or_default() {
+            if let BlockUndo::NotSpam(rules) = undo {
+                for rule in rules {
+                    if restore_block(transaction, rule, &stamp)? {
+                        let mut restored = rule.clone();
+                        restored.action = "block".into();
+                        changes.written.push(restored);
+                    }
+                }
+            }
+            let mark_spam_blocks = match undo {
+                BlockUndo::MarkSpam(ids) => ids,
+                _ => &[],
+            };
+            for id in mark_spam_blocks {
                 let removed = transaction.execute(
                     "DELETE FROM sender_rules WHERE id = ?1 AND action = 'block'",
                     [id],

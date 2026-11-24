@@ -47,6 +47,7 @@ import {
   RotateCcw,
   Settings as SettingsIcon,
   ShieldAlert,
+  ShieldCheck,
   SquareCheckBig,
   Star,
   Sun,
@@ -929,6 +930,16 @@ export function App() {
     });
   }, [executeById, executeCommand, mutateIds, selected?.id]);
 
+  // Not spam in the banner: the toolbar's command when this is the selected conversation.
+  const notSpamShownThread = useCallback((threadId: string) => {
+    if (selected?.id === threadId) return executeById("thread.notSpam");
+    return executeCommand({
+      id: "reader.notSpam", title: "Not Spam", keys: [], group: "Triage", enabled: () => true,
+      run: () => mutateIds([threadId], { kind: "spam", value: false }, { includeUnloaded: true }),
+      undo: undoResult,
+    });
+  }, [executeById, executeCommand, mutateIds, selected?.id]);
+
   /**
    * Mutes a sender, archiving the chosen Inbox conversations in the same
    * step. Undo removes the rule and puts those conversations back as they
@@ -1238,6 +1249,7 @@ export function App() {
           ) : isThreadMailbox && checkedIds.size > 0 ? (
             <ConversationBatchToolbar
               inTrash={mailbox === "trash"}
+              inSpam={context.selectedSpam}
               selectedCount={checkedIds.size}
               allVisibleChecked={visibleThreads.length > 0 && visibleThreads.every((thread) => checkedIds.has(thread.id))}
               allStarred={allSelectedThreadsStarred}
@@ -1540,11 +1552,19 @@ export function App() {
                     </ActionButton>
                   </HoverTooltip>
                 )}
-                <HoverTooltip label="Mark spam" shortcut="!" placement="bottom">
-                  <ActionButton label="Mark Spam" shortcut="!" onClick={() => executeById("thread.spam")}>
-                    <ShieldAlert size={ICON_SIZE.lg} />
-                  </ActionButton>
-                </HoverTooltip>
+                {context.selectedSpam ? (
+                  <HoverTooltip label="Not spam" shortcut="!" placement="bottom">
+                    <ActionButton label="Not Spam" shortcut="!" onClick={() => executeById("thread.notSpam")}>
+                      <ShieldCheck size={ICON_SIZE.lg} />
+                    </ActionButton>
+                  </HoverTooltip>
+                ) : (
+                  <HoverTooltip label="Mark spam" shortcut="!" placement="bottom">
+                    <ActionButton label="Mark Spam" shortcut="!" onClick={() => executeById("thread.spam")}>
+                      <ShieldAlert size={ICON_SIZE.lg} />
+                    </ActionButton>
+                  </HoverTooltip>
+                )}
                 {narrowLayout ? (
                   <HoverTooltip label={`Show ${scheduleShown ? "schedule" : "context"}`} placement="bottom">
                     <ActionButton label={`Show ${scheduleShown ? "Schedule" : "Context"}`} expanded={sideDrawerOpen} onClick={openSideDrawer}>
@@ -1608,6 +1628,8 @@ export function App() {
                     bulk={visibleBulk}
                     onShowLink={showTrustLink}
                     onMarkSpam={markShownThreadSpam}
+                    inSpam={visibleDetail.thread.labels.includes("SPAM")}
+                    onNotSpam={notSpamShownThread}
                   />
                 );
             }) : null}

@@ -51,6 +51,13 @@ describe("ConversationBatchToolbar", () => {
     expect(onRun).toHaveBeenCalledWith("Restore", { kind: "trash", value: false });
   });
 
+  it("offers Not Spam in place of Mark Spam when the selection is in Spam", () => {
+    const { toolbar, onRun } = renderToolbar({ inSpam: true });
+    expect(within(toolbar).queryByRole("button", { name: "Mark Spam" })).not.toBeInTheDocument();
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Not Spam" }));
+    expect(onRun).toHaveBeenCalledWith("Not Spam", { kind: "spam", value: false });
+  });
+
   it("selects all, clears, and opens labels for the checked conversations", () => {
     const { toolbar, onSelectAll, onClearSelection, onLabels, selectAllRef } = renderToolbar();
     const selectAll = within(toolbar).getByRole("checkbox", { name: "Select All Conversations" });

@@ -134,6 +134,7 @@ export function useAppCommandContext({
     selectAllOutbox,
     selectedArchived: selected?.archived ?? false,
     selectedTrashed: selected?.trashed ?? false,
+    selectedSpam: targetThreads.length > 0 && targetThreads.every((thread) => thread.labels.includes("SPAM")),
     canUnsubscribe,
     canGoBack: canReturnFromContacts || canReturnFromCalendar || returnStep !== null,
     goBack: canReturnFromContacts ? returnFromContacts : canReturnFromCalendar ? returnFromCalendar : goBack,
@@ -219,6 +220,7 @@ export function useAppCommandContext({
       return result;
     },
     markSpamSelected: () => mutateIds(targetIds, { kind: "spam", value: true }),
+    notSpamSelected: () => mutateIds(targetIds, { kind: "spam", value: false }),
     setLabelSelected: (labelId, labelName, value) =>
       mutateIds(labelTargetIds ?? [], { kind: "label", labelId, labelName, value }),
     toggleReadSelected: () =>

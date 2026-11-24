@@ -914,6 +914,9 @@ pub struct ThreadMutationsResult {
     pub created_block_ids: Vec<String>,
     /// Whether any block was added, refreshed, or removed.
     pub blocks_changed: bool,
+    /// The blocks Not spam removed, in full: the app names their addresses
+    /// and hands them back to Undo to restore them exactly.
+    pub removed_blocks: Vec<SenderRule>,
 }
 
 /// A new mute, and what it did to conversations already in the Inbox, so the
