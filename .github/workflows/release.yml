@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: 22.22.0
       - name: Test release validation and artifact collection
-        run: node --test scripts/release.test.mjs scripts/changelog.test.mjs scripts/license-rtf.test.mjs
+        run: node --test scripts/release.test.mjs scripts/changelog.test.mjs scripts/license-rtf.test.mjs scripts/supply-chain.test.mjs
       # The checkout may hold the tag as a lightweight ref; fetch the annotated
       # tag itself, whose message says whether to build for Intel Macs.
       - name: Check tag against all application versions and the changelog format

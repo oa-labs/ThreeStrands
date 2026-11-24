@@ -24,6 +24,7 @@
     "release": "node scripts/release.mjs tag",
     "release:docs": "node scripts/release.mjs docs",
     "tauri": "node scripts/tauri.mjs",
+    "supply-chain": "node scripts/supply-chain.mjs",
     "mobile:build": "vite build --config apps/mobile/vite.config.ts",
     "mobile:dev": "vite --config apps/mobile/vite.config.ts"
   },

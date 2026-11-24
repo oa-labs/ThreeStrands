@@ -31,6 +31,8 @@ jobs:
     timeout-minutes: 20
 
     env:
+      # Keep these in step with .devcontainer/Dockerfile and
+      # scripts/supply-chain.mjs (`pnpm supply-chain` runs these checks locally).
       CARGO_VET_VERSION: "0.10.3"
       CARGO_VET_SHA256: e83878b80913fbe43629c28768e14ab51f4e86a4ba8f9dd08cc25b8dbc503c19
       CARGO_DENY_VERSION: "0.20.2"

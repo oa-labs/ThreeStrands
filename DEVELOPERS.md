@@ -172,9 +172,13 @@ install scripts that are not explicitly allowed:
 Both Cargo workspaces (the root `crates/` workspace and `src-tauri`) are
 checked with [`cargo vet`](https://mozilla.github.io/cargo-vet/) and
 [`cargo deny`](https://embarkstudios.github.io/cargo-deny/). Both tools are
-installed in the development container.
+installed in the development container. Elsewhere, `pnpm supply-chain`
+runs all four checks below with pinned, checksum-verified copies of the tools
+(cached under `~/.cache/threestrands/supply-chain-tools`), keeps going after a
+failure, and prints a pass/fail line per check.
 
 ```sh
+pnpm supply-chain                              # all four checks
 cargo vet                                      # root workspace
 (cd src-tauri && cargo vet)
 cargo deny check advisories sources            # uses deny.toml
@@ -198,7 +202,8 @@ four checks on pull requests that touch Cargo manifests, lockfiles, or audit
 files, on every push to `master`, and weekly, since new advisories can fail
 an unchanged lockfile. It installs pinned, checksum-verified release
 binaries; keep their versions in step with `CARGO_VET_VERSION` and
-`CARGO_DENY_VERSION` in `.devcontainer/Dockerfile`.
+`CARGO_DENY_VERSION` in `.devcontainer/Dockerfile` and `scripts/supply-chain.mjs`
+(`node --test scripts/supply-chain.test.mjs` fails if they drift).
 
 ## Releases
 

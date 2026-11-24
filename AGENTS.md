@@ -112,6 +112,16 @@ policies, add `cargo vet` exemptions or certifications, or ignore advisories
 to get a change through; name the package and version in the summary and let
 the developer decide.
 
+Before handing over a branch that touches any `Cargo.toml`, `Cargo.lock`,
+`supply-chain/`, `src-tauri/supply-chain/`, or `deny.toml`, run `pnpm
+supply-chain`. It runs the same four `cargo vet` and `cargo deny` checks as CI,
+takes seconds, and fetches the pinned tools on first use; run it on any branch
+you like. If a check also fails on `origin/master` (try it in a temporary
+detached worktree, not the primary checkout), the failure isn't the branch's:
+report it in the summary and don't fix it there. Unvetted crates and advisories
+are always reported to the developer, never certified, exempted, or ignored by
+an agent.
+
 ## Settings transfer compatibility
 
 Treat the encrypted settings export as a persistent, cross-version format. Do not remove a field, add a required field, or change a field's meaning under the existing format version without a backward-compatible default or migration. If compatibility cannot be preserved, bump the format version intentionally and keep support for importing earlier versions. Every transfer schema change must include regression coverage for exports produced by the preceding schema.
