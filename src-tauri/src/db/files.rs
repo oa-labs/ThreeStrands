@@ -347,12 +347,20 @@ impl Database {
         if query.account_ids.len() > 100 || query.terms.len() > 12 || query.attendees.len() > 100 {
             return Err(DatabaseError::invalid("Invalid context limits"));
         }
+        let source_thread = match &query.source_message_id {
+            Some(message) => self.source_thread(&query.account_ids, message)?,
+            None => None,
+        };
         let mut values: Vec<Value> = query.account_ids.iter().cloned().map(Value::Text).collect();
         // Mirrors rankContext: a conversation other than the source needs a
         // subject topic, and for a meeting an attendee too. Requiring both here
         // keeps evidence rankContext would discard from filling the limit.
         let mut evidence = vec![];
         if let Some(id) = &query.thread_id {
+            evidence.push("t.id=?".to_string());
+            values.push(Value::Text(id.clone()));
+        }
+        if let Some(id) = &source_thread {
             evidence.push("t.id=?".to_string());
             values.push(Value::Text(id.clone()));
         }
@@ -383,19 +391,32 @@ impl Database {
         }
         let mut filter=format!("t.account_id IN ({}) AND t.trashed=0 AND NOT EXISTS(SELECT 1 FROM json_each(t.labels_json) WHERE upper(value)='SPAM') AND ({})",vec!["?";query.account_ids.len()].join(","),evidence.join(" OR "));
         if query.thread_id.is_none() {
+            // The source conversation is exempt from the date window.
+            let mut window = String::new();
+            let mut window_values = vec![];
             for (operator, value) in [(">=", &query.after), ("<", &query.before)] {
                 if let Some(value) = value {
                     if chrono::DateTime::parse_from_rfc3339(value).is_err() {
                         return Err(DatabaseError::invalid("Invalid context date"));
                     }
-                    filter.push_str(&format!(
+                    window.push_str(&format!(
                         " AND julianday(t.last_message_at){operator}julianday(?)"
                     ));
-                    values.push(Value::Text(value.clone()));
+                    window_values.push(Value::Text(value.clone()));
                 }
             }
+            if !window.is_empty() {
+                if let Some(id) = &source_thread {
+                    filter.push_str(&format!(" AND (t.id=? OR (1{window}))"));
+                    values.push(Value::Text(id.clone()));
+                } else {
+                    filter.push_str(&window);
+                }
+                values.extend(window_values);
+            }
         }
-        let ordering = if let Some(id) = &query.thread_id {
+        let first = query.thread_id.as_ref().or(source_thread.as_ref());
+        let ordering = if let Some(id) = first {
             values.push(Value::Text(id.clone()));
             "CASE WHEN t.id=? THEN 0 ELSE 1 END,"
         } else {
@@ -403,8 +424,29 @@ impl Database {
         };
         self.with_connection(|c| {
             let mut statement=c.prepare(&format!("SELECT t.id,t.account_id,t.subject,t.last_message_at,(SELECT json_group_array(person) FROM (SELECT value AS person FROM json_each(t.participants_json) UNION SELECT email AS person FROM contact_interactions WHERE thread_id=t.id)) FROM threads t WHERE {filter} ORDER BY {ordering} t.last_message_at DESC,t.id LIMIT 120"))?;
-            let result=statement.query_map(rusqlite::params_from_iter(&values),|row| Ok(WorkspaceConversation { thread_id:row.get(0)?,account_id:row.get(1)?,subject:row.get(2)?,sent_at:row.get(3)?,participants:serde_json::from_str(&row.get::<_,String>(4)?).unwrap_or_default() }))?.collect::<Result<Vec<_>,_>>()?;
+            let result=statement.query_map(rusqlite::params_from_iter(&values),|row| Ok(WorkspaceConversation { thread_id:row.get(0)?,account_id:row.get(1)?,subject:row.get(2)?,sent_at:row.get(3)?,participants:serde_json::from_str(&row.get::<_,String>(4)?).unwrap_or_default(),source:false }))?.collect::<Result<Vec<_>,_>>()?;
             Ok(result)
+        })
+        .map(|mut rows| {
+            for row in &mut rows {
+                row.source = source_thread.as_deref() == Some(row.thread_id.as_str());
+            }
+            rows
+        })
+    }
+
+    /// The thread holding a message on one of these accounts, when exactly one
+    /// non-trashed thread does; a message id cached twice can't say which.
+    fn source_thread(&self, account_ids: &[String], message_id: &str) -> DbResult<Option<String>> {
+        let marks = vec!["?"; account_ids.len()].join(",");
+        let mut values: Vec<Value> = vec![Value::Text(message_id.to_string())];
+        values.extend(account_ids.iter().cloned().map(Value::Text));
+        self.with_connection(|c| {
+            let mut statement = c.prepare(&format!("SELECT DISTINCT t.id FROM messages m JOIN threads t ON t.id=m.thread_id WHERE m.id=? AND t.trashed=0 AND t.account_id IN ({marks})"))?;
+            let mut found = statement
+                .query_map(rusqlite::params_from_iter(&values), |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(if found.len() == 1 { found.pop() } else { None })
         })
     }
 
@@ -720,6 +762,7 @@ mod tests {
         let q = ContextQuery {
             account_ids: vec!["you@example.com".into()],
             thread_id: None,
+            source_message_id: None,
             terms: vec!["Atlas".into()],
             attendees: vec!["alice@example.com".into()],
             after: Some("2026-09-01T00:00:00Z".into()),
@@ -736,6 +779,85 @@ mod tests {
             })
             .unwrap()
             .is_empty());
+    }
+    fn source_query(message: &str) -> ContextQuery {
+        ContextQuery {
+            account_ids: vec!["you@example.com".into()],
+            thread_id: None,
+            source_message_id: Some(message.into()),
+            terms: vec!["Atlas".into()],
+            attendees: vec!["alice@example.com".into()],
+            after: Some("2026-09-01T00:00:00Z".into()),
+            before: Some("2026-11-01T00:00:00Z".into()),
+        }
+    }
+    #[test]
+    fn a_source_message_pulls_in_its_thread_outside_the_window_and_topic() {
+        let db = database();
+        let mut source = message("src-msg", "src", "2025-01-01T10:00:00Z", "hello");
+        source.subject = "Lunch plans".into();
+        db.upsert_thread("you@example.com", &[source]).unwrap();
+        let mut topical = message("top-msg", "top", "2026-10-01T10:00:00Z", "hello");
+        topical.subject = "Atlas budget".into();
+        topical.from = "Alice <alice@example.com>".into();
+        db.upsert_thread("you@example.com", &[topical]).unwrap();
+        let result = db.context_candidates(&source_query("src-msg")).unwrap();
+        assert_eq!(result[0].thread_id, "you@example.com:src");
+        assert!(result[0].source);
+        assert!(result
+            .iter()
+            .any(|item| item.thread_id == "you@example.com:top" && !item.source));
+        // With no topic words at all the source is still the one candidate.
+        let alone = ContextQuery {
+            terms: vec![],
+            attendees: vec![],
+            ..source_query("src-msg")
+        };
+        let result = db.context_candidates(&alone).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].source);
+    }
+    #[test]
+    fn an_unknown_trashed_or_out_of_scope_source_adds_nothing() {
+        let db = database();
+        let mut trashed = message("trashed-msg", "trashed", "2026-10-01T10:00:00Z", "hello");
+        trashed.subject = "Lunch".into();
+        db.upsert_thread("you@example.com", &[trashed]).unwrap();
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE threads SET trashed=1 WHERE id='you@example.com:trashed'",
+                [],
+            )
+            .unwrap();
+        let mut other = message("other-msg", "other", "2026-10-01T10:00:00Z", "hello");
+        other.subject = "Lunch".into();
+        db.upsert_thread("private@example.com", &[other]).unwrap();
+        for id in ["missing", "trashed-msg", "other-msg"] {
+            let q = ContextQuery {
+                terms: vec![],
+                attendees: vec![],
+                ..source_query(id)
+            };
+            assert!(db.context_candidates(&q).unwrap().is_empty(), "{id}");
+        }
+    }
+    #[test]
+    fn a_thread_id_query_is_unchanged_by_the_source_field() {
+        let db = database();
+        let mut old = message("old-msg", "old", "2020-01-01T10:00:00Z", "hello");
+        old.subject = "Lunch".into();
+        db.upsert_thread("you@example.com", &[old]).unwrap();
+        let q = ContextQuery {
+            thread_id: Some("you@example.com:old".into()),
+            source_message_id: None,
+            terms: vec![],
+            attendees: vec![],
+            ..source_query("")
+        };
+        let result = db.context_candidates(&q).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(!result[0].source);
     }
     #[test]
     fn availability_reads_each_source_message_once_and_reports_each_part() {
@@ -819,6 +941,7 @@ mod tests {
             .context_candidates(&ContextQuery {
                 account_ids: vec!["you@example.com".into()],
                 thread_id: None,
+                source_message_id: None,
                 terms: vec!["überprüfung".into()],
                 attendees: vec![],
                 after: None,
@@ -860,6 +983,7 @@ mod tests {
             .context_candidates(&ContextQuery {
                 account_ids: vec!["you@example.com".into()],
                 thread_id: None,
+                source_message_id: None,
                 terms: vec!["atlas".into()],
                 attendees: vec!["alice@example.com".into()],
                 after: Some("2026-08-01T00:00:00Z".into()),

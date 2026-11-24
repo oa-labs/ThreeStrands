@@ -4,7 +4,7 @@ import { WorkspaceRelatedContext } from "./WorkspaceRelatedContext";
 import { mailClient } from "./data/client";
 import type { WorkspaceConversation, WorkspaceContextTarget, WorkspaceFile } from "./domain";
 
-const meeting=(id:string,title:string):WorkspaceContextTarget=>({kind:"meeting",event:{id,title,accountId:"calendar@example.com",start:"2026-10-13T10:00:00Z",end:"2026-10-13T11:00:00Z",allDay:false,attendees:["alice@example.com"]}});
+const meeting=(id:string,title:string,sourceMessageId?:string):WorkspaceContextTarget=>({kind:"meeting",event:{id,title,sourceMessageId,accountId:"calendar@example.com",start:"2026-10-13T10:00:00Z",end:"2026-10-13T11:00:00Z",allDay:false,attendees:["alice@example.com"]}});
 const task=(title:string):WorkspaceContextTarget=>({kind:"task",task:{id:"t1",accountId:"work@example.com",threadId:null,subjectSnapshot:null,title,kind:"action",dueKind:"none",status:"open",createdAt:"2026-10-01T10:00:00Z",updatedAt:"2026-10-01T10:00:00Z"}});
 describe("automatic workspace context", () => {
   afterEach(()=>{cleanup();vi.restoreAllMocks();localStorage.clear();});
@@ -20,6 +20,19 @@ describe("automatic workspace context", () => {
     await act(async()=>resolveFirst([{threadId:"old",accountId:"work@example.com",subject:"Atlas forecast",sentAt:"2026-10-01T10:00:00Z",participants:["alice@example.com"]}]));
     expect(screen.queryByRole("button",{name:/Atlas forecast/})).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Files unavailable");
+  });
+  it("lists a meeting's source conversation first and puts its attachments ahead", async () => {
+    const contextCandidates=vi.spyOn(mailClient,"contextCandidates").mockResolvedValue([
+      {threadId:"atlas",accountId:"work@example.com",subject:"Atlas forecast",sentAt:"2026-10-01T10:00:00Z",participants:["alice@example.com"]},
+      {threadId:"lunch",accountId:"work@example.com",subject:"Lunch?",sentAt:"2026-01-01T10:00:00Z",participants:[],source:true}]);
+    const listFiles=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[],total:0});
+    const onOpenThread=vi.fn();
+    render(<WorkspaceRelatedContext accountIds={["work@example.com"]} onOpenThread={onOpenThread} target={meeting("e","Atlas forecast","msg-1")} />);
+    const rows=within(await screen.findByRole("region",{name:/Conversations/})).getAllByRole("button",{name:/Lunch|Atlas/});
+    expect(rows[0]).toHaveTextContent("Lunch?");
+    expect(rows[0]).toHaveTextContent("From source conversation");
+    expect(contextCandidates).toHaveBeenCalledWith(expect.objectContaining({sourceMessageId:"msg-1"}));
+    await waitFor(()=>expect(listFiles).toHaveBeenCalledWith(expect.objectContaining({priorityMessageId:"msg-1"})));
   });
   it("counts every related file and reaches the ones past the first rows",async()=>{
     vi.spyOn(mailClient,"contextCandidates").mockResolvedValue([{threadId:"atlas",accountId:"work@example.com",subject:"Atlas forecast",sentAt:"2026-10-01T10:00:00Z",participants:["alice@example.com"]}]);

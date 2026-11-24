@@ -1302,13 +1302,15 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     async contextCandidates(query) {
       const words=query.terms.map((term) => term.toLocaleLowerCase());
+      const sources=query.sourceMessageId ? threads.filter((thread) => query.accountIds.includes(thread.accountId) && !thread.trashed && messagesFor(thread).some((message) => message.id===query.sourceMessageId)) : [];
+      const sourceId=sources.length===1 ? sources[0]!.id : undefined;
       return threads.filter((thread) => query.accountIds.includes(thread.accountId) && !thread.trashed && !thread.labels.includes("SPAM")
-        && (thread.id===query.threadId || words.some((term) => `${thread.subject} ${thread.snippet}`.toLocaleLowerCase().includes(term))
+        && (thread.id===query.threadId || thread.id===sourceId || words.some((term) => `${thread.subject} ${thread.snippet}`.toLocaleLowerCase().includes(term))
           || messagesFor(thread).some((message) => [message.sender,...message.recipients].some((address) => query.attendees.includes(parseAddress(address).email.toLocaleLowerCase()))))
-        && (query.threadId || ((!query.after || thread.lastMessageAt>=query.after) && (!query.before || thread.lastMessageAt<query.before))))
-        .sort((a,b) => Number(b.id===query.threadId)-Number(a.id===query.threadId) || b.lastMessageAt.localeCompare(a.lastMessageAt) || a.id.localeCompare(b.id))
+        && (query.threadId || thread.id===sourceId || ((!query.after || thread.lastMessageAt>=query.after) && (!query.before || thread.lastMessageAt<query.before))))
+        .sort((a,b) => Number(b.id===(query.threadId ?? sourceId))-Number(a.id===(query.threadId ?? sourceId)) || b.lastMessageAt.localeCompare(a.lastMessageAt) || a.id.localeCompare(b.id))
         .slice(0,120).map((thread) => ({threadId:thread.id, accountId:thread.accountId, subject:thread.subject, sentAt:thread.lastMessageAt,
-          participants:messagesFor(thread).flatMap((message) => [message.sender,...message.recipients])}));
+          participants:messagesFor(thread).flatMap((message) => [message.sender,...message.recipients]), source:thread.id===sourceId}));
     },
     async listFiles(query) {
       const files: WorkspaceFile[]=[];

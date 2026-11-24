@@ -715,8 +715,8 @@ export type FileQuery = {
 };
 export type FilePage = { files: WorkspaceFile[]; total: number; hiddenCalendar?: number };
 export type WorkspaceContextTarget = { kind: "task"; task: ThreadTask } | { kind: "meeting"; event: ScheduleEvent };
-export type ContextQuery = { accountIds: string[]; threadId?: string; terms: string[]; attendees: string[]; after?: string; before?: string };
-export type WorkspaceConversation = { threadId: string; accountId: string; subject: string; sentAt: string; participants: string[]; reason?: string };
+export type ContextQuery = { accountIds: string[]; threadId?: string; /** The email a meeting was added from; its conversation is always a candidate. */ sourceMessageId?: string; terms: string[]; attendees: string[]; after?: string; before?: string };
+export type WorkspaceConversation = { threadId: string; accountId: string; subject: string; sentAt: string; participants: string[]; reason?: string; /** The conversation the query's `sourceMessageId` resolved to. */ source?: boolean };
 
 
 /** Keep-in-touch settings change only through their own commands, never through the profile form. */

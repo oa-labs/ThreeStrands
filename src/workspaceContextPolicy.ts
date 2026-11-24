@@ -11,11 +11,11 @@ export function contextQuery(target: WorkspaceContextTarget, accountIds: string[
   if (target.kind === "task") return { accountIds, threadId: target.task.threadId ?? undefined, terms: contextTerms(`${target.task.title} ${target.task.notes ?? ""}`), attendees: [] };
   const date = new Date(target.event.start);
   const at = (days: number) => new Date(date.getTime() + days * 86_400_000).toISOString();
-  return { accountIds, terms: contextTerms(target.event.title), attendees: (target.event.attendees ?? []).map((email) => email.toLocaleLowerCase()), after: at(-CONTEXT_POLICY.daysBefore), before: at(CONTEXT_POLICY.daysAfter) };
+  return { accountIds, sourceMessageId: target.event.sourceMessageId ?? undefined, terms: contextTerms(target.event.title), attendees: (target.event.attendees ?? []).map((email) => email.toLocaleLowerCase()), after: at(-CONTEXT_POLICY.daysBefore), before: at(CONTEXT_POLICY.daysAfter) };
 }
 export function rankContext(candidates: WorkspaceConversation[], query: ContextQuery): WorkspaceConversation[] {
   const ranked = candidates.filter((item) => query.accountIds.includes(item.accountId)).flatMap((item) => {
-    const direct = item.threadId === query.threadId;
+    const direct = item.threadId === query.threadId || item.source === true;
     const words = new Set(item.subject.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
     const topics = query.terms.filter((term) => words.has(term)).length;
     const attendee = item.participants.some((address) => query.attendees.includes(parseAddress(address).email.toLocaleLowerCase()));

@@ -473,6 +473,34 @@ describe("CalendarWeekView", () => {
     expect(within(viewer).getByText(/Tue, Sep 22/)).toBeInTheDocument();
   });
 
+  describe("source email action", () => {
+    const sourced = { ...event("sourced", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Budget lunch"), sourceMessageId: "msg-1" };
+    const conversation = { threadId: "thread-1", accountId: "joel@example.com", subject: "Lunch?", sentAt: "2026-09-20T10:00:00Z", participants: [], source: true };
+    it("opens the source conversation from the details header", async () => {
+      const candidates = vi.spyOn(mailClient, "contextCandidates").mockResolvedValue([conversation]);
+      vi.spyOn(mailClient, "listFiles").mockResolvedValue({ files: [], total: 0 });
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [sourced], errors: [] });
+      const onOpenThread = vi.fn();
+      renderWeek({ initialEvent: sourced, mailAccountIds: ["joel@example.com"], onOpenThread });
+      await screen.findByRole("region", { name: "Budget lunch details" });
+      fireEvent.click(await screen.findByRole("button", { name: "Open Source Email" }));
+      expect(onOpenThread).toHaveBeenCalledWith("thread-1");
+      expect(candidates).toHaveBeenCalledWith(expect.objectContaining({ sourceMessageId: "msg-1" }));
+    });
+    it("shows no action when the source email is not cached or the event has none", async () => {
+      vi.spyOn(mailClient, "contextCandidates").mockResolvedValue([{ ...conversation, source: false }]);
+      vi.spyOn(mailClient, "listFiles").mockResolvedValue({ files: [], total: 0 });
+      const plain = event("plain", "2026-09-22T10:00:00", "2026-09-22T10:30:00", "Standup");
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [sourced, plain], errors: [] });
+      renderWeek({ initialEvent: sourced, mailAccountIds: ["joel@example.com"] });
+      await screen.findByRole("region", { name: "Budget lunch details" });
+      await waitFor(() => expect(mailClient.contextCandidates).toHaveBeenCalled());
+      expect(screen.queryByRole("button", { name: "Open Source Email" })).not.toBeInTheDocument();
+      fireEvent.click(await screen.findByRole("button", { name: "Standup" }));
+      await screen.findByRole("region", { name: "Standup details" });
+      expect(screen.queryByRole("button", { name: "Open Source Email" })).not.toBeInTheDocument();
+    });
+  });
   it("opens a meeting's details when arriving from the conversation panel", async () => {
     const linked = event("linked", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Operations team meeting");
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [linked], errors: [] });

@@ -1817,6 +1817,8 @@ pub struct FilePage {
 pub struct ContextQuery {
     pub account_ids: Vec<String>,
     pub thread_id: Option<String>,
+    /// The email a meeting was created from; its conversation is always a candidate.
+    pub source_message_id: Option<String>,
     pub terms: Vec<String>,
     pub attendees: Vec<String>,
     pub after: Option<String>,
@@ -1830,6 +1832,8 @@ pub struct WorkspaceConversation {
     pub subject: String,
     pub sent_at: String,
     pub participants: Vec<String>,
+    /// True for the conversation the query's `source_message_id` resolved to.
+    pub source: bool,
 }
 
 /// A bounded attachment-chip picture, or a validated raster for browser resizing.

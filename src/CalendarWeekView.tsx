@@ -8,7 +8,7 @@ import { ContextSectionHeader } from "./ContextSections";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { BookedTask, CalendarTasks, useAccountTasks } from "./CalendarTasks";
 import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
-import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Plus, Calendar1 } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Mail, Plus, Calendar1 } from "lucide-react";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { isPreparable, preparationKey, type MeetingPreparationHost } from "./meetingPrep";
 import { useCallback, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
@@ -24,6 +24,7 @@ import {
   startOfLocalDay,
 } from "./calendarTime";
 import { isEditableTarget } from "./commands";
+import { useEventSourceThread } from "./useEventSourceThread";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import { revalidateScheduleCache } from "./calendarScheduleCache";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
@@ -239,6 +240,7 @@ export function CalendarWeekView({
 }) {
   const [month, setMonth] = useState(() => startOfLocalDay(anchor));
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(() => session?.current?.initialEvent===initialEvent ? session?.current?.selected ?? initialEvent ?? null : initialEvent ?? null);
+  const sourceThreadId = useEventSourceThread(selectedEvent?.sourceMessageId, mailAccountIds);
   const [mode, setMode] = useState<CalendarRangeMode>(() => session?.current?.initialEvent===initialEvent && session?.current ? session.current.mode : initialEvent ? rangeForEvent(initialEvent, readCalendarRange()) : readCalendarRange());
   const [navigationOpen, setNavigationOpen] = useState(session?.current?.navigationOpen ?? false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
@@ -537,6 +539,7 @@ export function CalendarWeekView({
             actions={<>
               {preparation && isPreparable(selectedEvent) ? <button ref={prepareButton} type="button" className="btn-icon btn-icon-sm" aria-label="Prepare" title="Prepare" aria-pressed={preparingSelected}
                 onClick={() => preparation.onChange(preparingSelected ? null : preparationKey(selectedEvent))}><ClipboardList size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
+              {sourceThreadId ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Open Source Email" title="Open Source Email" onClick={() => onOpenThread(sourceThreadId)}><Mail size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
               {onAddNote && isPreparable(selectedEvent) ? <EventNoteAction key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} occurrence={meetingEventReference(selectedEvent)!} onActivate={() => onAddNote(selectedEvent)} /> : null}
             </>} />
           <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} calendarLabel={eventCalendarLabel(selectedEvent, calendars)} onDismiss={() => {

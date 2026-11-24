@@ -21,6 +21,18 @@ describe("workspace context relevance", () => {
     expect(rankContext([candidate,source],query).map((item)=>item.threadId)).toEqual(["source","budget"]);
     expect(contextTerms("Atlas Atlas review <script>alert</script>")).toContain("atlas");
   });
+  it("asks for a meeting's source email and ranks its conversation first with the source reason", () => {
+    const target={kind:"meeting" as const,event:{id:"e",accountId:"calendar@example.com",title:"Atlas budget review",start:"2026-10-13T10:00:00Z",end:"2026-10-13T11:00:00Z",allDay:false,attendees:["alice@example.com"],sourceMessageId:"msg-1"}};
+    const query=contextQuery(target,["work@example.com"]);
+    expect(query.sourceMessageId).toBe("msg-1");
+    expect(contextQuery({...target,event:{...target.event,sourceMessageId:null}},["work@example.com"]).sourceMessageId).toBeUndefined();
+    // The source needs neither topic words nor an attendee, and outranks a better topic match.
+    const source={...candidate,threadId:"source",subject:"Lunch?",sentAt:"2020-01-01T00:00:00Z",participants:["bob@example.com"],source:true};
+    const result=rankContext([candidate,source],query);
+    expect(result.map((item)=>item.threadId)).toEqual(["source","budget"]);
+    expect(result[0]).toMatchObject({reason:"From source conversation"});
+    expect(sharedReason(result)).toBeNull();
+  });
   it("leaves a meeting's invitations out of its files, except starred ones", () => {
     const file=(id:string,subject:string,sentAt:string,attachment:Partial<WorkspaceFile["attachment"]>={},starred=false):WorkspaceFile=>({accountId:"work@example.com",messageId:id,threadId:id,subject,sentAt,sender:"alice@example.com",direction:"received",attachment:{id:"part:0.1",filename:"invite.ics",mimeType:"text/calendar",size:10,...attachment},starred,availability:"unknown"});
     const week10=file("w10","Invitation: Atlas sync - Week 10 @ Mon Oct 19, 2026","2026-10-12T10:00:00Z");

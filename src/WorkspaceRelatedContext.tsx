@@ -34,7 +34,7 @@ export function WorkspaceRelatedContext({ target, accountIds, onOpenThread }: { 
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
   const requestKey = JSON.stringify(contextQuery(target, accountIds));
-  const sourceMessage = target.kind === "task" ? target.task.sourceMessageId : undefined;
+  const sourceMessage = target.kind === "task" ? target.task.sourceMessageId : target.event.sourceMessageId;
   const meeting = target.kind === "meeting";
   useEffect(() => {
     const changed = () => setRevision((value) => value + 1);
