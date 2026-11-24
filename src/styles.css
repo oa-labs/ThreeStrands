@@ -1445,10 +1445,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   text-align: right;
 }
 .thread-assist-shared { margin: 0; padding-left:calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); }
-.ai-cached-provenance { margin-top: var(--space-1); padding: 0 var(--context-row-inset); color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); overflow-wrap: anywhere; }
-.ai-cached-provenance summary { cursor: pointer; }
-.ai-cached-provenance p { margin: var(--space-1) 0; }
-.ai-cached-provenance ul { margin: var(--space-1) 0; padding-left: var(--space-4); }
 .action-analysis-error { margin-top: var(--space-2); padding: var(--space-2) var(--space-2-5); border: 1px solid var(--warning); border-radius: var(--radius-sm); background: var(--input); font-size: var(--text-secondary); }
 .action-analysis-error p { margin: 0; color: var(--text); }
 .action-analysis-error-actions { display: flex; align-items: center; gap: var(--space-2-5); margin-top: var(--space-1-5); }
@@ -2279,8 +2275,8 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .thread-assist-earlier { margin:0 0 var(--space-1-5); padding-inline:calc(var(--context-row-inset) + var(--context-glyph-column)) var(--context-row-inset); color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); overflow-wrap:anywhere; }
 .thread-assist-earlier > summary { cursor:pointer; }
 .thread-assist-earlier p { margin:var(--space-1) 0 0; }
-.thread-assist-meta { display:grid; gap:var(--space-1); }
-.thread-assist-meta .ai-cached-provenance { margin-top:0; }
+.thread-assist-meta { display:grid; gap:var(--space-1); margin-top:var(--space-2); }
+.thread-assist-source + .thread-assist-source { margin-top:var(--space-2); }
 .thread-assist > .context-section-header .context-section-header-actions { flex:0 1 auto; min-width:0; flex-wrap:wrap; justify-content:flex-end; }
 .thread-assist-progress { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:var(--space-1) var(--space-2); min-width:0; }
 .thread-assist-cancel { font-size:var(--text-meta); white-space:nowrap; }

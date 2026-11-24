@@ -1767,7 +1767,6 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::ai::ai_activity,
         commands::ai::ai_request_snapshot,
         commands::ai::recover_ai_requests,
-        commands::ai::ai_result_provenance,
         commands::ai::set_ai_request_policy,
         commands::ai::cancel_ai_request,
         commands::ai::ai_diagnostics,

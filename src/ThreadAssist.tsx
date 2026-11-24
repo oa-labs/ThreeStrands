@@ -1,4 +1,4 @@
-import { AiCancelButton, AiCachedProvenance } from "./AiRequestControls";
+import { AiCancelButton } from "./AiRequestControls";
 import { formatCompactDate } from "./dateFormatting";
 import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { useId, useState } from "react";
@@ -144,6 +144,16 @@ export function summaryLines(summary: string): string[] {
     .split("\n")
     .map((line) => line.replace(/^[-•]\s*/, "").trim())
     .filter(Boolean);
+}
+
+const normalizedBriefText = (text: string) => text
+  .replace(TO_CLOSE_PREFIX, "").replace(EARLIER_PREFIX, "")
+  .trim().replace(/\s+/g, " ").replace(/[\s.!?;:,…]+$/, "").toLowerCase();
+
+/** True when a source's claim only restates a line of the brief. */
+export function repeatsBriefLine(claim: string, lines: string[]): boolean {
+  const normalized = normalizedBriefText(claim);
+  return normalized !== "" && lines.some((line) => normalizedBriefText(line) === normalized);
 }
 
 export function summaryClipboardText(summary: string): string {
@@ -476,7 +486,7 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
   const scope = briefScope(detail);
   const lines = summaryText ? summaryLines(summaryText) : [];
   const scopeNote = summaryText && !stale && !readingBrief && scope.newCount < scope.coveredCount
-    ? (scope.newCount === 1 ? "From the latest message" : `From the ${scope.newCount} latest messages`)
+    ? (scope.newCount === 1 ? "Focused on the newest message, with earlier ones as background." : `Focused on the ${scope.newCount} newest messages, with earlier ones as background.`)
     : null;
   const currentLines = lines.filter((line) => !EARLIER_PREFIX.test(line));
   const earlierLines = lines.filter((line) => EARLIER_PREFIX.test(line));
@@ -524,8 +534,8 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
       </ul> : null}
       {summaryText && thread.summaryEvidence?.length ? <details className="thread-assist-earlier">
         <summary>Brief sources</summary>
-        {thread.summaryEvidence.map(({ claim, source }, index) => <div key={`${source.sourceMessageId}:${index}`}>
-          <p>{claim}</p>
+        {thread.summaryEvidence.map(({ claim, source }, index) => <div key={`${source.sourceMessageId}:${index}`} className="thread-assist-source">
+          {repeatsBriefLine(claim, lines) ? null : <p>{claim}</p>}
           <blockquote>{source.excerpt}</blockquote>
           {onShowSource && messageSource(source.sourceMessageId) ? <button type="button" className="btn-link" onClick={() => onShowSource(thread.id, source.sourceMessageId)}>
             Show message from {messageSource(source.sourceMessageId)}
@@ -539,7 +549,6 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
       {summaryText ? <footer className="thread-assist-meta">
         {stale && !readingBrief ? <p className="thread-assist-shared">New messages since this brief.</p> : null}
         {scopeNote ? <p className="thread-assist-shared">{scopeNote}</p> : null}
-        <AiCachedProvenance key={`${thread.id}:${thread.summaryGeneratedAt}`} threadId={thread.id} />
       </footer> : null}
       {failureNotice}
     </div>

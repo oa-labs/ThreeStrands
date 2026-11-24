@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import { invoke } from "@tauri-apps/api/core";
-import { AiCancelButton, AiRequestControls, AiCachedProvenance } from "./AiRequestControls";
+import { AiCancelButton, AiRequestControls } from "./AiRequestControls";
 import { invokeAi } from "./aiRequests";
 import { saveAiCatalogPrices, saveAiPrice } from "./aiSettings";
 
@@ -65,16 +65,6 @@ describe("native AI request controls", () => {
     expect(screen.getByRole("spinbutton")).toHaveValue(2);
     await act(async()=>{details.open=false;fireEvent(details,new Event("toggle"));});
     expect(invoke).toHaveBeenLastCalledWith("ai_request_snapshot",{includeHistory:false});
-  });
-  it("loads cached generation metadata only when opened", async () => {
-    vi.mocked(invoke).mockResolvedValue([null,null]);
-    render(<AiCachedProvenance threadId="A" />);
-    expect(invoke).not.toHaveBeenCalled();
-    const details=screen.getByText("Generation details").parentElement as HTMLDetailsElement;
-    expect(details).toHaveClass("ai-cached-provenance");
-    expect(details.open).toBe(false);
-    await act(async()=>{details.open=true;fireEvent(details,new Event("toggle"));});
-    expect(invoke).toHaveBeenCalledWith("ai_result_provenance",{threadId:"A"});
   });
   it("requires an explicit recovery action after controls fail to load", async () => {
     vi.mocked(invoke).mockRejectedValue(new Error("unavailable"));

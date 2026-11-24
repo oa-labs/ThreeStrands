@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useId, useRef, useState } from "react";
 import { aiRequestSnapshot, recoverAiRequests, cancelAiRequest, setAiRequestPolicy, usePendingAiRequests, type AiRequestSnapshot, type AiRequestRecord } from "./aiRequests";
 import { aiActivityFeatureLabel } from "./AiActivityList";
@@ -84,20 +83,4 @@ function ProvenanceEntry({ record }: { record: AiRequestRecord }) {
       </> : null}
     </details>
   </li>;
-}
-
-export function AiCachedProvenance({ threadId }: { threadId: string }) {
-  const [records, setRecords] = useState<AiRequestRecord[]>([]);
-  const [error, setError] = useState("");
-  return <details className="ai-cached-provenance" onToggle={(event) => {
-    if (!event.currentTarget.open || !("__TAURI_INTERNALS__" in window)) return;
-    void invoke<[AiRequestRecord | null, AiRequestRecord | null]>("ai_result_provenance", {threadId}).then((rows) => {
-      const unique = new Map<string,AiRequestRecord>();
-      for (const record of rows ?? []) if (record) unique.set(record.attemptId,record);
-      setRecords([...unique.values()]);
-    }).catch(() => setError("Generation details could not be loaded."));
-  }}><summary>Generation details</summary>
-    {error ? <p role="status">{error}</p> : null}
-    {records.length ? <ul>{records.map((record) => <ProvenanceEntry key={record.attemptId} record={record} />)}</ul> : <p>No recorded generation details for this cached result.</p>}
-  </details>;
 }

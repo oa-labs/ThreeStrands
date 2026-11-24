@@ -1411,20 +1411,6 @@ pub(crate) fn cancel_ai_request(request_id: String) -> AppResult<()> {
 }
 
 #[tauri::command(async)]
-pub(crate) fn ai_result_provenance(
-    thread_id: String,
-    state: State<'_, AppState>,
-) -> AppResult<(
-    Option<ai::requests::RequestRecord>,
-    Option<ai::requests::RequestRecord>,
-)> {
-    state
-        .database
-        .ai_result_provenance(&thread_id)
-        .map_err(AppError::from)
-}
-
-#[tauri::command(async)]
 pub(crate) fn recover_ai_requests() -> AppResult<()> {
     ai::requests::RUNTIME.recover().map_err(AppError::from)
 }

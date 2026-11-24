@@ -7,7 +7,7 @@ import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import { SLOTS_PER_DAY } from "./scheduling";
 import { AVAILABILITY_SECTION_ID } from "./RecipientSections";
-import { briefScope, conversationPeople, meetingPlace, proposalDueText, ownNamesIn, participantName, participantsText, reminderTask, ThreadAssist, uncertaintyNote, type ThreadAssistProps } from "./ThreadAssist";
+import { briefScope, repeatsBriefLine, conversationPeople, meetingPlace, proposalDueText, ownNamesIn, participantName, participantsText, reminderTask, ThreadAssist, uncertaintyNote, type ThreadAssistProps } from "./ThreadAssist";
 import type { ActionProposal, ThreadDetail } from "./domain";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -164,6 +164,21 @@ describe("proposalDueText", () => {
   });
 });
 
+describe("repeatsBriefLine", () => {
+  const lines = ["The client needs the website.", "To close: AP Group's employee sync is restored.", "Earlier: Roles kept vanishing."];
+  it("matches a line ignoring prefix, case, spacing, and trailing punctuation", () => {
+    expect(repeatsBriefLine("the  client needs the website", lines)).toBe(true);
+    expect(repeatsBriefLine("AP Group's employee sync is restored and", lines)).toBe(false);
+    expect(repeatsBriefLine("AP Group's employee sync is restored!", lines)).toBe(true);
+    expect(repeatsBriefLine("To close: AP Group's employee sync is restored.", lines)).toBe(true);
+    expect(repeatsBriefLine("roles kept vanishing", lines)).toBe(true);
+  });
+  it("does not match different or empty claims", () => {
+    expect(repeatsBriefLine("The client needs a website by Friday.", lines)).toBe(false);
+    expect(repeatsBriefLine("  ", lines)).toBe(false);
+  });
+});
+
 describe("ThreadAssist", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -247,17 +262,17 @@ describe("ThreadAssist", () => {
       messages: [message("m1", "2026-09-19T10:00:00Z"), message("m2", "2026-09-20T10:00:00Z"), message("m3", "2026-09-21T10:00:00Z")],
     };
     const { rerender } = render(<ThreadAssist {...props({ detail: thread, suggestions: { requested: true } })} />);
-    expect(screen.getByText("From the latest message")).toBeInTheDocument();
+    expect(screen.getByText("Focused on the newest message, with earlier ones as background.")).toBeInTheDocument();
     expect(screen.getByText("They now want it Monday instead.")).toHaveClass("thread-assist-summary-lead");
     expect(screen.getByText("The client asked for the website by Friday.")).not.toBeVisible();
-    expect(screen.getByText("Earlier context").compareDocumentPosition(screen.getByText("From the latest message")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByText("From the latest message").compareDocumentPosition(screen.getByText("Generation details")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Earlier context").compareDocumentPosition(screen.getByText("Focused on the newest message, with earlier ones as background.")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText("Generation details")).not.toBeInTheDocument();
 
     rerender(<ThreadAssist {...props({ detail: { ...thread, thread: { ...thread.thread, summaryFocusFrom: "2026-09-20T10:00:00Z" } }, suggestions: { requested: true } })} />);
-    expect(screen.getByText("From the 2 latest messages")).toBeInTheDocument();
+    expect(screen.getByText("Focused on the 2 newest messages, with earlier ones as background.")).toBeInTheDocument();
     // A brief of the whole conversation, or one saved before focus was recorded, needs no note.
     rerender(<ThreadAssist {...props({ detail: { ...thread, thread: { ...thread.thread, summaryFocusFrom: null } }, suggestions: { requested: true } })} />);
-    expect(screen.queryByText(/^From the /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Focused on /)).not.toBeInTheDocument();
   });
 
   it("counts only messages the brief was written from, and at most what a brief sends", () => {
@@ -394,7 +409,7 @@ describe("ThreadAssist", () => {
     expect(within(brief).getByText("The client needs the website.")).toBeVisible();
     expect(screen.queryByText("Reading the conversation…")).not.toBeInTheDocument();
     expect(screen.queryByText("New messages since this brief.")).not.toBeInTheDocument();
-    expect(screen.queryByText("From the latest message")).not.toBeInTheDocument();
+    expect(screen.queryByText("Focused on the newest message, with earlier ones as background.")).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Suggestions" })).not.toBeInTheDocument();
 
     rerender(<ThreadAssist {...props({ ...base, loading: true, summary: { pending: true } })} />);
@@ -405,14 +420,14 @@ describe("ThreadAssist", () => {
     fireEvent.click(within(brief).getByRole("button", { name: "Brief" }));
 
     // A failed or cancelled update preserves the old brief without claiming
-    // it covers the latest message. Provenance stays in the same footer.
+    // it covers the latest message. The footer no longer carries generation details.
     rerender(<ThreadAssist {...props({ ...base, error: "AI request cancelled" })} />);
     expect(within(brief).getByText("The client needs the website.")).toBeVisible();
     expect(screen.queryByText("Updating brief…")).not.toBeInTheDocument();
     expect(screen.getByText("New messages since this brief.")).toBeInTheDocument();
-    expect(screen.queryByText("From the latest message")).not.toBeInTheDocument();
+    expect(screen.queryByText("Focused on the newest message, with earlier ones as background.")).not.toBeInTheDocument();
     expect(within(brief).getByRole("alert")).toHaveTextContent("AI request cancelled");
-    expect(within(brief.querySelector("footer")!).getByText("Generation details")).toBeInTheDocument();
+    expect(within(brief).queryByText("Generation details")).not.toBeInTheDocument();
 
     // Only a result covering the newest revision earns the latest-message label.
     rerender(<ThreadAssist {...props({ ...base, detail: { ...oldBrief, thread: {
@@ -421,7 +436,34 @@ describe("ThreadAssist", () => {
     } } })} />);
     expect(screen.getByText("Delivery is now due Monday.")).toBeVisible();
     expect(screen.queryByText("New messages since this brief.")).not.toBeInTheDocument();
-    expect(screen.getByText("From the latest message")).toBeInTheDocument();
+    expect(screen.getByText("Focused on the newest message, with earlier ones as background.")).toBeInTheDocument();
+  });
+
+  it("does not repeat brief lines as source claims but keeps their excerpts and links", () => {
+    const evidence = (claim: string, excerpt: string) => ({ claim, source: { sourceMessageId: "message-1", excerpt } });
+    const thread: ThreadDetail = {
+      ...summarized,
+      thread: {
+        ...summarized.thread,
+        summary: "- The client needs the website.\n- To close: Send the final files.",
+        summaryEvidence: [
+          evidence("The client needs the website.", "Please set up the website by Friday."),
+          evidence("send the final files", "Send the files."),
+          evidence("Friday is a hard deadline.", "Friday at the latest."),
+        ],
+      },
+    };
+    const onShowSource = vi.fn();
+    render(<ThreadAssist {...props({ detail: thread, onShowSource })} />);
+    const sources = screen.getByText("Brief sources").closest("details")!;
+    // The lead claim appears once, in the brief itself.
+    expect(screen.getAllByText("The client needs the website.")).toHaveLength(1);
+    expect(within(sources).queryByText("send the final files")).not.toBeInTheDocument();
+    expect(within(sources).getByText("Friday is a hard deadline.")).toBeInTheDocument();
+    expect(within(sources).getByText("Please set up the website by Friday.")).toBeInTheDocument();
+    expect(within(sources).getByText("Send the files.")).toBeInTheDocument();
+    expect(within(sources).getAllByRole("button", { name: /^Show message from/ })).toHaveLength(3);
+    expect(sources.querySelectorAll(".thread-assist-source")).toHaveLength(3);
   });
 
   it("keeps a compact Cancel beside progress even when folded, scoped to this conversation", async () => {

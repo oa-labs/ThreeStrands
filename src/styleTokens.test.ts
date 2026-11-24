@@ -42,14 +42,6 @@ function spacePx(name: string): number {
 }
 
 describe("spacing", () => {
-  it("keeps cached generation details in muted metadata text and wraps long source identifiers", () => {
-    const declarations = new Map<string, string>();
-    css.walkRules(".ai-cached-provenance", (rule) => rule.walkDecls((declaration) => { declarations.set(declaration.prop, declaration.value); }));
-    expect(declarations.get("font-size")).toBe("var(--text-meta)");
-    expect(declarations.get("color")).toBe("var(--muted)");
-    expect(declarations.get("overflow-wrap")).toBe("anywhere");
-  });
-
   it("gives Today’s schedule more space than its planning inbox and keeps card titles clear of actions", () => {
     const value = (selector: string, prop: string) => {
       let result: string | undefined;

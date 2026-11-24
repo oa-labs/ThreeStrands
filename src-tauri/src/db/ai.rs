@@ -75,6 +75,7 @@ impl Database {
         )
     }
     /// Results retain their own provenance after the short-lived request journal expires.
+    #[cfg(test)]
     pub fn ai_result_provenance(
         &self,
         thread_id: &str,
