@@ -3,7 +3,7 @@ import { installTestShortcuts } from "./test/commandContext";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
-import { COLLAPSED_CALENDAR_ACCOUNTS_KEY, CalendarWeekView, monthGridDays } from "./CalendarWeekView";
+import { COLLAPSED_CALENDAR_ACCOUNTS_KEY, CalendarWeekView } from "./CalendarWeekView";
 import { DONE_TASK_LINGER_MS } from "./CalendarTasks";
 import { startOfLocalDay } from "./calendarTime";
 import { mailClient } from "./data/client";
@@ -817,7 +817,7 @@ describe("CalendarWeekView", () => {
     renderWeek();
     await screen.findByText("Sun 20");
 
-    fireEvent.click(screen.getByRole("gridcell", { name: /September 8, 2026/ }));
+    fireEvent.click(screen.getByRole("button", { name: /September 8, 2026/ }));
     await screen.findByText("Sun 6");
   });
 
@@ -831,12 +831,74 @@ describe("CalendarWeekView", () => {
     expect(screen.getByText("Sun 20")).toBeInTheDocument();
   });
 
-  it("covers the whole month plus leading and trailing days in six rows", () => {
-    const days = monthGridDays(new Date(2026, 8, 22));
-    expect(days).toHaveLength(42);
-    expect(days[0].getDay()).toBe(0);
-    expect(days[0]).toEqual(new Date(2026, 7, 30));
-    expect(days.filter((day) => day.getMonth() === 8)).toHaveLength(30);
+  it("shows the month as a Sunday-first grid with leading and trailing days", async () => {
+    renderWeek();
+    await screen.findByText("Sun 20");
+    const grid = within(screen.getByRole("region", { name: "Month picker" })).getByRole("grid");
+    const cells = within(grid).getAllByRole("gridcell");
+    // September 2026 starts on a Tuesday and ends on a Wednesday: five weeks from August 30.
+    expect(cells).toHaveLength(35);
+    expect(within(cells[0]).getByRole("button")).toHaveAccessibleName(/August 30, 2026/);
+    expect(within(cells[34]).getByRole("button")).toHaveAccessibleName(/October 3, 2026/);
+  });
+
+  it("marks today and the displayed day in the mini month", async () => {
+    renderWeek();
+    await screen.findByText("Sun 20");
+    const day = (n: number) => screen.getByRole("button", { name: new RegExp(`September ${n}, 2026`) });
+    const cell = (n: number) => day(n).closest("[role=gridcell]") as HTMLElement;
+    expect(day(22)).toHaveAttribute("aria-current", "date");
+    expect(cell(22)).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(day(8));
+    await screen.findByText("Sun 6");
+    expect(cell(8)).toHaveAttribute("aria-selected", "true");
+    expect(cell(22)).not.toHaveAttribute("aria-selected", "true");
+    expect(day(22)).toHaveAttribute("aria-current", "date");
+  });
+
+  describe("calendars drawer dismissal", () => {
+    const drawer = () => screen.queryByRole("complementary", { name: "Calendar navigation" });
+
+    it("closes from the corner X and returns focus to the toggle", async () => {
+      renderWeek();
+      await screen.findByText("Sun 20");
+      const close = screen.getByRole("button", { name: "Close Calendars" });
+      close.focus();
+      fireEvent.click(close);
+      expect(drawer()).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Calendars/ })).toHaveFocus();
+    });
+
+    it("closes on a pointerdown outside but not inside", async () => {
+      renderWeek();
+      await screen.findByText("Sun 20");
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Next Month" }));
+      expect(drawer()).toBeInTheDocument();
+      fireEvent.pointerDown(document.body);
+      expect(drawer()).not.toBeInTheDocument();
+    });
+
+    it("leaves the toggle to toggle", async () => {
+      renderWeek();
+      await screen.findByText("Sun 20");
+      const toggle = screen.getByRole("button", { name: /^Calendars/ });
+      fireEvent.pointerDown(toggle);
+      expect(drawer()).toBeInTheDocument();
+      fireEvent.click(toggle);
+      expect(drawer()).not.toBeInTheDocument();
+      fireEvent.click(toggle);
+      expect(drawer()).toBeInTheDocument();
+    });
+
+    it("closes on Escape from inside", async () => {
+      renderWeek();
+      await screen.findByText("Sun 20");
+      const next = screen.getByRole("button", { name: "Next Month" });
+      next.focus();
+      fireEvent.keyDown(next, { key: "Escape" });
+      expect(drawer()).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Calendars/ })).toHaveFocus();
+    });
   });
 
   it("lists connected calendars and reports selection changes", async () => {

@@ -1161,6 +1161,50 @@ describe("TaskSidebar goals", () => {
     localStorage.clear();
   });
 
+  describe("drawer dismissal", () => {
+    const drawer = () => screen.queryByRole("complementary", { name: "Goals" });
+    const open = async () => {
+      vi.spyOn(mailClient, "listGoals").mockResolvedValue([]);
+      renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+      await screen.findByRole("complementary", { name: "Goals" });
+    };
+
+    it("closes from the corner X and returns focus to the toggle", async () => {
+      await open();
+      const close = screen.getByRole("button", { name: "Close Goals" });
+      close.focus();
+      fireEvent.click(close);
+      expect(drawer()).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Goals" })).toHaveFocus();
+    });
+
+    it("closes on a pointerdown outside but not inside", async () => {
+      await open();
+      fireEvent.pointerDown(drawer()!);
+      expect(drawer()).toBeInTheDocument();
+      fireEvent.pointerDown(document.body);
+      expect(drawer()).not.toBeInTheDocument();
+    });
+
+    it("leaves the toggle to toggle", async () => {
+      await open();
+      const toggle = screen.getByRole("button", { name: "Goals" });
+      fireEvent.pointerDown(toggle);
+      expect(drawer()).toBeInTheDocument();
+      fireEvent.click(toggle);
+      expect(drawer()).not.toBeInTheDocument();
+    });
+
+    it("closes on Escape from inside", async () => {
+      await open();
+      const close = screen.getByRole("button", { name: "Close Goals" });
+      close.focus();
+      fireEvent.keyDown(close, { key: "Escape" });
+      expect(drawer()).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Goals" })).toHaveFocus();
+    });
+  });
+
   it("lists the current quarter's and year's goals with linked task counts, hiding an empty half and older periods", async () => {
     setup([
       workspaceTask("a", { goalId: "ship" }), workspaceTask("b", { goalId: "ship", status: "completed", completedAt: new Date().toISOString() }),
