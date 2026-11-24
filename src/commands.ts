@@ -19,6 +19,8 @@ export type CommandContext = {
   selectAllOutbox?(): void;
   selectedArchived: boolean;
   selectedTrashed: boolean;
+  /** Every conversation Mark Spam / Not Spam would act on is in Spam. */
+  selectedSpam: boolean;
   canUnsubscribe: boolean;
   canNavigateMessages: boolean;
   canSendAndMarkDone: boolean;
@@ -95,6 +97,7 @@ export type CommandContext = {
   trashSelected(): Promise<CommandResult>;
   restoreSelected(): Promise<CommandResult>;
   markSpamSelected(): Promise<CommandResult>;
+  notSpamSelected(): Promise<CommandResult>;
   setLabelSelected(labelId: string, labelName: string, value: boolean): Promise<CommandResult>;
   toggleReadSelected(): Promise<CommandResult>;
   toggleStarSelected(): Promise<CommandResult>;
@@ -550,8 +553,19 @@ export const commands: Command[] = [
     title: "Mark Spam",
     keys: ["!"],
     group: "Triage",
-    enabled: (context) => hasThreadTarget(context) && isThreadMailbox(context) && !context.composerActive,
+    enabled: (context) => hasThreadTarget(context) && isThreadMailbox(context) && !context.composerActive && !context.selectedSpam,
     run: (context) => context.markSpamSelected(),
+    undo: undoResult,
+  },
+  {
+    // Shares "!" with Mark Spam: only one of the two is enabled at a time.
+    id: "thread.notSpam",
+    title: "Not Spam",
+    keys: ["!"],
+    keywords: ["unblock", "restore", "inbox"],
+    group: "Triage",
+    enabled: (context) => hasThreadTarget(context) && isThreadMailbox(context) && !context.composerActive && context.selectedSpam,
+    run: (context) => context.notSpamSelected(),
     undo: undoResult,
   },
   {

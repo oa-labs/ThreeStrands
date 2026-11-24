@@ -22,6 +22,7 @@ function noopContext(): CommandContext {
     selectedId: null,
     selectedArchived: false,
     selectedTrashed: false,
+    selectedSpam: false,
     canUnsubscribe: false,
     canNavigateMessages: false,
     canSendAndMarkDone: false,
@@ -79,6 +80,7 @@ function noopContext(): CommandContext {
     trashSelected: async () => ({}),
     restoreSelected: async () => ({}),
     markSpamSelected: async () => ({}),
+    notSpamSelected: async () => ({}),
     setLabelSelected: async () => ({}),
     toggleReadSelected: async () => ({}),
     toggleStarSelected: async () => ({}),
@@ -288,6 +290,8 @@ describe("command registry", () => {
       space: ["notes.pageDown", "thread.pageDown"],
       "shift+space": ["notes.pageUp", "thread.pageUp"],
       "#": ["today.removeOrDismiss", "notes.trash", "draft.discard", "thread.trash"],
+      // Mark Spam, or Not Spam when the target conversations are already in Spam.
+      "!": ["thread.spam", "thread.notSpam"],
       arrowright: ["today.nextInboxTab", "tasks.nextColumn", "message.next"],
       "]": ["today.nextInboxTab", "tasks.moveForward"],
       arrowleft: ["today.previousInboxTab", "tasks.previousColumn", "message.previous"],
@@ -717,6 +721,31 @@ describe("command registry", () => {
     context.selectedTrashed = true;
     expect(commands.find((command) => command.id === "thread.trash")?.enabled(context)).toBe(false);
     expect(commands.find((command) => command.id === "thread.untrash")?.enabled(context)).toBe(true);
+  });
+
+  it("swaps Mark Spam for Not Spam on conversations in Spam, both on the same key", async () => {
+    const spam = commands.find((command) => command.id === "thread.spam")!;
+    const notSpam = commands.find((command) => command.id === "thread.notSpam")!;
+    expect(notSpam.title).toBe("Not Spam");
+    expect(notSpam.group).toBe("Triage");
+    expect(notSpam.keys).toEqual(spam.keys);
+    const context = noopContext();
+    context.selectedId = "t1";
+    expect(spam.enabled(context)).toBe(true);
+    expect(notSpam.enabled(context)).toBe(false);
+    context.selectedSpam = true;
+    expect(spam.enabled(context)).toBe(false);
+    expect(notSpam.enabled(context)).toBe(true);
+    expect(notSpam.enabled({ ...context, selectedId: null })).toBe(false);
+    expect(notSpam.enabled({ ...context, composerActive: true })).toBe(false);
+    expect(notSpam.enabled({ ...context, mailbox: "drafts" })).toBe(false);
+    // The shortcut handler runs the first enabled command bound to "!".
+    const bound = commands.filter((command) => command.keys.includes("!"));
+    expect(bound.filter((command) => command.enabled(context)).map((command) => command.id)).toEqual(["thread.notSpam"]);
+    expect(bound.filter((command) => command.enabled({ ...context, selectedSpam: false })).map((command) => command.id)).toEqual(["thread.spam"]);
+    const notSpamSelected = vi.fn(async () => ({}));
+    await notSpam.run({ ...context, notSpamSelected });
+    expect(notSpamSelected).toHaveBeenCalledOnce();
   });
 
   it("registers the conversation triage shortcuts", () => {

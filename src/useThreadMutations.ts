@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import type { CommandResult, MailboxKind } from "./commands";
 import { mailClient } from "./data/client";
-import type { ConversationSnooze, SyncStatus, Thread, ThreadDetail, TriageEvent } from "./domain";
+import type { ConversationSnooze, SenderRule, SyncStatus, Thread, ThreadDetail, TriageEvent } from "./domain";
 import { logBackgroundFailure } from "./errors";
 import {
   applyMutationTemplate,
@@ -170,6 +170,8 @@ export function useThreadMutations({
     let snoozesBefore: ConversationSnooze[] = [];
     // Mark Spam blocks the senders; Undo removes the blocks it added.
     let createdBlockIds: string[] = [];
+    // Not spam unblocks the senders; Undo puts those exact blocks back.
+    let removedBlocks: SenderRule[] = [];
     try {
       const changesLocation = template.kind === "archive" || template.kind === "trash" || template.kind === "spam"
         || (template.kind === "label" && ["INBOX", "TRASH", "SPAM"].includes(template.labelId));
@@ -187,6 +189,7 @@ export function useThreadMutations({
         buildThreadMutation(id, template),
       ]));
       createdBlockIds = outcome?.createdBlockIds ?? [];
+      removedBlocks = outcome?.removedBlocks ?? [];
       if (outcome?.blocksChanged) window.dispatchEvent(new Event(SENDER_RULES_CHANGED));
     } catch {
       failedIds = targetIds;
@@ -226,7 +229,11 @@ export function useThreadMutations({
     }
 
     const labelName = template.kind === "label" ? template.labelName : undefined;
-    const definite = describeMutation(template, succeededIds.length, labelName);
+    const unblocked = [...new Set(removedBlocks.map((rule) => rule.matchValue))];
+    const definite = describeMutation(template, succeededIds.length, labelName)
+      + (template.kind === "spam" && !template.value && unblocked.length > 0
+        ? ` · Unblocked ${unblocked.length === 1 ? unblocked[0] : `${unblocked.length} senders`}`
+        : "");
     const singleToggle = (template.kind === "star" || template.kind === "read")
       && succeededIds.length === 1 && failedIds.length === 0;
     const message = singleToggle
@@ -260,6 +267,10 @@ export function useThreadMutations({
         if (template.kind === "spam" && template.value) {
           // Senders blocked before this Mark Spam stay blocked.
           const outcome = await mailClient.mutateThreads(undoMutations, { undoBlocks: createdBlockIds });
+          if (outcome?.blocksChanged) window.dispatchEvent(new Event(SENDER_RULES_CHANGED));
+        } else if (template.kind === "spam") {
+          // Not spam: marking spam again must not add a fresh block.
+          const outcome = await mailClient.mutateThreads(undoMutations, { restoreBlocks: removedBlocks });
           if (outcome?.blocksChanged) window.dispatchEvent(new Event(SENDER_RULES_CHANGED));
         } else {
           await mailClient.mutateThreads(undoMutations);

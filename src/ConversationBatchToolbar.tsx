@@ -1,4 +1,4 @@
-import { AlarmClock, Inbox, Archive, Mail, MailOpen, RotateCcw, ShieldAlert, Star, Tag, Trash, X } from "lucide-react";
+import { AlarmClock, Inbox, Archive, Mail, MailOpen, RotateCcw, ShieldAlert, ShieldCheck, Star, Tag, Trash, X } from "lucide-react";
 import type { CSSProperties, RefObject } from "react";
 import { ActionButton, HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
@@ -7,10 +7,12 @@ import { formatShortcut } from "./shortcutLabels";
 
 /** Actions for the conversations checked in a thread mailbox's list. */
 export function ConversationBatchToolbar({
-  inTrash, selectedCount, allVisibleChecked, allStarred, selectAllRef,
+  inTrash, inSpam = false, selectedCount, allVisibleChecked, allStarred, selectAllRef,
   onSelectAll, onClearSelection, onRun, onLabels, onSnooze, onReturnToInbox,
 }: {
   inTrash: boolean;
+  /** The whole selection is in Spam: Not Spam takes the place of Mark Spam. */
+  inSpam?: boolean;
   selectedCount: number;
   allVisibleChecked: boolean;
   /** Every checked conversation is starred, so the star action unstars. */
@@ -68,11 +70,19 @@ export function ConversationBatchToolbar({
                 <Trash size={ICON_SIZE.md} />
               </ActionButton>
             </HoverTooltip>
-            <HoverTooltip label="Mark spam" placement="bottom">
-              <ActionButton label="Mark Spam" onClick={() => onRun("Mark Spam", { kind: "spam", value: true })}>
-                <ShieldAlert size={ICON_SIZE.md} />
-              </ActionButton>
-            </HoverTooltip>
+            {inSpam ? (
+              <HoverTooltip label="Not spam" placement="bottom">
+                <ActionButton label="Not Spam" onClick={() => onRun("Not Spam", { kind: "spam", value: false })}>
+                  <ShieldCheck size={ICON_SIZE.md} />
+                </ActionButton>
+              </HoverTooltip>
+            ) : (
+              <HoverTooltip label="Mark spam" placement="bottom">
+                <ActionButton label="Mark Spam" onClick={() => onRun("Mark Spam", { kind: "spam", value: true })}>
+                  <ShieldAlert size={ICON_SIZE.md} />
+                </ActionButton>
+              </HoverTooltip>
+            )}
           </>
         )}
         {!inTrash && onSnooze ? <HoverTooltip label="Snooze" placement="bottom"><ActionButton label="Snooze" onClick={onSnooze}><AlarmClock size={ICON_SIZE.md} /></ActionButton></HoverTooltip> : null}

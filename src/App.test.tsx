@@ -1437,6 +1437,30 @@ describe("trash and batch actions", () => {
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
+  it("offers Not Spam in place of Mark Spam for a conversation in Spam, runs it with !, and Undo restores it", async () => {
+    const listThreadsPage = mailClient.listThreadsPage.bind(mailClient);
+    vi.spyOn(mailClient, "listThreadsPage").mockImplementation(async (...args) => {
+      const page = await listThreadsPage(...args);
+      return { ...page, threads: page.threads.map((thread) => ({ ...thread, labels: [...thread.labels.filter((label) => label !== "INBOX"), "SPAM"] })) };
+    });
+    const mutateThreads = vi.spyOn(mailClient, "mutateThreads");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    expect(screen.queryByRole("button", { name: "Mark Spam (!)" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Not Spam (!)" })).toBeInTheDocument();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "!", code: "Digit1", shiftKey: true }));
+    });
+    await waitFor(() => expect(mutateThreads).toHaveBeenCalledWith([expect.objectContaining({ kind: "spam", value: false })]));
+    expect(await screen.findByRole("status")).toHaveTextContent("Moved to Inbox");
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Undo" }).click();
+    });
+    await waitFor(() => expect(mutateThreads).toHaveBeenLastCalledWith([expect.objectContaining({ kind: "spam", value: true })], { restoreBlocks: [] }));
+  });
+
   it("archives every conversation checked for batch actions", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

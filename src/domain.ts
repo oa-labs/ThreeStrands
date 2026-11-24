@@ -579,6 +579,8 @@ export type ThreadMutationsResult = {
   createdBlockIds: string[];
   /** Whether any block was added, refreshed, or removed. */
   blocksChanged: boolean;
+  /** The blocks Not spam removed, in full, for Undo to put back exactly. */
+  removedBlocks?: SenderRule[];
 };
 
 /** A new mute, and the Inbox conversations it archived, for Undo. */

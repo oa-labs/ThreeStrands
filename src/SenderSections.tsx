@@ -235,7 +235,7 @@ export function useTrustReport({ message, subject, bulk, prior, enabled = true }
  * storage. `compact` leaves out the list of remembered senders, for the
  * warning above the message body.
  */
-export function SenderFeedback({ messageId, feedback, compact = false, onMarkSpam }: { messageId: string; feedback: NonNullable<TrustReport["feedback"]>; compact?: boolean; onMarkSpam?(): void }) {
+export function SenderFeedback({ messageId, feedback, compact = false, inSpam, onMarkSpam, onNotSpam }: { messageId: string; feedback: NonNullable<TrustReport["feedback"]>; compact?: boolean } & SpamActions) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const save = async (forgetId?: string) => {
@@ -261,7 +261,7 @@ export function SenderFeedback({ messageId, feedback, compact = false, onMarkSpa
     <div className="context-sender-feedback">
       {compact ? null : <p id={scopeId} className="context-sender-feedback-scope">{scope}</p>}
       <div className="context-sender-actions">
-        {onMarkSpam ? <MarkSpamButton onClick={onMarkSpam} /> : null}
+        <SpamActionButton inSpam={inSpam} onMarkSpam={onMarkSpam} onNotSpam={onNotSpam} />
         {matchingId
           ? <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(matchingId); }}>Forget confirmation</button>
           : compact ? <HoverTooltip label="Trust this sender" hint={scope} hintId={scopeId} placement="bottom">{trustButton}</HoverTooltip> : trustButton}
@@ -317,4 +317,17 @@ export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
 /** Marks the conversation the warning sits in as spam, through the same command as the toolbar. */
 export function MarkSpamButton({ onClick }: { onClick(): void }) {
   return <button type="button" className="btn btn-sm btn-danger" onClick={onClick}><ShieldAlert size={ICON_SIZE.sm} aria-hidden="true" />Mark Spam</button>;
+}
+
+/** Moves a conversation that is in Spam back to the Inbox and unblocks its sender, through the same command as the toolbar. */
+export function NotSpamButton({ onClick }: { onClick(): void }) {
+  return <button type="button" className="btn btn-sm" onClick={onClick}><ShieldCheck size={ICON_SIZE.sm} aria-hidden="true" />Not spam</button>;
+}
+
+/** The spam action the warning offers: Not spam in a conversation that is already in Spam, otherwise Mark Spam. */
+export type SpamActions = { inSpam?: boolean; onMarkSpam?(): void; onNotSpam?(): void };
+
+export function SpamActionButton({ inSpam, onMarkSpam, onNotSpam }: SpamActions) {
+  if (inSpam) return onNotSpam ? <NotSpamButton onClick={onNotSpam} /> : null;
+  return onMarkSpam ? <MarkSpamButton onClick={onMarkSpam} /> : null;
 }

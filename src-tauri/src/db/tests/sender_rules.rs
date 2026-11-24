@@ -466,7 +466,7 @@ fn a_rule_from_another_device_is_checked_before_it_is_stored() {
 
 // Blocked senders.
 
-use super::{SenderBlockChanges, BLOCK_IDLE_DAYS, MAX_BLOCKED_SENDERS};
+use super::{BlockUndo, SenderBlockChanges, BLOCK_IDLE_DAYS, MAX_BLOCKED_SENDERS};
 use chrono::{Duration, Utc};
 
 fn spam(thread: &str, value: bool) -> ThreadMutation {
@@ -627,6 +627,16 @@ fn undo_removes_only_the_blocks_mark_spam_created_and_not_spam_removes_the_sende
         .apply_user_mutations(&[spam("earlier", false)], None)
         .unwrap();
     assert_eq!(not_spam.removed_ids, existing);
+    assert_eq!(
+        not_spam
+            .unblocked
+            .iter()
+            .map(|rule| rule.match_value.as_str())
+            .collect::<Vec<_>>(),
+        ["known@spam.example"],
+        "Not spam reports the addresses it unblocked"
+    );
+    assert!(undo.unblocked.is_empty(), "Undo of Mark Spam reports none");
     assert!(blocks(&database).is_empty());
 
     // Undo never removes a mute.
@@ -638,6 +648,51 @@ fn undo_removes_only_the_blocks_mark_spam_created_and_not_spam_removes_the_sende
         .apply_user_mutations(&[], Some(std::slice::from_ref(&mute.id)))
         .unwrap();
     assert_eq!(database.list_sender_rules().unwrap(), vec![mute]);
+}
+
+#[test]
+fn undo_of_not_spam_restores_the_removed_block_exactly() {
+    let database = setup();
+    received(&database, "one", "prize@lottery.example");
+    mark_spam(&database, &["one"]);
+    database
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE sender_rules SET created_at = '2026-03-01T00:00:00Z', last_matched_at = '2026-03-02T00:00:00Z'",
+            [],
+        )
+        .unwrap();
+    let before = blocks(&database);
+    assert_eq!(before.len(), 1);
+
+    let not_spam = database
+        .apply_user_mutations(&[spam("one", false)], None)
+        .unwrap();
+    assert_eq!(not_spam.unblocked, before);
+    assert!(blocks(&database).is_empty());
+    assert!(!in_spam(&database, "one"));
+
+    let undo = database
+        .apply_user_mutations_with(
+            &[spam("one", true)],
+            BlockUndo::NotSpam(&not_spam.unblocked),
+        )
+        .unwrap();
+    assert!(in_spam(&database, "one"));
+    assert_eq!(blocks(&database), before, "same id, dates, and address");
+    assert!(undo.created_ids.is_empty());
+    assert_eq!(undo.written, before, "other devices get the block back");
+
+    // Restoring twice, or over a newer block for the address, adds nothing.
+    let again = database
+        .apply_user_mutations_with(
+            &[spam("one", true)],
+            BlockUndo::NotSpam(&not_spam.unblocked),
+        )
+        .unwrap();
+    assert!(again.written.is_empty());
+    assert_eq!(blocks(&database), before);
 }
 
 #[test]
