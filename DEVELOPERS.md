@@ -198,9 +198,9 @@ exemptions that imported audits now cover.
 dependencies from any source other than crates.io.
 
 The **Supply chain** workflow (`.github/workflows/supply-chain.yml`) runs all
-four checks on pull requests that touch Cargo manifests, lockfiles, or audit
-files, on every push to `master`, and weekly, since new advisories can fail
-an unchanged lockfile. It installs pinned, checksum-verified release
+four checks on pull requests that touch Cargo manifests, lockfiles, audit
+files, or the pinned tool versions, on every push to `master`, and weekly,
+since new advisories can fail an unchanged lockfile. It installs pinned, checksum-verified release
 binaries; keep their versions in step with `CARGO_VET_VERSION` and
 `CARGO_DENY_VERSION` in `.devcontainer/Dockerfile` and `scripts/supply-chain.mjs`
 (`node --test scripts/supply-chain.test.mjs` fails if they drift).
