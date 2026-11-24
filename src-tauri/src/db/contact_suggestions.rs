@@ -222,10 +222,12 @@ impl Database {
                     pinned: agg.pinned,
                 })
                 .collect();
+            // People often emailed with the recipients already chosen come
+            // first: they fit this message. Pins mark people who matter in
+            // general, so they rank next, ahead of plain mail history.
             suggestions.sort_by(|a, b| {
-                b.pinned
-                    .cmp(&a.pinned)
-                    .then_with(|| super::co_recipients::compare(relationships.get(&a.email), relationships.get(&b.email)))
+                super::co_recipients::compare(relationships.get(&a.email), relationships.get(&b.email))
+                    .then_with(|| b.pinned.cmp(&a.pinned))
                     .then_with(|| saved_first.contains(&b.email).cmp(&saved_first.contains(&a.email)))
                     .then(b.sent_count.cmp(&a.sent_count))
                     .then(b.received_count.cmp(&a.received_count))

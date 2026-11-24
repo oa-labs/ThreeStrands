@@ -346,12 +346,15 @@ fn contextual_pool_is_ranked_before_truncation_and_honors_pins_suppression_exclu
     assert_eq!(r[0].email, "bob@example.com");
     db.pin_contact("you@example.com", "pinned@example.com", None)
         .unwrap();
-    assert_eq!(
-        db.contextual_contact_suggestions("you@example.com", "", 1, &context, &context)
-            .unwrap()[0]
-            .email,
-        "pinned@example.com"
-    );
+    // Someone often emailed with the chosen recipients fits this message
+    // better than a pin; a pin still outranks plain mail history.
+    let ranked: Vec<String> = db
+        .contextual_contact_suggestions("you@example.com", "", 3, &context, &context)
+        .unwrap()
+        .into_iter()
+        .map(|s| s.email)
+        .collect();
+    assert_eq!(ranked[..2], ["bob@example.com", "pinned@example.com"]);
     db.with_connection(|c| {
         c.execute(
             "INSERT INTO contact_suggestion_suppressions(email) VALUES('bob@example.com')",
