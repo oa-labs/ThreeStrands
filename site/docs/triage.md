@@ -31,6 +31,8 @@ Reopen a long email you were partway through, such as a newsletter, and it picks
 | Manage Labels | <kbd>l</kbd> |
 | Undo Last Action | <kbd>z</kbd> |
 
+**Mark Spam** also blocks the sender, so their new mail goes straight to Spam. Undo unblocks them again. A blocked sender who sends nothing for six months is forgotten. Review or unblock senders in **Settings → Muted Senders**, under **Blocked Senders**.
+
 The [keyboard shortcut reference](keyboard-shortcuts.html) lists everything else.
 
 ## Snooze {#snooze}

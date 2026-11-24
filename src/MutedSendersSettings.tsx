@@ -16,7 +16,7 @@ export function MutedSendersSettings({ rules, onUnmute }: {
   onUnmute(id: string): Promise<void>;
 }) {
   const { pending, error, runFor } = useSettingsOperation();
-  const sorted = [...rules].sort((left, right) =>
+  const sorted = rules.filter((rule) => rule.action === "mute").sort((left, right) =>
     left.accountId.localeCompare(right.accountId) || describeSenderRule(left).localeCompare(describeSenderRule(right)));
   return (
     <section className="settings-section accounts-manager" aria-label="Muted Senders">

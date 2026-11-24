@@ -62,6 +62,11 @@ describe("matching mute rule", () => {
     expect(matchingRule([rule("address", "news@launch.example")], "you@example.com", "breaking-news@launch.example")).toBeNull();
     expect(matchingRule([rule("address", "news@launch.example", "work@example.org")], "you@example.com", "news@launch.example")).toBeNull();
   });
+
+  it("ignores a block, which is not a mute to undo", () => {
+    const block: SenderRule = { ...rule("address", "prize@lottery.example"), action: "block" };
+    expect(matchingRule([block], "you@example.com", "prize@lottery.example")).toBeNull();
+  });
 });
 
 describe("link analysis", () => {

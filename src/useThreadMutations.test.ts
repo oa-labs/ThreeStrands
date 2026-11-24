@@ -194,3 +194,43 @@ describe("archive read status", () => {
     expect(mailClient.mutateThreads).toHaveBeenCalledWith([{ kind, threadId: "unread", value: true }]);
   });
 });
+
+describe("blocked senders", () => {
+  beforeEach(() => {
+    vi.spyOn(mailClient, "flushPending").mockResolvedValue({} as never);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("Undo of Mark Spam removes only the blocks it created, and the sender lists re-read", async () => {
+    const mutateThreads = vi.spyOn(mailClient, "mutateThreads")
+      .mockResolvedValueOnce({ createdBlockIds: ["block-new"], blocksChanged: true })
+      .mockResolvedValueOnce({ createdBlockIds: [], blocksChanged: true });
+    const changed = vi.fn();
+    window.addEventListener("threestrands:sender-rules-changed", changed);
+    try {
+      const { result } = setup(false);
+      let command!: CommandResult;
+      await act(async () => { command = await result.current.mutate(["unread", "read"], { kind: "spam", value: true }); });
+      expect(mutateThreads).toHaveBeenCalledWith([
+        { kind: "spam", threadId: "unread", value: true }, { kind: "spam", threadId: "read", value: true },
+      ]);
+      expect(changed).toHaveBeenCalledTimes(1);
+      await act(async () => { await command.undoAction?.(); });
+      expect(mutateThreads).toHaveBeenLastCalledWith([
+        { kind: "spam", threadId: "unread", value: false }, { kind: "spam", threadId: "read", value: false },
+      ], { undoBlocks: ["block-new"] });
+      expect(changed).toHaveBeenCalledTimes(2);
+    } finally {
+      window.removeEventListener("threestrands:sender-rules-changed", changed);
+    }
+  });
+
+  it("Undo of other changes doesn't touch blocks", async () => {
+    const mutateThreads = vi.spyOn(mailClient, "mutateThreads").mockResolvedValue(undefined);
+    const { result } = setup(false);
+    let command!: CommandResult;
+    await act(async () => { command = await result.current.mutate(["unread"], { kind: "archive", value: true }); });
+    await act(async () => { await command.undoAction?.(); });
+    expect(mutateThreads).toHaveBeenLastCalledWith([{ kind: "archive", threadId: "unread", value: false }]);
+  });
+});

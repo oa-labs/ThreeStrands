@@ -336,18 +336,41 @@ pub(crate) async fn backfill_search_threads(
 pub(crate) async fn mutate_thread(
     mutation: ThreadMutation,
     state: State<'_, AppState>,
-) -> AppResult<()> {
-    let database = state.database.clone();
-    run_database_task(move || database.mutate_thread(&mutation)).await
+) -> AppResult<models::ThreadMutationsResult> {
+    apply_user_mutations(vec![mutation], None, state).await
 }
 
+/// Applies the user's conversation changes. Mark Spam also blocks each
+/// conversation's sender and Not spam unblocks it; `undo_blocks` marks the
+/// call as Undo of a Mark Spam, which removes only the blocks it created.
 #[tauri::command]
 pub(crate) async fn mutate_threads(
     mutations: Vec<ThreadMutation>,
+    undo_blocks: Option<Vec<String>>,
     state: State<'_, AppState>,
-) -> AppResult<()> {
+) -> AppResult<models::ThreadMutationsResult> {
+    apply_user_mutations(mutations, undo_blocks, state).await
+}
+
+async fn apply_user_mutations(
+    mutations: Vec<ThreadMutation>,
+    undo_blocks: Option<Vec<String>>,
+    state: State<'_, AppState>,
+) -> AppResult<models::ThreadMutationsResult> {
     let database = state.database.clone();
-    run_database_task(move || database.mutate_threads(&mutations)).await
+    let changes = run_database_task(move || {
+        let changes = database.apply_user_mutations(&mutations, undo_blocks.as_deref())?;
+        database.record_sender_block_changes(&changes)?;
+        Ok::<_, crate::db::DatabaseError>(changes)
+    })
+    .await?;
+    if !changes.is_empty() {
+        crate::kick_replicated_sync(&state);
+    }
+    Ok(models::ThreadMutationsResult {
+        blocks_changed: !changes.is_empty(),
+        created_block_ids: changes.created_ids,
+    })
 }
 
 #[tauri::command]

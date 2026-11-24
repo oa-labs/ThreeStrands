@@ -957,6 +957,59 @@ mod tests {
     }
 
     #[test]
+    fn a_block_from_mark_spam_syncs_to_peers_without_its_last_seen_date_and_not_spam_removes_it() {
+        let db = Database::open_memory();
+        db.adopt_account("you@example.com").unwrap();
+        let mut message =
+            crate::db::test_support::message("m1", "prize", "2026-10-01T09:00:00Z", "Win");
+        message.from = "prize@lottery.example".into();
+        message.to = vec!["you@example.com".into()];
+        db.upsert_thread("you@example.com", &[message]).unwrap();
+        let spam = |value| crate::models::ThreadMutation::Spam {
+            thread_id: "you@example.com:prize".into(),
+            value,
+        };
+        let changes = db.apply_user_mutations(&[spam(true)], None).unwrap();
+        let block = changes.written[0].clone();
+        record_full(&db, EntityType::SenderRule, &block.id, block.sync_payload());
+
+        let peer = Database::open_memory();
+        peer.adopt_account("you@example.com").unwrap();
+        sync_into(&peer, &db);
+        let received = peer.list_sender_rules().unwrap();
+        assert_eq!(received.len(), 1);
+        assert_eq!(
+            (
+                received[0].id.as_str(),
+                received[0].action.as_str(),
+                received[0].match_value.as_str()
+            ),
+            (block.id.as_str(), "block", "prize@lottery.example")
+        );
+        assert_eq!(received[0].last_matched_at, None);
+
+        let changes = db.apply_user_mutations(&[spam(false)], None).unwrap();
+        assert_eq!(changes.removed_ids, vec![block.id.clone()]);
+        db.record_replicated_deletion(EntityType::SenderRule, &block.id)
+            .unwrap();
+        sync_into(&peer, &db);
+        assert!(peer.list_sender_rules().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_synced_block_must_name_one_address() {
+        let db = Database::open_memory();
+        let payload = json!({
+            "id": "block-1", "accountId": "you@example.com", "matchKind": "domain",
+            "matchValue": "gmail.com", "action": "block", "createdAt": "2026-10-14T00:00:00Z",
+        });
+        assert!(db
+            .materialize_entity(EntityType::SenderRule, "block-1", Some(&payload), false)
+            .is_err());
+        assert!(db.list_sender_rules().unwrap().is_empty());
+    }
+
+    #[test]
     fn a_synced_mute_rule_must_match_its_entity_and_contract() {
         let db = Database::open_memory();
         let payload = json!({

@@ -64,6 +64,7 @@ const MIGRATIONS: &[Migration] = &[
     (117, to_v117),
     (118, to_v118),
     (119, to_v119),
+    (120, to_v120),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1555,6 +1556,49 @@ fn to_v115(tx: &rusqlite::Transaction) -> Result<(), String> {
     .map_err(error)
 }
 
+fn to_v120(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Blocked senders: Mark Spam adds a `block` rule, whose sender's new
+    // mail sync moves to Spam, and every rule records when its sender's
+    // mail last arrived so blocks that go quiet can be pruned. SQLite
+    // cannot change a CHECK constraint in place, so the table is rebuilt.
+    // Dropping `sender_rules` would cascade into its action log, so the log
+    // is set aside first and restored after. A database that skipped v75's
+    // tables gets them first, so there is always something to rebuild.
+    to_v75(tx)?;
+    tx.execute_batch(
+        "CREATE TEMP TABLE sender_rule_actions_v119 AS SELECT * FROM sender_rule_actions;
+         DROP TABLE sender_rule_actions;
+         CREATE TABLE sender_rules_v120 (
+             id TEXT PRIMARY KEY,
+             account_id TEXT NOT NULL,
+             match_kind TEXT NOT NULL CHECK(match_kind IN ('address', 'domain')),
+             match_value TEXT NOT NULL,
+             action TEXT NOT NULL CHECK(action IN ('mute', 'block')),
+             created_at TEXT NOT NULL,
+             updated_at TEXT,
+             last_matched_at TEXT,
+             CHECK(action <> 'block' OR match_kind = 'address')
+         );
+         INSERT INTO sender_rules_v120(id, account_id, match_kind, match_value, action, created_at, updated_at)
+             SELECT id, account_id, match_kind, match_value, action, created_at, updated_at FROM sender_rules;
+         DROP TABLE sender_rules;
+         ALTER TABLE sender_rules_v120 RENAME TO sender_rules;
+         CREATE INDEX sender_rules_by_account ON sender_rules(account_id);
+         CREATE TABLE sender_rule_actions (
+             account_id TEXT NOT NULL,
+             message_id TEXT NOT NULL,
+             rule_id TEXT NOT NULL REFERENCES sender_rules(id) ON DELETE CASCADE,
+             acted_at TEXT NOT NULL,
+             PRIMARY KEY(account_id, message_id)
+         );
+         INSERT INTO sender_rule_actions(account_id, message_id, rule_id, acted_at)
+             SELECT account_id, message_id, rule_id, acted_at FROM sender_rule_actions_v119;
+         DROP TABLE temp.sender_rule_actions_v119;",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
 fn to_v119(tx: &rusqlite::Transaction) -> Result<(), String> {
     ensure_note_exclude_from_ai_column(tx)
 }
@@ -2482,6 +2526,123 @@ mod tests {
                 [],
             )
             .is_err(), "only address and domain rules are stored");
+    }
+
+    #[test]
+    fn a_v119_database_keeps_its_muted_senders_and_their_log_and_can_store_blocks() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        // Put back the v75 tables a 0.211 database has.
+        connection
+            .execute_batch(
+                "DROP TABLE sender_rule_actions; DROP TABLE sender_rules;
+                 CREATE TABLE sender_rules (
+                     id TEXT PRIMARY KEY,
+                     account_id TEXT NOT NULL,
+                     match_kind TEXT NOT NULL CHECK(match_kind IN ('address', 'domain')),
+                     match_value TEXT NOT NULL,
+                     action TEXT NOT NULL CHECK(action IN ('mute')),
+                     created_at TEXT NOT NULL,
+                     updated_at TEXT
+                 );
+                 CREATE INDEX sender_rules_by_account ON sender_rules(account_id);
+                 CREATE TABLE sender_rule_actions (
+                     account_id TEXT NOT NULL,
+                     message_id TEXT NOT NULL,
+                     rule_id TEXT NOT NULL REFERENCES sender_rules(id) ON DELETE CASCADE,
+                     acted_at TEXT NOT NULL,
+                     PRIMARY KEY(account_id, message_id)
+                 );
+                 INSERT INTO sender_rules VALUES
+                     ('address', 'you@example.com', 'address', 'news@launch.example', 'mute', '2026-10-14T00:00:00Z', '2026-10-15T00:00:00Z'),
+                     ('domain', 'you@example.com', 'domain', 'launch.example', 'mute', '2026-10-16T00:00:00Z', NULL);
+                 INSERT INTO sender_rule_actions VALUES ('you@example.com', 'message-1', 'address', '2026-10-17T00:00:00Z');",
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 119).unwrap();
+        super::migrate(&mut connection).unwrap();
+
+        // id, match_kind, match_value, action, updated_at, last_matched_at
+        type Row = (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        );
+        let rules: Vec<Row> = connection
+            .prepare("SELECT id, match_kind, match_value, action, updated_at, last_matched_at FROM sender_rules ORDER BY id")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rules,
+            vec![
+                (
+                    "address".into(),
+                    "address".into(),
+                    "news@launch.example".into(),
+                    "mute".into(),
+                    Some("2026-10-15T00:00:00Z".into()),
+                    None
+                ),
+                (
+                    "domain".into(),
+                    "domain".into(),
+                    "launch.example".into(),
+                    "mute".into(),
+                    None,
+                    None
+                ),
+            ]
+        );
+        let logged: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sender_rule_actions WHERE rule_id = 'address'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(logged, 1, "the action log survives the rebuild");
+        connection
+            .execute(
+                "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at, last_matched_at)
+                 VALUES ('block', 'you@example.com', 'address', 'prize@lottery.example', 'block', '2026-11-01T00:00:00Z', '2026-11-02T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        assert!(connection
+            .execute(
+                "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at)
+                 VALUES ('domain-block', 'you@example.com', 'domain', 'lottery.example', 'block', '2026-11-01T00:00:00Z')",
+                [],
+            )
+            .is_err(), "a block names one address");
+        assert!(connection
+            .execute(
+                "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at)
+                 VALUES ('other', 'you@example.com', 'address', 'a@b.example', 'filter', '2026-11-01T00:00:00Z')",
+                [],
+            )
+            .is_err(), "only mutes and blocks are stored");
+        // Deleting a rule still drops its log.
+        connection
+            .execute("DELETE FROM sender_rules WHERE id = 'address'", [])
+            .unwrap();
+        let logged: i64 = connection
+            .query_row("SELECT COUNT(*) FROM sender_rule_actions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(logged, 0);
     }
 
     #[test]

@@ -1425,6 +1425,10 @@ fn run_storage_maintenance(database: &Database) -> Vec<&'static str> {
         "pruning orphaned message metadata",
         database.prune_orphaned_message_metadata().map(|_| ()),
     );
+    step(
+        "pruning idle blocked senders",
+        database.prune_idle_blocked_senders().map(|_| ()),
+    );
     step("reclaiming free pages", database.reclaim_space());
     // Bound WAL growth, then snapshot: checkpointing first means the backup
     // reflects the latest writes without carrying an ever-growing WAL of its

@@ -175,7 +175,7 @@ plus the group's key changes and join records.
 
 Replicated entities are tasks (including the goal each one supports), goals,
 saved contacts, contact groups, snippets, signatures and their defaults,
-Split Inboxes, muted senders, mail-account display metadata, calendar-account
+Split Inboxes, muted and blocked senders, mail-account display metadata, calendar-account
 metadata and selections, scheduled-send summaries, sender delivery-pattern
 confirmations, retention, the portable preference allowlist, and notes.
 
@@ -189,6 +189,13 @@ same way: an earlier device stops receiving changes once a muted sender is in a
 snapshot, until it is updated. Sender delivery-pattern confirmations arrived in
 0.173.0 and behave the same way. Nothing is lost meanwhile, because a snapshot
 it can't open is never merged.
+
+Blocked senders travel as the same entity as muted senders, with the action
+`block`. A device from before blocks can still open the snapshot: it refuses
+just those records, never applies them, and retries them after it is updated.
+When the newest mail from a blocked sender arrived stays on each device, and
+the clock that forgets a block idle for six months never starts before the
+device received it; a block forgotten on one device is removed everywhere.
 
 A mute is applied by whichever device syncs the mail first. It acts only on
 new mail that arrives unread, and marks it read as it archives it, so other

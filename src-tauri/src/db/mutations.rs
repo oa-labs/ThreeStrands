@@ -283,6 +283,10 @@ impl Database {
         Ok(())
     }
 
+    /// Tests' shorthand for plain conversation changes. The app applies the
+    /// user's changes through [`Self::apply_user_mutations`], which also
+    /// keeps blocked senders in step with Spam.
+    #[cfg(test)]
     pub fn mutate_thread(&self, mutation: &ThreadMutation) -> DbResult<()> {
         self.with_transaction(|transaction| {
             Self::cancel_snooze_for_mutation(transaction, mutation)?;
@@ -291,6 +295,8 @@ impl Database {
         })
     }
 
+    /// See [`Self::mutate_thread`].
+    #[cfg(test)]
     pub fn mutate_threads(&self, mutations: &[ThreadMutation]) -> DbResult<()> {
         if mutations.is_empty() {
             return Ok(());

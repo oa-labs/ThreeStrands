@@ -209,6 +209,12 @@ fn synced_projection_writes_exactly_these_rows() {
         json!({"id": "rule-2", "accountId": "me@example.com", "matchKind": "address", "matchValue": "gone@example.com", "action": "mute", "createdAt": T0}),
     );
     delete(EntityType::SenderRule, "rule-2");
+    // A block arrives without this device's last-seen date.
+    project(
+        EntityType::SenderRule,
+        "block-1",
+        json!({"id": "block-1", "accountId": "me@example.com", "matchKind": "address", "matchValue": "Prize@Lottery.example", "action": "block", "createdAt": T0}),
+    );
 
     project(
         EntityType::Preferences,
@@ -315,6 +321,10 @@ fn settings_import_writes_exactly_these_rows() {
         {"id": "rule-1", "accountId": "existing@example.com", "matchKind": "address", "matchValue": "Spam@Example.com", "action": "mute", "createdAt": T0},
     ]))
     .unwrap();
+    let blocks: Vec<crate::transfer::TransferBlockedSender> = serde_json::from_value(json!([
+        {"id": "block-1", "accountId": "existing@example.com", "address": "Prize@Lottery.example", "createdAt": T0, "lastMatchedAt": T1},
+    ]))
+    .unwrap();
     let library = crate::signatures::SignatureLibrary {
         signatures: vec![template("work")],
         defaults: vec![defaults("existing@example.com", "", Some("work"), None)],
@@ -327,6 +337,7 @@ fn settings_import_writes_exactly_these_rows() {
         &contacts,
         Some(&groups),
         Some(&rules),
+        Some(&blocks),
         Some(180),
         Some(&library),
     )
@@ -367,7 +378,8 @@ email=cal-b@example.com | connected_at=<now> | selection_initialized=0 | status=
 [scheduled_send_summaries]
 id=00000000-0000-4000-8000-000000000001:00000000-0000-4000-8000-0000000000a1 | report={"account":"me@example.com","blockedReason":null,"operationId":"00000000-0000-4000-8000-0000000000a1","ownerInstallationId":"00000000-0000-4000-8000-000000000001","ownerNameAtCreation":"Laptop","ownerSyncDeviceId":null,"reportRevision":2,"scheduledAt":1900000000000,"state":"scheduled","statusChangedAt":1800000000000,"subject":"Later","timeZone":"UTC"}
 [sender_rules]
-id=rule-1 | account_id=me@example.com | match_kind=address | match_value=spam@example.com | action=mute | created_at=2020-01-02T03:04:05+00:00 | updated_at=<now>
+id=block-1 | account_id=me@example.com | match_kind=address | match_value=prize@lottery.example | action=block | created_at=2020-01-02T03:04:05+00:00 | updated_at=<now> | last_matched_at=NULL
+id=rule-1 | account_id=me@example.com | match_kind=address | match_value=spam@example.com | action=mute | created_at=2020-01-02T03:04:05+00:00 | updated_at=<now> | last_matched_at=NULL
 [synced_preferences]
 key=portable | value={"deviceName:abc123":"Laptop","fontSize":16,"theme":"dark"} | updated_at=<now>
 [sync_device_labels]
@@ -411,7 +423,8 @@ id=group-1 | name=Friends | created_at=2020-01-02T03:04:05+00:00 | updated_at=<n
 [contact_group_members]
 group_id=group-1 | contact_id=contact-1
 [sender_rules]
-id=rule-1 | account_id=existing@example.com | match_kind=address | match_value=spam@example.com | action=mute | created_at=2020-01-02T03:04:05+00:00 | updated_at=<now>
+id=block-1 | account_id=existing@example.com | match_kind=address | match_value=prize@lottery.example | action=block | created_at=2020-01-02T03:04:05+00:00 | updated_at=<now> | last_matched_at=2021-02-03T04:05:06Z
+id=rule-1 | account_id=existing@example.com | match_kind=address | match_value=spam@example.com | action=mute | created_at=2020-01-02T03:04:05+00:00 | updated_at=<now> | last_matched_at=NULL
 [signatures]
 id=work | payload={"id":"work","name":"work","html":"<p>work</p>","text":"work"}
 [signature_defaults]

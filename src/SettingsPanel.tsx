@@ -44,6 +44,7 @@ import { AvailabilityAccountDefaultsSettings, MeetingTypeProfilesSettings } from
 import { CalendarAccountsSettings } from "./CalendarAccountsSettings";
 import { SplitInboxesSettings } from "./SplitInboxesSettings";
 import { MutedSendersSettings } from "./MutedSendersSettings";
+import { BlockedSendersSettings } from "./BlockedSendersSettings";
 import { SnippetsSettings } from "./SnippetsSettings";
 import { AiProviderSettings } from "./AiProviderSettings";
 import { WebResearchSettings } from "./WebResearchSettings";
@@ -85,7 +86,7 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection", icon: CalendarDays },
   { id: "reading", label: "Reading & Triage", group: "Workflow", description: "Choose when conversations are marked read and what opens next as you triage.", keywords: "mark read unread delay timer never manually archive archiving trash delete snooze return next older newer advance conversation", icon: Inbox, autosaves: true },
   { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern saved search views query", icon: Inbox },
-  { id: "mutedSenders", label: "Muted Senders", group: "Workflow", description: "Review senders whose new mail skips the Inbox.", keywords: "mute muted sender newsletter archive automatically skip inbox unmute rule", icon: BellOff },
+  { id: "mutedSenders", label: "Muted Senders", group: "Workflow", description: "Review senders whose new mail skips the Inbox.", keywords: "mute muted sender newsletter archive automatically skip inbox unmute rule block blocked unblock spam junk", icon: BellOff },
   { id: "signatures", label: "Signatures", group: "Workflow", description: "Create signatures and choose defaults for each sending address.", keywords: "signature sign-off logo alias footer compose", icon: Signature },
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
   { id: "writingProfile", label: "Writing Profile", group: "Workflow", description: "Tell Draft Review who you are and how to review your email, for each account.", keywords: "about you review instructions draft review feedback ai sales tone role company", icon: UserPen, autosaves: true },
@@ -386,7 +387,10 @@ export function Settings({
             />
           ) : null}
           {section === "mutedSenders" ? (
-            <MutedSendersSettings rules={mutedSenders.senderRules} onUnmute={mutedSenders.unmute} />
+            <>
+              <MutedSendersSettings rules={mutedSenders.senderRules} onUnmute={mutedSenders.unmute} />
+              <BlockedSendersSettings rules={mutedSenders.senderRules} onUnblock={mutedSenders.unmute} />
+            </>
           ) : null}
           {section === "signatures" && signatures ? <SignaturesSettings library={signatures} accounts={mailAccounts.accounts} /> : null}
           {section === "writingProfile" ? (

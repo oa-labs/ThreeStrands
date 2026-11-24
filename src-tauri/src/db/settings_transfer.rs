@@ -8,8 +8,8 @@ use super::{
     split_inboxes, Database, DbResult,
 };
 use crate::transfer::{
-    TransferAccount, TransferContact, TransferContactGroup, TransferSenderRule, TransferSnippet,
-    TransferSplitInbox,
+    TransferAccount, TransferBlockedSender, TransferContact, TransferContactGroup,
+    TransferSenderRule, TransferSnippet, TransferSplitInbox,
 };
 use chrono::Utc;
 
@@ -29,6 +29,7 @@ impl Database {
         contacts: &[TransferContact],
         contact_groups: Option<&[TransferContactGroup]>,
         sender_rules: Option<&[TransferSenderRule]>,
+        blocked_senders: Option<&[TransferBlockedSender]>,
         retention_days: Option<i64>,
         signatures: Option<&crate::signatures::SignatureLibrary>,
     ) -> DbResult<()> {
@@ -133,12 +134,24 @@ impl Database {
             // An export from before muted senders has none to offer, so the
             // ones already here stay. Removing a rule drops its action log.
             if let Some(rules) = sender_rules {
-                sender_rules::delete_all_sender_rules(transaction)?;
+                sender_rules::delete_all_sender_rules(transaction, "mute")?;
                 let now = Utc::now().to_rfc3339();
                 for rule in rules {
                     let value =
                         sender_rules::normalize_rule_match(&rule.match_kind, &rule.match_value)?;
                     sender_rules::insert_imported_sender_rule(transaction, rule, &value, &now)?;
+                }
+            }
+
+            // Blocked senders work the same way: an export with none
+            // (from before blocks, or with nothing blocked) keeps this
+            // device's.
+            if let Some(blocks) = blocked_senders {
+                sender_rules::delete_all_sender_rules(transaction, "block")?;
+                let now = Utc::now().to_rfc3339();
+                for block in blocks {
+                    let address = sender_rules::normalize_rule_match("address", &block.address)?;
+                    sender_rules::insert_imported_blocked_sender(transaction, block, &address, &now)?;
                 }
             }
 

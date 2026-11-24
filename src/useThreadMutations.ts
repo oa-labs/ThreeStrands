@@ -17,6 +17,7 @@ import { buildTriageDispositionEvent } from "./triage";
 import type { useMailboxThreads } from "./useMailboxThreads";
 import type { Notice } from "./useNotice";
 import type { useTriageSession } from "./useTriageSession";
+import { SENDER_RULES_CHANGED } from "./useSenderRules";
 
 type Options = ReturnType<typeof useTriageSession> & Pick<ReturnType<typeof useMailboxThreads>, "loadThreadsRef" | "queryRef" | "setThreads"> & {
   threads: Thread[];
@@ -167,6 +168,8 @@ export function useThreadMutations({
 
     let failedIds: string[] = [];
     let snoozesBefore: ConversationSnooze[] = [];
+    // Mark Spam blocks the senders; Undo removes the blocks it added.
+    let createdBlockIds: string[] = [];
     try {
       const changesLocation = template.kind === "archive" || template.kind === "trash" || template.kind === "spam"
         || (template.kind === "label" && ["INBOX", "TRASH", "SPAM"].includes(template.labelId));
@@ -179,10 +182,12 @@ export function useThreadMutations({
           unreadBefore.set(id, snapshot.thread.unread);
         }));
       }
-      await mailClient.mutateThreads(targetIds.flatMap((id) => [
+      const outcome = await mailClient.mutateThreads(targetIds.flatMap((id) => [
         ...(markRemovedRead ? [buildThreadMutation(id, { kind: "read", value: true })] : []),
         buildThreadMutation(id, template),
       ]));
+      createdBlockIds = outcome?.createdBlockIds ?? [];
+      if (outcome?.blocksChanged) window.dispatchEvent(new Event(SENDER_RULES_CHANGED));
     } catch {
       failedIds = targetIds;
     }
@@ -247,11 +252,18 @@ export function useThreadMutations({
           });
           if (removesFromView && succeededIds.length === 1) setSelectedId(succeededIds[0]);
         }
-        await mailClient.mutateThreads(succeededIds.flatMap((id) => [
+        const undoMutations = succeededIds.flatMap((id) => [
           buildThreadMutation(id, undoTemplate),
           ...(markRemovedRead && unreadBefore.get(id)
             ? [buildThreadMutation(id, { kind: "read", value: false })] : []),
-        ]));
+        ]);
+        if (template.kind === "spam" && template.value) {
+          // Senders blocked before this Mark Spam stay blocked.
+          const outcome = await mailClient.mutateThreads(undoMutations, { undoBlocks: createdBlockIds });
+          if (outcome?.blocksChanged) window.dispatchEvent(new Event(SENDER_RULES_CHANGED));
+        } else {
+          await mailClient.mutateThreads(undoMutations);
+        }
         const restore = snoozesBefore.filter((record) => succeededIds.includes(record.id));
         if (restore.length) await mailClient.restoreSnoozes(restore, [...previous.values()].filter((thread) => thread.archived).map((thread) => thread.id));
         if (triageEvents) {

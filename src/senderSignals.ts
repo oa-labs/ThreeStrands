@@ -54,12 +54,12 @@ export function matchingSplit(splits: SplitInbox[], accountId: string, email: st
   )) ?? null;
 }
 
-/** The account's mute rule for this sender: their exact address, or their exact domain. */
+/** The account's mute rule for this sender: their exact address, or their exact domain. Blocks don't count. */
 export function matchingRule(rules: SenderRule[], accountId: string, email: string): SenderRule | null {
   const address = email.toLocaleLowerCase();
   const domain = address.split("@")[1] ?? "";
   const account = accountId.toLocaleLowerCase();
-  return rules.find((rule) => rule.accountId.toLocaleLowerCase() === account && (
+  return rules.find((rule) => rule.action === "mute" && rule.accountId.toLocaleLowerCase() === account && (
     (rule.matchKind === "address" && rule.matchValue === address)
     || (rule.matchKind === "domain" && rule.matchValue === domain)
   )) ?? null;

@@ -56,6 +56,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
             &[],
             None,
             None,
+            None,
             Some(90),
             None,
         )
@@ -119,6 +120,7 @@ fn importing_retention_replaces_a_new_installations_default_including_forever() 
                 &[],
                 None,
                 None,
+                None,
                 choice,
                 None,
             )
@@ -164,6 +166,7 @@ fn import_sets_up_only_the_chosen_accounts_and_never_disconnects_one() {
             &[],
             &[],
             &[],
+            None,
             None,
             None,
             None,
@@ -306,6 +309,7 @@ fn a_late_settings_failure_rolls_back_every_imported_feature() {
                 &snippets,
                 &contacts,
                 Some(&groups),
+                None,
                 None,
                 retention,
                 None,

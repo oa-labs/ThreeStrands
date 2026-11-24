@@ -1,19 +1,39 @@
-//! Muted senders. A rule names an address, or everyone at a domain, in one
-//! account. While it exists, sync marks that sender's new mail read and
-//! archives it through the ordinary mutation queue, so the provider's own
-//! Inbox follows. Mail older than the rule is left alone; muting can archive
-//! what is already in the Inbox when the user asks.
+//! Muted and blocked senders. A rule names an address, or everyone at a
+//! domain, in one account. While a mute exists, sync marks that sender's new
+//! mail read and archives it; while a block exists, sync moves it to Spam.
+//! Both act through the ordinary mutation queue, so the provider follows.
+//! Mail older than the rule is left alone; muting can archive what is
+//! already in the Inbox when the user asks.
+//!
+//! Blocks come only from Mark Spam, one address at a time (a domain block
+//! could catch everyone at a shared mail provider). Spam senders come and go,
+//! so blocks are pruned: each rule records when its sender's mail last
+//! arrived, a block quiet for [`BLOCK_IDLE_DAYS`] is removed, and an account
+//! keeps at most [`MAX_BLOCKED_SENDERS`]. Mutes are never pruned.
 
 use super::{normalize_sender, Database, DatabaseError, DbResult};
 use crate::mime::NormalizedMessage;
 use crate::models::{MuteResult, SenderRule, ThreadMutation};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::{params, OptionalExtension, Transaction};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use threestrands_sync_protocol::EntityType;
 use uuid::Uuid;
 
 /// Most muted senders a settings export may carry.
 pub(crate) const MAX_SENDER_RULES: usize = 5_000;
+
+/// A block whose sender has sent nothing for longer than this many days is
+/// removed. The clock runs from the latest of when the block was made (or
+/// last refreshed by Mark Spam), when this device received it, and the date
+/// of the newest mail it matched, so a sender that keeps writing stays
+/// blocked and one that has gone away is forgotten.
+pub(crate) const BLOCK_IDLE_DAYS: i64 = 180;
+
+/// Most blocked senders one account keeps. Adding a block beyond this
+/// removes the ones idle longest, by the same clock as [`BLOCK_IDLE_DAYS`].
+/// Settings exports are held to it per account too.
+pub(crate) const MAX_BLOCKED_SENDERS: usize = 2_000;
 const MAX_ADDRESS_LEN: usize = 320;
 const MAX_DOMAIN_LEN: usize = 253;
 
@@ -81,6 +101,15 @@ fn arrived_since(sent_at: &str, created_at: &str) -> bool {
     }
 }
 
+/// A timestamp as stored in `last_matched_at`: UTC, whole seconds, so
+/// stored values compare correctly as text.
+pub(crate) fn utc_stamp(value: &str) -> Option<String> {
+    DateTime::parse_from_rfc3339(value).ok().map(|date| {
+        date.with_timezone(&Utc)
+            .to_rfc3339_opts(SecondsFormat::Secs, true)
+    })
+}
+
 fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SenderRule> {
     Ok(SenderRule {
         id: row.get(0)?,
@@ -89,10 +118,192 @@ fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SenderRule> {
         match_value: row.get(3)?,
         action: row.get(4)?,
         created_at: row.get(5)?,
+        last_matched_at: row.get(6)?,
     })
 }
 
-const RULE_COLUMNS: &str = "id, account_id, match_kind, match_value, action, created_at";
+const RULE_COLUMNS: &str =
+    "id, account_id, match_kind, match_value, action, created_at, last_matched_at";
+
+/// What Mark Spam, Not spam, Undo, or pruning did to blocked senders, so
+/// the caller can tell other devices and offer Undo.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SenderBlockChanges {
+    /// Blocks added or refreshed. Other devices receive these.
+    pub written: Vec<SenderRule>,
+    /// Those of them that did not exist before: what Undo removes.
+    pub created_ids: Vec<String>,
+    /// Blocks removed.
+    pub removed_ids: Vec<String>,
+}
+
+impl SenderBlockChanges {
+    pub fn is_empty(&self) -> bool {
+        self.written.is_empty() && self.removed_ids.is_empty()
+    }
+}
+
+/// The account and normalized address of the newest message in a
+/// conversation that the user did not send. `None` when the conversation is
+/// unknown or every message is the user's own.
+fn latest_inbound_sender(
+    transaction: &Transaction<'_>,
+    thread_id: &str,
+) -> DbResult<Option<(String, String)>> {
+    let account_id: Option<String> = transaction
+        .query_row(
+            "SELECT account_id FROM threads WHERE id = ?1",
+            [thread_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(account_id) = account_id else {
+        return Ok(None);
+    };
+    let mine = super::sending_addresses_for_account(transaction, &account_id);
+    let mut statement = transaction.prepare_cached(
+        "SELECT sender FROM messages WHERE thread_id = ?1 ORDER BY sent_at DESC, id DESC",
+    )?;
+    let senders = statement
+        .query_map([thread_id], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(senders
+        .iter()
+        .map(|sender| normalize_sender(sender).0)
+        .find(|email| !email.is_empty() && !mine.contains(email))
+        .map(|email| (account_id, email)))
+}
+
+/// Blocks the sender of a conversation's latest inbound message. An
+/// existing block for that address is refreshed rather than duplicated.
+/// Returns the rule and whether it is new.
+fn block_thread_sender(
+    transaction: &Transaction<'_>,
+    thread_id: &str,
+    now: &str,
+) -> DbResult<Option<(SenderRule, bool)>> {
+    let Some((account_id, email)) = latest_inbound_sender(transaction, thread_id)? else {
+        return Ok(None);
+    };
+    // An address the rules can't hold (a malformed From) is not blocked.
+    let Ok(address) = normalize_rule_match("address", &email) else {
+        return Ok(None);
+    };
+    let existing = transaction
+        .query_row(
+            &format!(
+                "SELECT {RULE_COLUMNS} FROM sender_rules
+                 WHERE lower(account_id) = lower(?1) AND action = 'block' AND match_value = ?2
+                 ORDER BY created_at, id LIMIT 1"
+            ),
+            params![account_id, address],
+            rule_from_row,
+        )
+        .optional()?;
+    if let Some(mut rule) = existing {
+        transaction.execute(
+            "UPDATE sender_rules SET created_at = ?2, updated_at = ?2 WHERE id = ?1",
+            params![rule.id, now],
+        )?;
+        rule.created_at = now.to_string();
+        return Ok(Some((rule, false)));
+    }
+    let rule = SenderRule {
+        id: Uuid::new_v4().to_string(),
+        account_id,
+        match_kind: "address".into(),
+        match_value: address,
+        action: "block".into(),
+        created_at: now.to_string(),
+        last_matched_at: None,
+    };
+    transaction.execute(
+        "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+        params![rule.id, rule.account_id, rule.match_kind, rule.match_value, rule.action, rule.created_at],
+    )?;
+    Ok(Some((rule, true)))
+}
+
+/// Not spam: removes every block on the sender of a conversation's latest
+/// inbound message. Returns the removed rules' ids.
+fn unblock_thread_sender(transaction: &Transaction<'_>, thread_id: &str) -> DbResult<Vec<String>> {
+    let Some((account_id, email)) = latest_inbound_sender(transaction, thread_id)? else {
+        return Ok(Vec::new());
+    };
+    let ids = {
+        let mut statement = transaction.prepare_cached(
+            "SELECT id FROM sender_rules
+             WHERE lower(account_id) = lower(?1) AND action = 'block' AND match_value = ?2",
+        )?;
+        let ids = statement
+            .query_map(params![account_id, email], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids
+    };
+    for id in &ids {
+        transaction.execute("DELETE FROM sender_rules WHERE id = ?1", [id])?;
+    }
+    Ok(ids)
+}
+
+/// Removes blocks idle longer than [`BLOCK_IDLE_DAYS`], then, in each
+/// account over [`MAX_BLOCKED_SENDERS`], the ones idle longest. Limited to
+/// one account when `account_id` is given. Returns the removed ids.
+fn prune_blocks(
+    transaction: &Transaction<'_>,
+    account_id: Option<&str>,
+    now: DateTime<Utc>,
+) -> DbResult<Vec<String>> {
+    let rows = {
+        let mut statement = transaction.prepare_cached(
+            "SELECT id, lower(account_id), created_at, last_matched_at, updated_at FROM sender_rules
+             WHERE action = 'block' AND (?1 IS NULL OR lower(account_id) = lower(?1))",
+        )?;
+        let rows = statement
+            .query_map([account_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    let cutoff = now - Duration::days(BLOCK_IDLE_DAYS);
+    let mut removed = Vec::new();
+    let mut kept: BTreeMap<String, Vec<(DateTime<Utc>, String)>> = BTreeMap::new();
+    for (id, account, created_at, last_matched_at, updated_at) in rows {
+        // The block's clock: its newest evidence that the sender is still
+        // around. A date that doesn't parse never ages a block out.
+        let active = [Some(created_at), last_matched_at, updated_at]
+            .into_iter()
+            .flatten()
+            .filter_map(|value| DateTime::parse_from_rfc3339(&value).ok())
+            .map(|date| date.with_timezone(&Utc))
+            .max()
+            .unwrap_or(now);
+        if active < cutoff {
+            removed.push(id);
+        } else {
+            kept.entry(account).or_default().push((active, id));
+        }
+    }
+    for mut blocks in kept.into_values() {
+        if blocks.len() > MAX_BLOCKED_SENDERS {
+            blocks.sort();
+            let excess = blocks.len() - MAX_BLOCKED_SENDERS;
+            removed.extend(blocks.into_iter().take(excess).map(|(_, id)| id));
+        }
+    }
+    for id in &removed {
+        transaction.execute("DELETE FROM sender_rules WHERE id = ?1", [id])?;
+    }
+    Ok(removed)
+}
 
 impl Database {
     pub fn list_sender_rules(&self) -> DbResult<Vec<SenderRule>> {
@@ -135,7 +346,8 @@ impl Database {
                 .query_row(
                     &format!(
                         "SELECT {RULE_COLUMNS} FROM sender_rules
-                         WHERE lower(account_id) = lower(?1) AND match_kind = ?2 AND match_value = ?3"
+                         WHERE lower(account_id) = lower(?1) AND match_kind = ?2 AND match_value = ?3
+                             AND action = 'mute'"
                     ),
                     params![account_id, match_kind, value],
                     rule_from_row,
@@ -151,6 +363,7 @@ impl Database {
                         match_value: value.clone(),
                         action: "mute".into(),
                         created_at: Utc::now().to_rfc3339(),
+                        last_matched_at: None,
                     };
                     transaction.execute(
                         "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at, updated_at)
@@ -196,30 +409,39 @@ impl Database {
     }
 
     /// Stores a rule another device made. An invalid one is refused rather
-    /// than stored half-checked.
+    /// than stored half-checked. `updated_at` records when it arrived, so a
+    /// block this device has only just learned of is not pruned as idle
+    /// before this device has seen any of the sender's mail. A block
+    /// refreshed by Mark Spam elsewhere arrives with its new `created_at`.
     pub(crate) fn upsert_synced_sender_rule(&self, rule: &SenderRule) -> DbResult<()> {
         let value = normalize_rule_match(&rule.match_kind, &rule.match_value)?;
-        if rule.action != "mute" || DateTime::parse_from_rfc3339(&rule.created_at).is_err() {
-            return Err(DatabaseError::invalid("Invalid synchronized mute rule"));
+        let known_action =
+            rule.action == "mute" || (rule.action == "block" && rule.match_kind == "address");
+        if !known_action || DateTime::parse_from_rfc3339(&rule.created_at).is_err() {
+            return Err(DatabaseError::invalid("Invalid synchronized sender rule"));
         }
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET account_id = excluded.account_id, match_kind = excluded.match_kind,
-                     match_value = excluded.match_value, action = excluded.action, updated_at = excluded.updated_at",
+                     match_value = excluded.match_value, action = excluded.action,
+                     created_at = excluded.created_at, updated_at = excluded.updated_at",
                 params![rule.id, rule.account_id, rule.match_kind, value, rule.action, rule.created_at, Utc::now().to_rfc3339()],
             )?;
             Ok(())
         })
     }
 
-    /// Runs at the end of ingesting one conversation. When its newest message
-    /// is from a muted sender, still unread, newer than the rule, and in the
-    /// Inbox, the conversation is marked read and archived, and the message
-    /// is logged so the rule acts on it once. Mail the user has read is left
-    /// alone, so a conversation moved back to the Inbox stays there on every
-    /// device: the first device to act also marks it read everywhere.
+    /// Runs at the end of ingesting one conversation. Every rule matching
+    /// the newest message's sender, for mail newer than the rule, records
+    /// the message's date as when it last matched. Then, when that message
+    /// is still unread, a block moves the conversation to Spam unless it is
+    /// already there or in Trash; otherwise a mute marks it read and
+    /// archives it if it is in the Inbox. A block outranks a mute. The
+    /// message is logged so a rule acts on it once. Mail the user has read
+    /// is left alone, so a conversation moved back stays there on every
+    /// device: the first device to act also changes it everywhere.
     pub(super) fn apply_sender_rules(
         transaction: &Transaction<'_>,
         account_id: &str,
@@ -228,33 +450,58 @@ impl Database {
         mine: &BTreeSet<String>,
     ) -> DbResult<()> {
         let (email, domain) = normalize_sender(&latest.from);
-        if email.is_empty()
-            || mine.contains(&email)
-            || !latest.labels.iter().any(|label| label == "UNREAD")
-        {
+        if email.is_empty() || mine.contains(&email) {
             return Ok(());
         }
-        let rule = {
+        let matching = {
             let mut statement = transaction.prepare_cached(&format!(
                 "SELECT {RULE_COLUMNS} FROM sender_rules WHERE lower(account_id) = lower(?1) ORDER BY created_at, id"
             ))?;
             let rules = statement
                 .query_map([account_id], rule_from_row)?
                 .collect::<Result<Vec<_>, _>>()?;
-            rules.into_iter().find(|rule| {
-                rule_matches(rule, &email, &domain) && arrived_since(&latest.date, &rule.created_at)
-            })
+            rules
+                .into_iter()
+                .filter(|rule| {
+                    rule_matches(rule, &email, &domain)
+                        && arrived_since(&latest.date, &rule.created_at)
+                })
+                .collect::<Vec<_>>()
         };
-        let Some(rule) = rule else { return Ok(()) };
-        let in_inbox: bool = transaction
+        if matching.is_empty() {
+            return Ok(());
+        }
+        if let Some(seen) = utc_stamp(&latest.date) {
+            for rule in &matching {
+                transaction.execute(
+                    "UPDATE sender_rules SET last_matched_at = ?2
+                     WHERE id = ?1 AND (last_matched_at IS NULL OR last_matched_at < ?2)",
+                    params![rule.id, seen],
+                )?;
+            }
+        }
+        if !latest.labels.iter().any(|label| label == "UNREAD") {
+            return Ok(());
+        }
+        let rule = matching
+            .iter()
+            .find(|rule| rule.action == "block")
+            .unwrap_or(&matching[0]);
+        let block = rule.action == "block";
+        let actionable: bool = transaction
             .query_row(
-                "SELECT archived = 0 AND trashed = 0 FROM threads WHERE id = ?1",
+                if block {
+                    "SELECT trashed = 0 AND NOT EXISTS(SELECT 1 FROM json_each(labels_json) WHERE value = 'SPAM')
+                     FROM threads WHERE id = ?1"
+                } else {
+                    "SELECT archived = 0 AND trashed = 0 FROM threads WHERE id = ?1"
+                },
                 [thread_id],
                 |row| row.get(0),
             )
             .optional()?
             .unwrap_or(false);
-        if !in_inbox {
+        if !actionable {
             return Ok(());
         }
         let first_time = transaction.execute(
@@ -263,6 +510,15 @@ impl Database {
         )? > 0;
         if !first_time {
             return Ok(());
+        }
+        if block {
+            return Self::apply_mutation(
+                transaction,
+                &ThreadMutation::Spam {
+                    thread_id: thread_id.to_string(),
+                    value: true,
+                },
+            );
         }
         Self::apply_mutation(
             transaction,
@@ -279,10 +535,109 @@ impl Database {
             },
         )
     }
+
+    /// Applies the user's conversation changes, as [`Self::mutate_threads`]
+    /// does, and keeps blocked senders in step with Spam in the same
+    /// transaction. Mark Spam blocks each conversation's latest inbound
+    /// sender (the user's own addresses never), and prunes that account's
+    /// blocks. Not spam unblocks that sender. When `undo_blocks` is given
+    /// the call is Undo of a Mark Spam: Not spam keeps the senders' blocks,
+    /// and only the listed blocks, the ones that Mark Spam created, go.
+    pub fn apply_user_mutations(
+        &self,
+        mutations: &[ThreadMutation],
+        undo_blocks: Option<&[String]>,
+    ) -> DbResult<SenderBlockChanges> {
+        let now = Utc::now();
+        let stamp = now.to_rfc3339();
+        self.with_transaction(|transaction| {
+            let mut changes = SenderBlockChanges::default();
+            let mut blocked_accounts = BTreeSet::new();
+            for mutation in mutations {
+                Self::cancel_snooze_for_mutation(transaction, mutation)?;
+                Self::apply_mutation(transaction, mutation)?;
+                let ThreadMutation::Spam { thread_id, value } = mutation else {
+                    continue;
+                };
+                if *value {
+                    if let Some((rule, created)) =
+                        block_thread_sender(transaction, thread_id, &stamp)?
+                    {
+                        if created {
+                            changes.created_ids.push(rule.id.clone());
+                        }
+                        blocked_accounts.insert(rule.account_id.clone());
+                        changes.written.retain(|written| written.id != rule.id);
+                        changes.written.push(rule);
+                    }
+                } else if undo_blocks.is_none() {
+                    for id in unblock_thread_sender(transaction, thread_id)? {
+                        if !changes.removed_ids.contains(&id) {
+                            changes.removed_ids.push(id);
+                        }
+                    }
+                }
+            }
+            for id in undo_blocks.unwrap_or_default() {
+                let removed = transaction.execute(
+                    "DELETE FROM sender_rules WHERE id = ?1 AND action = 'block'",
+                    [id],
+                )? > 0;
+                if removed && !changes.removed_ids.contains(id) {
+                    changes.removed_ids.push(id.clone());
+                }
+            }
+            for account in &blocked_accounts {
+                changes
+                    .removed_ids
+                    .extend(prune_blocks(transaction, Some(account), now)?);
+            }
+            let removed = changes.removed_ids.clone();
+            changes.written.retain(|rule| !removed.contains(&rule.id));
+            changes.created_ids.retain(|id| !removed.contains(id));
+            Ok(changes)
+        })
+    }
+
+    /// Tells other devices what [`Self::apply_user_mutations`] or pruning
+    /// changed. A no-op unless replicated sync is active.
+    pub fn record_sender_block_changes(&self, changes: &SenderBlockChanges) -> DbResult<()> {
+        for rule in &changes.written {
+            self.record_local_entity_write(
+                EntityType::SenderRule,
+                &rule.id,
+                rule.sync_payload(),
+                None,
+            )?;
+        }
+        for id in &changes.removed_ids {
+            self.record_local_entity_deletion(EntityType::SenderRule, id)?;
+        }
+        Ok(())
+    }
+
+    /// Periodic maintenance: removes blocks idle longer than
+    /// [`BLOCK_IDLE_DAYS`], and any over [`MAX_BLOCKED_SENDERS`] (blocks
+    /// arriving from other devices can push an account past it), and tells
+    /// other devices. Returns how many were removed.
+    pub fn prune_idle_blocked_senders(&self) -> DbResult<usize> {
+        self.prune_blocked_senders_at(Utc::now())
+    }
+
+    pub(crate) fn prune_blocked_senders_at(&self, now: DateTime<Utc>) -> DbResult<usize> {
+        let removed_ids =
+            self.with_transaction(|transaction| prune_blocks(transaction, None, now))?;
+        let count = removed_ids.len();
+        self.record_sender_block_changes(&SenderBlockChanges {
+            removed_ids,
+            ..SenderBlockChanges::default()
+        })?;
+        Ok(count)
+    }
 }
 
 impl Database {
-    /// Removes a mute rule another device deleted.
+    /// Removes a mute or block another device deleted.
     pub(crate) fn delete_synced_sender_rule(&self, id: &str) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute("DELETE FROM sender_rules WHERE id=?1", [id])?;
@@ -291,10 +646,37 @@ impl Database {
     }
 }
 
-/// Settings import: clears every mute rule before the file's are added.
-/// Removing a rule drops its action log.
-pub(super) fn delete_all_sender_rules(connection: &rusqlite::Connection) -> DbResult<()> {
-    connection.execute("DELETE FROM sender_rules", [])?;
+/// Settings import: clears every rule with this action (`mute` or `block`)
+/// before the file's are added. Removing a rule drops its action log.
+pub(super) fn delete_all_sender_rules(
+    connection: &rusqlite::Connection,
+    action: &str,
+) -> DbResult<()> {
+    connection.execute("DELETE FROM sender_rules WHERE action = ?1", [action])?;
+    Ok(())
+}
+
+/// Settings import: adds one blocked sender from the file, with its address
+/// already normalized. `updated_at` is the import time, so an imported block
+/// is not pruned before this device has had a chance to see its mail.
+pub(super) fn insert_imported_blocked_sender(
+    connection: &rusqlite::Connection,
+    block: &crate::transfer::TransferBlockedSender,
+    address: &str,
+    now: &str,
+) -> DbResult<()> {
+    connection.execute(
+        "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at, updated_at, last_matched_at)
+         VALUES (?1, ?2, 'address', ?3, 'block', ?4, ?5, ?6)",
+        params![
+            block.id,
+            block.account_id,
+            address,
+            block.created_at,
+            now,
+            block.last_matched_at.as_deref().and_then(utc_stamp),
+        ],
+    )?;
     Ok(())
 }
 

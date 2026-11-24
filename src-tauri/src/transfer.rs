@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::Path,
 };
@@ -734,6 +734,33 @@ impl From<crate::models::SenderRule> for TransferSenderRule {
     }
 }
 
+/// A sender Mark Spam blocked. Kept apart from `senderRules`, whose
+/// entries an earlier version checks to be mutes: carried there, a block
+/// would make that version refuse the whole file.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TransferBlockedSender {
+    pub id: String,
+    pub account_id: String,
+    pub address: String,
+    pub created_at: String,
+    /// When the exporting device last saw the sender's mail, shown in
+    /// Settings and used to prune blocks that went quiet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_matched_at: Option<String>,
+}
+impl From<crate::models::SenderRule> for TransferBlockedSender {
+    fn from(rule: crate::models::SenderRule) -> Self {
+        Self {
+            id: rule.id,
+            account_id: rule.account_id,
+            address: rule.match_value,
+            created_at: rule.created_at,
+            last_matched_at: rule.last_matched_at,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TransferPayload {
@@ -755,6 +782,12 @@ struct TransferPayload {
     /// this device's muted senders instead of clearing them.
     #[serde(default)]
     sender_rules: Option<Vec<TransferSenderRule>>,
+    /// Added with blocked senders. Earlier versions reject any field they
+    /// don't know, so an export leaves it out when nothing is blocked and
+    /// still imports there; one that carries blocks needs this version or
+    /// later. An export without it keeps this device's blocked senders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blocked_senders: Option<Vec<TransferBlockedSender>>,
     /// Earlier exports preserve the destination signature library and defaults.
     #[serde(default)]
     signatures: Option<crate::signatures::SignatureLibrary>,
@@ -991,6 +1024,37 @@ impl TransferPayload {
                 return Err("The transfer contains an invalid muted sender".to_string());
             }
         }
+        let blocks = self.blocked_senders.as_deref().unwrap_or_default();
+        let mut blocks_per_account: HashMap<String, usize> = HashMap::new();
+        let mut blocked_addresses = HashSet::new();
+        for block in blocks {
+            validate_required_text("blocked sender id", &block.id, 128)?;
+            if !rule_ids.insert(&block.id) {
+                return Err("The transfer contains a duplicate blocked sender".to_string());
+            }
+            let account = block.account_id.to_ascii_lowercase();
+            if !account_emails.contains(&account) {
+                return Err(
+                    "The transfer contains a blocked sender for an unknown account".to_string(),
+                );
+            }
+            let count = blocks_per_account.entry(account.clone()).or_default();
+            *count += 1;
+            if *count > crate::db::sender_rules::MAX_BLOCKED_SENDERS {
+                return Err("The transfer contains too many blocked senders".to_string());
+            }
+            let address = crate::db::sender_rules::normalize_rule_match("address", &block.address)
+                .map_err(|_| "The transfer contains an invalid blocked sender".to_string())?;
+            if !blocked_addresses.insert((account, address))
+                || chrono::DateTime::parse_from_rfc3339(&block.created_at).is_err()
+                || block
+                    .last_matched_at
+                    .as_deref()
+                    .is_some_and(|value| chrono::DateTime::parse_from_rfc3339(value).is_err())
+            {
+                return Err("The transfer contains an invalid blocked sender".to_string());
+            }
+        }
         let groups = self.contact_groups.as_deref().unwrap_or_default();
         if groups.len() > crate::db::contact_groups::MAX_CONTACT_GROUPS {
             return Err("The transfer contains too many contact groups".into());
@@ -1096,10 +1160,17 @@ fn build_export_payload(
         .into_iter()
         .map(TransferContactGroup::from)
         .collect();
-    let sender_rules = database
+    let (blocked_senders, sender_rules): (Vec<_>, Vec<_>) = database
         .list_sender_rules()?
         .into_iter()
+        .partition(|rule| rule.action == "block");
+    let sender_rules = sender_rules
+        .into_iter()
         .map(TransferSenderRule::from)
+        .collect();
+    let blocked_senders: Vec<TransferBlockedSender> = blocked_senders
+        .into_iter()
+        .map(TransferBlockedSender::from)
         .collect();
     Ok(TransferPayload {
         version: VERSION,
@@ -1112,6 +1183,7 @@ fn build_export_payload(
         retention_days: database.retention_days()?,
         contact_groups: Some(contact_groups),
         sender_rules: Some(sender_rules),
+        blocked_senders: (!blocked_senders.is_empty()).then_some(blocked_senders),
         signatures: Some(database.signature_library()?),
     })
 }
@@ -1264,6 +1336,7 @@ fn apply_import_choosing(
         &payload.contacts,
         payload.contact_groups.as_deref(),
         payload.sender_rules.as_deref(),
+        payload.blocked_senders.as_deref(),
         payload.retention_days,
         payload.signatures.as_ref(),
     )?;
@@ -1532,6 +1605,7 @@ mod tests {
             retention_days: Some(90),
             contact_groups: None,
             sender_rules: None,
+            blocked_senders: None,
         }
     }
 
@@ -2142,6 +2216,7 @@ mod tests {
     /// - `v5-0.121`: last export before muted senders (0.121.0).
     /// - `v5-0.170`: last export before writing profiles (0.171.0).
     /// - `v5-0.181`: last export before availability profiles (0.182.0).
+    /// - `v5-0.211`: last export before blocked senders (0.211.0).
     /// - `v5-current`: what this build exports. The only fixture with a
     ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
     ///
@@ -2184,6 +2259,8 @@ mod tests {
             include_bytes!("../tests/fixtures/settings-transfer/v5-0.170.dispatch-settings");
         pub(super) const V5_0_181: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v5-0.181.dispatch-settings");
+        pub(super) const V5_0_211: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v5-0.211.dispatch-settings");
         pub(super) const V5_0_132: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v5-0.132.dispatch-settings");
         pub(super) const V5_CURRENT: &[u8] =
@@ -2945,6 +3022,13 @@ mod tests {
                 match_value: "news@launch.example".to_string(),
                 action: "mute".to_string(),
                 created_at: "2026-09-27T08:00:00+00:00".to_string(),
+            }]),
+            blocked_senders: Some(vec![TransferBlockedSender {
+                id: "block-current".to_string(),
+                account_id: "current@example.com".to_string(),
+                address: "prize@lottery.example".to_string(),
+                created_at: "2026-09-28T08:00:00+00:00".to_string(),
+                last_matched_at: Some("2026-10-02T08:00:00Z".to_string()),
             }]),
         }
     }
@@ -4085,6 +4169,182 @@ mod tests {
         assert_eq!(database.list_sender_rules().unwrap(), vec![local]);
     }
 
+    /// Marks spam from `sender` in a conversation of `account`, which blocks
+    /// the sender, and returns the block.
+    fn block_by_marking_spam(
+        database: &Database,
+        account: &str,
+        sender: &str,
+    ) -> crate::models::SenderRule {
+        let mut message =
+            crate::db::test_support::message(sender, sender, "2026-10-01T09:00:00Z", "Win");
+        message.from = sender.to_string();
+        message.to = vec![account.to_string()];
+        message.labels = vec!["INBOX".to_string()];
+        database.upsert_thread(account, &[message]).unwrap();
+        let changes = database
+            .apply_user_mutations(
+                &[crate::models::ThreadMutation::Spam {
+                    thread_id: format!("{account}:{sender}"),
+                    value: true,
+                }],
+                None,
+            )
+            .unwrap();
+        changes.written[0].clone()
+    }
+
+    #[test]
+    fn frozen_v5_0_211_export_imports_without_blocked_senders_and_keeps_local_ones() {
+        assert_eq!(envelope_version(fixtures::V5_0_211), VERSION);
+        let database = Database::open_memory();
+        database.adopt_account("current@example.com").unwrap();
+        let local = block_by_marking_spam(&database, "current@example.com", "local@spam.example");
+        let payload = decrypt(fixtures::V5_0_211, fixtures::PASSWORD).unwrap();
+        assert!(payload.blocked_senders.is_none());
+        let result = apply_import(&database, payload).unwrap();
+        assert_eq!(
+            result.sender_rule_count, 1,
+            "its muted sender still imports"
+        );
+        let rules = database.list_sender_rules().unwrap();
+        let blocks = rules
+            .iter()
+            .filter(|rule| rule.action == "block")
+            .map(|rule| rule.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(blocks, vec![local.id]);
+        assert!(
+            rules
+                .iter()
+                .any(|rule| rule.action == "mute" && rule.match_value == "news@launch.example"),
+            "the file's mutes replace the local ones without touching blocks"
+        );
+    }
+
+    #[test]
+    fn blocked_senders_round_trip_beside_mutes_and_replace_the_local_ones() {
+        let source = Database::open_memory();
+        source.adopt_account("current@example.com").unwrap();
+        source
+            .mute_sender("current@example.com", "address", "news@launch.example", &[])
+            .unwrap();
+        let block = block_by_marking_spam(&source, "current@example.com", "prize@lottery.example");
+        let payload = build_export_payload(&source, current_fixture_payload().preferences).unwrap();
+        let serialized = serde_json::to_value(&payload).unwrap();
+        assert_eq!(serialized["senderRules"].as_array().unwrap().len(), 1);
+        assert_eq!(serialized["senderRules"][0]["action"], "mute");
+        assert_eq!(
+            serialized["blockedSenders"][0]["address"],
+            "prize@lottery.example"
+        );
+
+        let destination = Database::open_memory();
+        destination.adopt_account("current@example.com").unwrap();
+        block_by_marking_spam(&destination, "current@example.com", "stale@spam.example");
+        let decoded: TransferPayload = serde_json::from_value(serialized).unwrap();
+        apply_import(&destination, decoded).unwrap();
+        let imported = destination
+            .list_sender_rules()
+            .unwrap()
+            .into_iter()
+            .filter(|rule| rule.action == "block")
+            .collect::<Vec<_>>();
+        assert_eq!(imported.len(), 1);
+        assert_eq!(
+            (
+                imported[0].id.as_str(),
+                imported[0].match_value.as_str(),
+                imported[0].created_at.as_str()
+            ),
+            (
+                block.id.as_str(),
+                "prize@lottery.example",
+                block.created_at.as_str()
+            )
+        );
+
+        // The fixture's block keeps when its sender last wrote.
+        apply_import(&destination, current_fixture_payload()).unwrap();
+        let fixture = destination
+            .list_sender_rules()
+            .unwrap()
+            .into_iter()
+            .find(|rule| rule.action == "block")
+            .unwrap();
+        assert_eq!(
+            fixture.last_matched_at.as_deref(),
+            Some("2026-10-02T08:00:00Z")
+        );
+    }
+
+    #[test]
+    fn an_export_with_nothing_blocked_leaves_the_field_out_for_earlier_versions() {
+        let database = Database::open_memory();
+        database.adopt_account("current@example.com").unwrap();
+        database
+            .mute_sender("current@example.com", "address", "news@launch.example", &[])
+            .unwrap();
+        let payload =
+            build_export_payload(&database, current_fixture_payload().preferences).unwrap();
+        let serialized = serde_json::to_value(&payload).unwrap();
+        assert!(serialized.get("blockedSenders").is_none());
+        assert_eq!(serialized["senderRules"][0]["action"], "mute");
+    }
+
+    #[test]
+    fn transfer_rejects_invalid_blocked_senders() {
+        let mutations: [fn(&mut TransferPayload); 8] = [
+            |p| p.blocked_senders.as_mut().unwrap()[0].id = String::new(),
+            |p| p.blocked_senders.as_mut().unwrap()[0].id = "rule-current".into(),
+            |p| p.blocked_senders.as_mut().unwrap()[0].account_id = "stranger@example.net".into(),
+            |p| p.blocked_senders.as_mut().unwrap()[0].address = "lottery.example".into(),
+            |p| p.blocked_senders.as_mut().unwrap()[0].created_at = "yesterday".into(),
+            |p| p.blocked_senders.as_mut().unwrap()[0].last_matched_at = Some("soon".into()),
+            |p| {
+                let mut copy = p.blocked_senders.as_ref().unwrap()[0].clone();
+                copy.id = "block-copy".into();
+                copy.address = "PRIZE@lottery.example".into();
+                p.blocked_senders.as_mut().unwrap().push(copy);
+            },
+            |p| {
+                let template = p.blocked_senders.as_ref().unwrap()[0].clone();
+                let blocks = (0..=crate::db::sender_rules::MAX_BLOCKED_SENDERS)
+                    .map(|index| TransferBlockedSender {
+                        id: format!("block-{index}"),
+                        address: format!("sender{index}@spam.example"),
+                        ..template.clone()
+                    })
+                    .collect();
+                p.blocked_senders = Some(blocks);
+            },
+        ];
+        for (index, mutate) in mutations.iter().enumerate() {
+            let mut payload = current_fixture_payload();
+            mutate(&mut payload);
+            assert!(
+                payload.validate().is_err(),
+                "mutation {index} should be rejected"
+            );
+        }
+        // Exactly the per-account limit is fine.
+        let mut full = current_fixture_payload();
+        let template = full.blocked_senders.as_ref().unwrap()[0].clone();
+        full.blocked_senders = Some(
+            (0..crate::db::sender_rules::MAX_BLOCKED_SENDERS)
+                .map(|index| TransferBlockedSender {
+                    id: format!("block-{index}"),
+                    address: format!("sender{index}@spam.example"),
+                    ..template.clone()
+                })
+                .collect(),
+        );
+        full.validate().unwrap();
+        let mut unknown = serde_json::to_value(current_fixture_payload()).unwrap();
+        unknown["blockedSenders"][0]["action"] = serde_json::json!("mute");
+        assert!(serde_json::from_value::<TransferPayload>(unknown).is_err());
+    }
+
     #[test]
     fn importing_sender_rules_replaces_the_local_ones() {
         let database = Database::open_memory();
@@ -4097,11 +4357,18 @@ mod tests {
             .list_sender_rules()
             .unwrap()
             .into_iter()
-            .map(|rule| rule.match_value)
+            .map(|rule| (rule.action, rule.match_value))
             .collect::<Vec<_>>();
-        assert_eq!(values, vec!["news@launch.example"]);
+        assert_eq!(
+            values,
+            vec![
+                ("mute".to_string(), "news@launch.example".to_string()),
+                ("block".to_string(), "prize@lottery.example".to_string()),
+            ]
+        );
         let mut empty = current_fixture_payload();
         empty.sender_rules = Some(Vec::new());
+        empty.blocked_senders = Some(Vec::new());
         apply_import(&database, empty).unwrap();
         assert!(database.list_sender_rules().unwrap().is_empty());
     }

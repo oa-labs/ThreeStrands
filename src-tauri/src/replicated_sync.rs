@@ -269,11 +269,7 @@ impl Database {
             }
         }
         for rule in self.list_sender_rules()? {
-            if self.reconcile_one_entity(
-                EntityType::SenderRule,
-                &rule.id,
-                serde_json::to_value(&rule).map_err(display)?,
-            )? {
+            if self.reconcile_one_entity(EntityType::SenderRule, &rule.id, rule.sync_payload())? {
                 repaired += 1;
             }
         }

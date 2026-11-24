@@ -98,6 +98,7 @@ import type {
   MessageTrust,
   SenderFamiliarity,
   SenderRule,
+  ThreadMutationsResult,
   MuteResult,
   UnreadCounts,
   UnsubscribeResult,
@@ -238,8 +239,14 @@ export interface MailClient extends CorrespondenceClient {
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
   /** Fetches Gmail search hits missing from the local cache so a subsequent local search can include historical archived mail. Returns a report of what the server search could do, for the UI to word. */
   backfillSearchThreads(query: string, accountId?: string): Promise<SearchReport>;
-  mutateThread(mutation: ThreadMutation): Promise<void>;
-  mutateThreads(mutations: ThreadMutation[]): Promise<void>;
+  mutateThread(mutation: ThreadMutation): Promise<ThreadMutationsResult | void>;
+  /**
+   * Applies conversation changes. Mark Spam also blocks each conversation's
+   * sender and Not spam unblocks it. `undoBlocks` marks Undo of a Mark Spam:
+   * the senders stay blocked except the listed blocks, which that Mark Spam
+   * created.
+   */
+  mutateThreads(mutations: ThreadMutation[], options?: { undoBlocks: string[] }): Promise<ThreadMutationsResult | void>;
   recordTriageEvent(event: TriageEvent): Promise<void>;
   listTriageSenderStats(accountId: string, limit?: number): Promise<TriageSenderStats[]>;
   /** Ranked past correspondents for compose autocomplete, built from local mail history rather than an imported address book. */
@@ -635,7 +642,7 @@ const tauriClient: MailClient = {
   listSnoozeRecords: (accountId) => read("list_snooze_records", { accountId }),
   listSnoozedPage: (accountId, offset, limit) => read("list_snoozed_page", { accountId, offset, limit }),
   mutateThread: (mutation) => complete("mutate_thread", { mutation }),
-  mutateThreads: (mutations) => complete("mutate_threads", { mutations }),
+  mutateThreads: (mutations, options) => complete("mutate_threads", options ? { mutations, undoBlocks: options.undoBlocks } : { mutations }),
   recordTriageEvent: (event) => complete("record_triage_event", { event }),
   listTriageSenderStats: (accountId, limit) => read("list_triage_sender_stats", { accountId, limit }),
   listContactSuggestions: (accountId, query, limit, context) => read("list_contact_suggestions", { accountId, query, limit, ...(context ?? {}) }),

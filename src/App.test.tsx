@@ -778,7 +778,7 @@ describe("bulk sender decisions in the context panel", () => {
 
     const readsAfterSpam = listFiles.mock.calls.length;
     await act(async () => { screen.getByRole("button", { name: "Undo" }).click(); });
-    await waitFor(() => expect(mutateThreads).toHaveBeenLastCalledWith([{ kind: "spam", threadId: "not-loaded", value: false }]));
+    await waitFor(() => expect(mutateThreads).toHaveBeenLastCalledWith([{ kind: "spam", threadId: "not-loaded", value: false }], { undoBlocks: [] }));
     await waitFor(() => expect(listFiles.mock.calls.length).toBeGreaterThan(readsAfterSpam));
   });
 

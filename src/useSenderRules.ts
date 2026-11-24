@@ -4,7 +4,10 @@ import { mailClient } from "./data/client";
 import type { MuteResult, SenderRule } from "./domain";
 import { logBackgroundFailure } from "./errors";
 
-/** Owns the muted-sender list shared by the context panel and Settings. */
+/** Fired after a change made elsewhere, such as Mark Spam blocking a sender, so the list re-reads. */
+export const SENDER_RULES_CHANGED = "threestrands:sender-rules-changed";
+
+/** Owns the muted- and blocked-sender list shared by the context panel and Settings. */
 export function useSenderRules() {
   const [senderRules, setSenderRules] = useState<SenderRule[]>([]);
 
@@ -13,6 +16,12 @@ export function useSenderRules() {
       .then(setSenderRules)
       .catch(logBackgroundFailure("Muted sender listing"));
   }, []);
+
+  useEffect(() => {
+    const changed = () => void refresh();
+    window.addEventListener(SENDER_RULES_CHANGED, changed);
+    return () => window.removeEventListener(SENDER_RULES_CHANGED, changed);
+  }, [refresh]);
 
   useEffect(() => {
     void refresh();

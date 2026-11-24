@@ -158,7 +158,7 @@ pub(crate) fn mute_sender(
         &state,
         threestrands_sync_protocol::EntityType::SenderRule,
         &result.rule.id,
-        &result.rule,
+        &result.rule.sync_payload(),
         None,
     )?;
     Ok(result)

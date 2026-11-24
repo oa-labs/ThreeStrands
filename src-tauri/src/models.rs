@@ -873,8 +873,10 @@ pub struct ContactTimelineItem {
     pub labels: Vec<String>,
 }
 
-/// A muted sender in one account: sync marks their new mail read and archives
-/// it. `match_kind` is `address` (the exact address) or `domain` (anyone at it).
+/// A muted or blocked sender in one account. For `action` `mute`, sync marks
+/// their new mail read and archives it; for `block` (made by Mark Spam), sync
+/// moves it to Spam. `match_kind` is `address` (the exact address) or
+/// `domain` (anyone at it); a block is always an address.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SenderRule {
@@ -884,6 +886,34 @@ pub struct SenderRule {
     pub match_value: String,
     pub action: String,
     pub created_at: String,
+    /// When this device last saw new mail the rule matched (the message's
+    /// date, in UTC). Device-local bookkeeping: it is left out of the
+    /// synchronized record (see [`SenderRule::sync_payload`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_matched_at: Option<String>,
+}
+
+impl SenderRule {
+    /// The record other devices receive. `lastMatchedAt` stays on this
+    /// device: it would change with every message a blocked sender sends,
+    /// and each device sees the same mail for itself.
+    pub fn sync_payload(&self) -> serde_json::Value {
+        let mut value = serde_json::to_value(self).unwrap_or_default();
+        if let Some(object) = value.as_object_mut() {
+            object.remove("lastMatchedAt");
+        }
+        value
+    }
+}
+
+/// What a batch of conversation changes did to blocked senders.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadMutationsResult {
+    /// Blocks Mark Spam added (not ones it refreshed), for Undo to remove.
+    pub created_block_ids: Vec<String>,
+    /// Whether any block was added, refreshed, or removed.
+    pub blocks_changed: bool,
 }
 
 /// A new mute, and what it did to conversations already in the Inbox, so the

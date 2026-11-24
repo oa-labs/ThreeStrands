@@ -331,7 +331,11 @@ impl EntityType {
                 required_string(object, "accountId", 320)?;
                 enum_string(object, "matchKind", &["address", "domain"])?;
                 required_string(object, "matchValue", 320)?;
-                enum_string(object, "action", &["mute"])?;
+                enum_string(object, "action", &["mute", "block"])?;
+                // Mark Spam blocks one address, never a whole domain.
+                if object.get("action").and_then(Value::as_str) == Some("block") {
+                    enum_string(object, "matchKind", &["address"])?;
+                }
                 required_string(object, "createdAt", 64)?;
             }
             Self::SplitInbox => {
@@ -1234,7 +1238,7 @@ mod tests {
     }
 
     #[test]
-    fn sender_rule_contract_allows_only_address_or_domain_mutes() {
+    fn sender_rule_contract_allows_mutes_and_address_blocks() {
         let valid = json!({
             "id": "rule-1",
             "accountId": "you@example.com",
@@ -1244,6 +1248,15 @@ mod tests {
             "createdAt": "2026-10-14T00:00:00Z",
         });
         assert!(EntityType::SenderRule.validate_payload(&valid).is_ok());
+        let mut block = valid.clone();
+        block["action"] = json!("block");
+        assert!(EntityType::SenderRule.validate_payload(&block).is_ok());
+        block["matchKind"] = json!("domain");
+        block["matchValue"] = json!("launch.example");
+        assert!(
+            EntityType::SenderRule.validate_payload(&block).is_err(),
+            "a block names one address"
+        );
         for (field, value) in [
             ("matchKind", json!("pattern")),
             ("action", json!("delete")),

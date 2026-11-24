@@ -550,16 +550,28 @@ export type ContactActivity = {
 };
 
 /**
- * A muted sender in one account: sync marks their new mail read and archives
- * it. `address` matches one address exactly; `domain` matches anyone at it.
+ * A muted or blocked sender in one account. Sync marks a muted sender's new
+ * mail read and archives it, and moves a blocked sender's to Spam. `address`
+ * matches one address exactly; `domain` matches anyone at it. Mark Spam
+ * blocks, always one address.
  */
 export type SenderRule = {
   id: string;
   accountId: string;
   matchKind: "address" | "domain";
   matchValue: string;
-  action: "mute";
+  action: "mute" | "block";
   createdAt: string;
+  /** When this device last saw new mail from the sender, if ever since the rule. */
+  lastMatchedAt?: string;
+};
+
+/** What a batch of conversation changes did to blocked senders. */
+export type ThreadMutationsResult = {
+  /** Blocks Mark Spam added (not ones it refreshed), for Undo to remove. */
+  createdBlockIds: string[];
+  /** Whether any block was added, refreshed, or removed. */
+  blocksChanged: boolean;
 };
 
 /** A new mute, and the Inbox conversations it archived, for Undo. */
