@@ -1269,9 +1269,13 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         ...sent.flatMap((message) => message.recipients.map((recipient) => parseAddress(recipient).email.toLocaleLowerCase())),
         ...savedContactProfiles.flatMap((profile) => profile.addresses.map((item) => item.toLocaleLowerCase())),
       ]);
+      const earlier = all
+        .filter((message) => message.id !== messageId && parseAddress(message.sender).email.toLocaleLowerCase() === address && (!current || message.sentAt < current.sentAt))
+        .sort((left, right) => left.sentAt.localeCompare(right.sentAt));
       return {
         sentCount: toAddress.length,
         firstSentAt: toAddress[0]?.sentAt ?? null,
+        firstReceivedAt: earlier[0]?.sentAt ?? null,
         receivedBefore: all.some((message) => message.id !== messageId && parseAddress(message.sender).email.toLocaleLowerCase() === address
           && (!current || message.sentAt < current.sentAt)),
         contactName: contact?.displayName ?? null,

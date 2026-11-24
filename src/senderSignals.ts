@@ -18,6 +18,10 @@ export const TRUST_LINK_LIMIT = 500;
 /** Disguised subject words the Trust section names before counting the rest. */
 export const TRUST_SUBJECT_WORD_LIMIT = 3;
 
+/** A sender stays new until its first email arrived at least this many days before this one. */
+export const NEW_SENDER_DAYS = 14;
+const DAY_MS = 86_400_000;
+
 /** The newest message in a conversation that someone else sent. */
 export function latestInbound(detail: ThreadDetail, ownEmails: Set<string>): Message | null {
   for (const message of [...detail.messages].reverse()) {
@@ -271,6 +275,8 @@ export type TrustInput = {
   subject: string;
   attachments: readonly MessageAttachment[];
   bulk: boolean;
+  /** When this message was sent, to tell how long its sender has been writing. */
+  sentAt: string;
 };
 
 /** Exact web origins, including scheme and port; never retain document URLs or tokens. */
@@ -382,6 +388,55 @@ function subjectDisguises(subject: string): string | null {
   return extra > 0 ? `${described} (and ${extra} more)` : described;
 }
 
+/**
+ * Role and filler words that name a kind of sender, not an organization:
+ * "Support Team" or "No Reply" says nothing about who is writing, and would
+ * match unrelated addresses. These are generic role words, not brands.
+ */
+const NAME_STOPWORDS: ReadonlySet<string> = new Set([
+  "the", "and", "from", "via", "team", "support", "service", "services", "account", "accounts", "noreply", "reply",
+  "info", "news", "newsletter", "notification", "notifications", "alert", "alerts", "mail", "email", "security",
+  "billing", "customer", "inc", "llc", "ltd", "help",
+]);
+
+/** Text folded for comparison: NFKD, diacritics removed, lowercase. */
+function foldText(value: string): string {
+  return value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+/** Letters and digits only, after folding; hyphens and dots drop out. */
+function squash(value: string): string {
+  return foldText(value).replace(/[^a-z0-9]/g, "");
+}
+
+/** The labels of a host before its top-level domain, folded and squashed. */
+function hostLabels(host: string): string[] {
+  const clean = unicodeHost(asciiHost(host));
+  if (/^[\d.]+$/.test(clean) || clean.includes(":")) return [];
+  return clean.split(".").slice(0, -1).map(squash).filter(Boolean);
+}
+
+/**
+ * Whether a sender's display name has anything in common with the address it
+ * was sent from: the local part or a label of the From domain. Links are not
+ * evidence of relatedness. Null when the name carries no significant
+ * word to compare (non-Latin names, initials, only role words).
+ */
+function nameRelatedToSender(name: string, email: string, domain: string): boolean | null {
+  const words = (foldText(name).match(/[a-z0-9]+/g) ?? []).filter((word) => word.length >= 3 && !NAME_STOPWORDS.has(word));
+  if (words.length === 0) return null;
+  const targets = [squash(email.split("@")[0] ?? ""), ...hostLabels(domain)].filter(Boolean);
+  const whole = squash(name);
+  return targets.some((target) => words.some((word) => target.includes(word)) || (target.length >= 4 && whole.includes(target)));
+}
+
+/** Whole days between two timestamps, or null when either is unreadable. */
+function daysBetween(earlier: string, later: string): number | null {
+  const start = Date.parse(earlier);
+  const end = Date.parse(later);
+  return Number.isNaN(start) || Number.isNaN(end) ? null : (end - start) / DAY_MS;
+}
+
 function monthYear(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { month: "short", year: "numeric" });
@@ -419,7 +474,7 @@ function linkTrick(fact: LinkFact, known: KnownSites | null): Omit<TrustFinding,
  * Reply-To at another organization. The sender's history with the user
  * follows. The sites links open and tracking images sit in the details.
  */
-export function trustReport({ messageId, trust, links, familiarity, sender, subject, attachments, bulk }: TrustInput): TrustReport {
+export function trustReport({ messageId, trust, links, familiarity, sender, subject, attachments, sentAt }: TrustInput): TrustReport {
   const from = parseAddress(sender);
   const email = from.email.toLocaleLowerCase();
   const domain = email.split("@")[1] ?? "";
@@ -463,6 +518,22 @@ export function trustReport({ messageId, trust, links, familiarity, sender, subj
       addressComparison: { name: from.name, sending: email, previous: familiarity.nameMatches },
       strong: true,
       detail: `${from.name} · Sending address: ${email} · Previously seen: ${familiarity.nameMatches[0]}${others > 0 ? ` and ${others} more` : ""}`,
+    });
+  }
+  const newSender = Boolean(familiarity && !acquainted && !recognizedDelivery && !confirmedMessage && (
+    familiarity.firstReceivedAt === null || (daysBetween(familiarity.firstReceivedAt, sentAt) ?? Infinity) < NEW_SENDER_DAYS
+  ));
+  if (newSender && from.name && links.links.length > 0 && domain
+    && nameRelatedToSender(from.name, email, domain) === false) {
+    const others = links.sites.filter((site) => site !== fromSite);
+    const sites = others.slice(0, TRUST_MISMATCH_LIMIT).map(describeHost);
+    const more = others.length - sites.length;
+    warn({
+      key: "name-sender",
+      kind: "impersonation",
+      title: "Name doesn't match the sender",
+      detail: `“${from.name}” · sent from ${describeHost(domain)}${sites.length > 0 ? `, links open ${sites.join(", ")}${more > 0 ? ` (and ${more} more)` : ""}` : ""}`,
+      strong: true,
     });
   }
   const claimed = from.name ? claimedInName(from.name, email) : null;
@@ -546,8 +617,20 @@ export function trustReport({ messageId, trust, links, familiarity, sender, subj
       });
     } else if (familiarity.contactName) {
       history.push({ key: "history", tone: "verified", kind: "history", title: "Saved in your contacts", detail: `As ${familiarity.contactName}` });
-    } else if (!bulk && !familiarity.receivedBefore && email && !recognizedDelivery && !confirmedMessage) {
-      history.push({ key: "history", tone: "info", kind: "history", title: "First email from this address", detail: email });
+    } else if (newSender && email) {
+      if (!familiarity.receivedBefore) {
+        history.push({ key: "history", tone: "info", kind: "history", title: "First email from this address", detail: email });
+      } else {
+        const days = familiarity.firstReceivedAt ? daysBetween(familiarity.firstReceivedAt, sentAt) : null;
+        const ago = days === null ? null : Math.floor(days);
+        history.push({
+          key: "history",
+          tone: "info",
+          kind: "history",
+          title: "New sender",
+          detail: ago === null ? email : ago < 1 ? "First email today" : `First email ${ago === 1 ? "1 day" : `${ago} days`} ago`,
+        });
+      }
     }
   }
 

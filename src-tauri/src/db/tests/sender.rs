@@ -892,3 +892,39 @@ fn sender_familiarity_lists_known_addresses_that_share_the_display_name() {
         .name_matches
         .is_empty());
 }
+
+#[test]
+fn sender_familiarity_reports_the_earliest_earlier_message_from_the_exact_address() {
+    let database = database();
+    let sender = "Alerts <alerts@portal.example>";
+    for (id, date, from_header) in [
+        ("late", "2026-10-05T09:00:00Z", sender),
+        ("early", "2026-10-02T09:00:00Z", sender),
+        // A different address that contains the address must not count.
+        (
+            "lookalike",
+            "2026-10-01T09:00:00Z",
+            "x <xalerts@portal.example>",
+        ),
+        ("current", "2026-10-09T09:00:00Z", sender),
+        ("after", "2026-10-12T09:00:00Z", sender),
+    ] {
+        database
+            .upsert_thread(ACCOUNT, &[from(id, id, date, from_header, &["INBOX"])])
+            .unwrap();
+    }
+    let familiarity = database
+        .sender_familiarity("current", "alerts@portal.example", "")
+        .unwrap();
+    assert!(familiarity.received_before);
+    assert_eq!(
+        familiarity.first_received_at.as_deref(),
+        Some("2026-10-02T09:00:00Z")
+    );
+
+    let first = database
+        .sender_familiarity("early", "alerts@portal.example", "")
+        .unwrap();
+    assert!(!first.received_before);
+    assert_eq!(first.first_received_at, None);
+}

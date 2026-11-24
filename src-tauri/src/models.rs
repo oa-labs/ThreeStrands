@@ -927,6 +927,8 @@ pub struct SenderFamiliarity {
     pub first_sent_at: Option<String>,
     /// Whether mail from the address arrived before this message.
     pub received_before: bool,
+    /// When the earliest earlier message from the address was sent.
+    pub first_received_at: Option<String>,
     /// The saved contact's name, when the address belongs to a saved contact.
     pub contact_name: Option<String>,
     /// Other addresses the user knows under the same display name: saved

@@ -486,7 +486,7 @@ describe("MessageCard", () => {
     });
 
     const verified: MessageTrust = { fromDomain: "example.com", authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: ["example.com"], spfDomains: ["example.com"] }, replyTo: null };
-    const stranger: SenderFamiliarity = { sentCount: 0, firstSentAt: null, receivedBefore: true, contactName: null, nameMatches: [], knownDomains: ["partner.example"] };
+    const stranger: SenderFamiliarity = { sentCount: 0, firstSentAt: null, receivedBefore: true, firstReceivedAt: "2026-01-01T00:00:00Z", contactName: null, nameMatches: [], knownDomains: ["partner.example"] };
     const reads = (familiarity: SenderFamiliarity, trust: MessageTrust | null = verified) => ({
       trust: vi.spyOn(mailClient, "messageTrust").mockResolvedValue(trust),
       familiarity: vi.spyOn(mailClient, "senderFamiliarity").mockResolvedValue(familiarity),
@@ -572,6 +572,23 @@ describe("MessageCard", () => {
       const badge = await screen.findByRole("button", { name: /^Be careful: Subject uses look-alike letters/ });
       expect(badge).toHaveTextContent("Subject uses look-alike letters");
       expect(screen.queryByRole("note", { name: "Be careful" })).not.toBeInTheDocument();
+    });
+
+    it("shows a name that doesn't match the sender in the banner and trusts the exact delivery from it", async () => {
+      let patterns: SenderDeliveryPattern[] = [];
+      const unmatched = { ...message, sender: "SendGrid <noreply@botmd.io>", bodyHtml: '<p><a href="http://url1106.botmd.io/ls/click?upn=1">Confirm My Industry</a></p>' };
+      const trust = { ...verified, fromDomain: "botmd.io" };
+      const familiarity = { ...stranger, receivedBefore: false, firstReceivedAt: null };
+      reads({ ...familiarity, deliveryPatterns: [] }, trust).familiarity.mockImplementation(async () => ({ ...familiarity, deliveryPatterns: patterns }));
+      const confirm = vi.spyOn(mailClient, "confirmSenderDelivery").mockImplementation(async () => {
+        patterns = [{ id: "feedback", senderEmail: "noreply@botmd.io", replyTo: null, linkOrigins: ["http://url1106.botmd.io"], authenticated: true, sourceMessageId: message.id, confirmedAt: "2026-10-27T12:00:00Z" }];
+      });
+      render(<MessageCard message={unmatched} isExpanded {...stableProps} subject="Hello" />);
+      const banner = await screen.findByRole("note", { name: "Be careful" });
+      expect(banner).toHaveTextContent("Name doesn't match the sender");
+      fireEvent.click(within(banner).getByRole("button", { name: "Trust this address for this account" }));
+      expect(confirm).toHaveBeenCalledWith("m1", ["http://url1106.botmd.io"]);
+      await waitFor(() => expect(screen.queryByRole("note", { name: "Be careful" })).not.toBeInTheDocument());
     });
 
     it.each([

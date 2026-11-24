@@ -15,7 +15,7 @@ const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",
 const bob:ContactProfile={...jane,id:"contact:bob@example.com",displayName:"Bob Lee",addresses:["bob@example.com"]};
 const detail={thread:{id:"thread-1",accountId:"you@example.com",labels:["INBOX"]},messages:[{id:"1",sender:"Jane Doe <jane@example.com>",recipients:["You <you@example.com>","Bob Lee <bob@example.com>"],sentAt:"2026-09-24T00:00:00Z",bodyText:"",bodyHtml:""},{id:"2",sender:"Bob Lee <bob@example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-25T00:00:00Z",bodyText:"",bodyHtml:""}]} as unknown as ThreadDetail;
 const account={email:"you@example.com"} as Account;
-const unfamiliar:SenderFamiliarity={sentCount:0,firstSentAt:null,receivedBefore:true,contactName:null,nameMatches:[],knownDomains:[]};
+const unfamiliar:SenderFamiliarity={sentCount:0,firstSentAt:null,receivedBefore:true,firstReceivedAt:"2026-01-01T00:00:00Z",contactName:null,nameMatches:[],knownDomains:[]};
 const noActivity:ContactActivity={sentCount:0,receivedCount:0,threadCount:0,firstAt:null,lastSentAt:null,recentReceivedAt:[]};
 const timelineItem=(threadId:string,subject:string):ContactTimelineItem=>({threadId,accountId:"you@example.com",contactEmail:"bob@example.com",subject,snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]});
 
@@ -751,7 +751,7 @@ describe("ContextPanel",()=>{
     it("leaves the trust section out of personal mail from a stranger with nothing to warn about",async()=>{
       vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
       vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com"});
-      vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,receivedBefore:false});
+      vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,receivedBefore:false,firstReceivedAt:null});
       renderPanel();
       await personLoaded(bob.id);
       await waitFor(()=>expect(mailClient.senderFamiliarity).toHaveBeenCalled());

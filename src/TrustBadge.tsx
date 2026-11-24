@@ -135,7 +135,7 @@ export function TrustBadge({ messageId, report, onShowLink }: { messageId: strin
 export function TrustBanner({ messageId, report, onShowLink }: { messageId: string; report: TrustReport; onShowLink?(link: TrustLink): void }) {
   const strong = strongWarnings(report);
   if (strong.length === 0) return null;
-  const confirmable = report.feedback && strong.some((finding) => finding.key === "impersonation");
+  const confirmable = report.feedback && strong.some((finding) => finding.key === "impersonation" || finding.key === "name-sender");
   return (
     <div className="notice notice--warning message-trust-banner" role="note" aria-label="Be careful">
       <TriangleAlert size={ICON_SIZE.sm} aria-hidden="true" />

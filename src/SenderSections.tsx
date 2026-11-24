@@ -225,8 +225,8 @@ export function useTrustReport({ message, subject, bulk, prior, enabled = true }
   const links = useMemo(() => enabled ? analyzeLinks(message.bodyHtml, prior) : null, [enabled, message.bodyHtml, prior]);
   return useMemo(() => {
     if (!enabled || !links || reads?.key !== key) return null;
-    return trustReport({ messageId: message.id, trust: reads.trust, links, familiarity: reads.familiarity, sender: message.sender, subject, attachments: message.attachments ?? [], bulk });
-  }, [enabled, links, reads, key, message.id, message.sender, message.attachments, subject, bulk]);
+    return trustReport({ messageId: message.id, trust: reads.trust, links, familiarity: reads.familiarity, sender: message.sender, subject, attachments: message.attachments ?? [], bulk, sentAt: message.sentAt });
+  }, [enabled, links, reads, key, message.id, message.sender, message.sentAt, message.attachments, subject, bulk]);
 }
 
 /**

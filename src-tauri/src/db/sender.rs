@@ -145,12 +145,14 @@ impl Database {
                 let sent_at: Option<String> = connection.query_row("SELECT sent_at FROM messages WHERE id = ?1", [message_id], |row| row.get(0)).optional()?;
                 if let Some(sent_at) = sent_at {
                     let mut statement = connection.prepare(
-                        "SELECT sender FROM messages WHERE id <> ?1 AND sent_at < ?2 AND instr(lower(sender), ?3) > 0",
+                        "SELECT sender, sent_at FROM messages WHERE id <> ?1 AND sent_at < ?2 AND instr(lower(sender), ?3) > 0
+                         ORDER BY sent_at ASC",
                     )?;
                     let mut rows = statement.query(params![message_id, sent_at, email])?;
                     while let Some(row) = rows.next()? {
                         if normalize_sender(&row.get::<_, String>(0)?).0 == email {
                             familiarity.received_before = true;
+                            familiarity.first_received_at = Some(row.get(1)?);
                             break;
                         }
                     }

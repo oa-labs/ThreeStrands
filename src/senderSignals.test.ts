@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Message, MessageAttachment, MessageTrust, SenderDeliveryPattern, SenderFamiliarity, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { buildThreadTextIndex } from "./quotedHistory";
-import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustHeadline, trustReport, TRUST_ATTACHMENT_LIMIT, TRUST_MISMATCH_LIMIT, TRUST_SUBJECT_WORD_LIMIT, type LinkAnalysis, type TrustInput } from "./senderSignals";
+import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustHeadline, trustReport, NEW_SENDER_DAYS, TRUST_ATTACHMENT_LIMIT, TRUST_MISMATCH_LIMIT, TRUST_SUBJECT_WORD_LIMIT, type LinkAnalysis, type TrustInput } from "./senderSignals";
 
 const own = new Set(["you@example.com"]);
 const redirectWrappers = [
@@ -229,7 +229,7 @@ describe("trust findings", () => {
   const verdicts = (spf: string | null, dkim: string | null, dmarc: string | null, dkimDomains: string[] = [], spfDomains: string[] = []) =>
     ({ spf, dkim, dmarc, dkimDomains, spfDomains });
   const report = (value: MessageTrust | null, links = noLinks) =>
-    trustReport({ trust: value, links, familiarity: null, sender: "Launch <news@launch.example>", subject: "Launch news", attachments: [], bulk: true });
+    trustReport({ trust: value, links, familiarity: null, sender: "Launch <news@launch.example>", subject: "Launch news", attachments: [], bulk: true, sentAt: "2026-11-24T12:00:00Z" });
   const first = (value: MessageTrust | null) => {
     const { rows, details } = report(value);
     return [...rows, ...details].find((finding) => finding.kind === "authentication");
@@ -306,7 +306,7 @@ describe("trust findings", () => {
 
 describe("trust signals from the user's own history", () => {
   const verified: MessageTrust = { fromDomain: "partner.example", authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: ["partner.example"], spfDomains: ["partner.example"] }, replyTo: null };
-  const stranger: SenderFamiliarity = { sentCount: 0, firstSentAt: null, receivedBefore: false, contactName: null, nameMatches: [], knownDomains: ["partner.example", "studio.example", "example.co.uk"] };
+  const stranger: SenderFamiliarity = { sentCount: 0, firstSentAt: null, receivedBefore: false, firstReceivedAt: null, contactName: null, nameMatches: [], knownDomains: ["partner.example", "studio.example", "example.co.uk"] };
   const input = (overrides: Partial<TrustInput> = {}): TrustInput => ({
     trust: verified,
     links: analyzeLinks(""),
@@ -315,6 +315,7 @@ describe("trust signals from the user's own history", () => {
     subject: "Studio schedule",
     attachments: [],
     bulk: false,
+    sentAt: "2026-11-24T12:00:00Z",
     ...overrides,
   });
   const titles = (value: TrustInput) => trustReport(value).rows.map((finding) => finding.title);
@@ -455,12 +456,106 @@ describe("trust signals from the user's own history", () => {
     expect(report.details[0]).toMatchObject({ tone: "verified", title: "Sender verified" });
   });
 
-  it("notes a first email from personal senders only, and says nothing when the history cannot be read", () => {
+  it("notes a first email from any new sender, bulk included, and says nothing when the history cannot be read", () => {
     expect(trustReport(input()).rows).toMatchObject([{ tone: "info", title: "First email from this address", detail: "jane@partner.example" }]);
     expect(trustReport(input()).summary).toBeNull();
-    expect(titles(input({ familiarity: { ...stranger, receivedBefore: true } }))).toEqual(["Sender verified"]);
-    expect(titles(input({ bulk: true }))).toEqual(["Sender verified"]);
+    expect(titles(input({ familiarity: { ...stranger, receivedBefore: true, firstReceivedAt: "2026-01-01T00:00:00Z" } }))).toEqual(["Sender verified"]);
     expect(titles(input({ familiarity: null }))).toEqual(["Sender verified"]);
+  });
+
+  it("notes a new sender bulk mail too, with how long ago its first email arrived", () => {
+    expect(trustReport(input({ bulk: true })).rows).toMatchObject([{ tone: "info", title: "First email from this address" }]);
+    const recent = trustReport(input({ familiarity: { ...stranger, receivedBefore: true, firstReceivedAt: "2026-11-21T12:00:00Z" } }));
+    expect(recent.rows).toMatchObject([{ tone: "info", kind: "history", title: "New sender", detail: "First email 3 days ago" }]);
+    expect(recent.summary).toBeNull();
+  });
+
+  it("stays new for 13.9 days, and not at exactly 14 or after", () => {
+    const at = (days: number) => new Date(Date.parse("2026-11-24T12:00:00Z") - days * 86_400_000).toISOString();
+    const state = (days: number) => titles(input({ bulk: true, familiarity: { ...stranger, receivedBefore: true, firstReceivedAt: at(days) } }));
+    expect(NEW_SENDER_DAYS).toBe(14);
+    expect(state(13.9)).toContain("New sender");
+    expect(state(14)).not.toContain("New sender");
+    expect(state(30)).not.toContain("New sender");
+  });
+
+  describe("a name that doesn't match the address it was sent from", () => {
+    const link = (url: string) => analyzeLinks(`<p><a href="${url}">Open</a></p>`);
+    const unsafe = (overrides: Partial<TrustInput>) => input({ trust: { ...verified, fromDomain: "botmd.io" }, ...overrides });
+    const nameLinks = (value: TrustInput) => trustReport(value).rows.filter((finding) => finding.key === "name-sender");
+    const fixtureA = (overrides: Partial<TrustInput> = {}) => unsafe({
+      sender: "SendGrid <noreply@botmd.io>",
+      bulk: true,
+      links: link("http://url1106.botmd.io/ls/click?upn=abc"),
+      ...overrides,
+    });
+
+    it("flags a bulk first-time sender whose name is nowhere in its address", () => {
+      const report = trustReport(fixtureA());
+      expect(report.summary).toBe("careful");
+      expect(nameLinks(fixtureA())).toMatchObject([{
+        tone: "warning", kind: "impersonation", strong: true, title: "Name doesn't match the sender",
+        detail: "“SendGrid” · sent from botmd.io",
+      }]);
+      expect(report.rows.some((finding) => finding.kind === "history" && finding.title === "First email from this address")).toBe(true);
+    });
+
+    it("flags a non-bulk first-time message with a multi-word name and a third-party link", () => {
+      const value = input({
+        sender: "\"Northwind Payroll Team\" <alerts@secure-docs-portal.net>",
+        trust: { ...verified, fromDomain: "secure-docs-portal.net" },
+        links: link("https://files.sharehost.example/d/1"),
+      });
+      expect(nameLinks(value)).toMatchObject([{ detail: "“Northwind Payroll Team” · sent from secure-docs-portal.net, links open sharehost.example" }]);
+      expect(trustReport(value).summary).toBe("careful");
+    });
+
+    it("caps the sites listed", () => {
+      const html = ["a", "b", "c", "d", "e"].map((name) => `<a href="https://${name}.example/">x</a>`).join("");
+      expect(nameLinks(fixtureA({ links: analyzeLinks(html) }))[0].detail).toBe("“SendGrid” · sent from botmd.io, links open a.example, b.example, c.example (and 2 more)");
+    });
+
+    it("stays quiet when the name relates to the address or any link host", () => {
+      const quiet = (sender: string, url: string, fromDomain: string) =>
+        nameLinks(input({ sender, trust: { ...verified, fromDomain }, links: link(url) }));
+      expect(quiet("GitHub <noreply@github.com>", "https://github.com/notifications", "github.com")).toEqual([]);
+      expect(quiet("\"Jane Doe\" <jane@acme.example>", "https://acme.example/inbox", "acme.example")).toEqual([]);
+      expect(quiet("\"Morning Digest\" <crew@digest.example>", "https://click.digest.example/x", "digest.example")).toEqual([]);
+      // The name matches the From domain even when every link goes elsewhere.
+      expect(quiet("Acme <news@acme.example>", "https://click.tracker.example/c/1", "acme.example")).toEqual([]);
+      // Hyphens and spacing don't hide a match: the whole name contains a domain label.
+      expect(quiet("Acme Corp <hello@acmecorp.example>", "https://other.example/", "acmecorp.example")).toEqual([]);
+      // A diacritic folds away.
+      expect(quiet("Café Münch <hi@cafemunch.example>", "https://cafemunch.example/", "cafemunch.example")).toEqual([]);
+    });
+
+    it("warns when the name matches only a link host, not the address", () => {
+      const platformer = input({ sender: "Platformer <news@substack.example>", trust: { ...verified, fromDomain: "substack.example" }, links: link("https://platformer.example/p/1") });
+      expect(nameLinks(platformer)).toMatchObject([{ detail: "“Platformer” · sent from substack.example, links open platformer.example" }]);
+      const local = input({ sender: "Platformer <platformer@substack.example>", trust: { ...verified, fromDomain: "substack.example" }, links: link("https://platformer.example/p/1") });
+      expect(nameLinks(local)).toEqual([]);
+      const footer = fixtureA({ links: analyzeLinks('<a href="http://url1106.botmd.io/ls/click?upn=abc">Confirm</a><a href="https://sendgrid.example/unsub">Unsubscribe</a>') });
+      expect(nameLinks(footer)).toMatchObject([{ detail: "“SendGrid” · sent from botmd.io, links open sendgrid.example" }]);
+    });
+
+    it("stays quiet for an established, acquainted, or confirmed sender", () => {
+      expect(nameLinks(fixtureA({ familiarity: { ...stranger, receivedBefore: true, firstReceivedAt: "2026-11-10T12:00:00Z" } }))).toEqual([]);
+      expect(nameLinks(fixtureA({ familiarity: { ...stranger, sentCount: 2 } }))).toEqual([]);
+      expect(nameLinks(fixtureA({ familiarity: { ...stranger, contactName: "SendGrid" } }))).toEqual([]);
+      expect(nameLinks(fixtureA({ familiarity: null }))).toEqual([]);
+      const pattern: SenderDeliveryPattern = { ...confirmedPattern, senderEmail: "noreply@botmd.io", replyTo: null, linkOrigins: ["http://url1106.botmd.io"] };
+      const confirmed = fixtureA({ messageId: "m1", familiarity: { ...stranger, deliveryPatterns: [pattern] } });
+      expect(nameLinks(confirmed)).toEqual([]);
+      expect(nameLinks({ ...confirmed, messageId: pattern.sourceMessageId })).toEqual([]);
+    });
+
+    it("skips names with nothing to compare and messages with no links", () => {
+      expect(nameLinks(fixtureA({ sender: "山田太郎 <noreply@botmd.io>" }))).toEqual([]);
+      expect(nameLinks(fixtureA({ sender: "J R <noreply@botmd.io>" }))).toEqual([]);
+      expect(nameLinks(fixtureA({ sender: "Support Team <noreply@botmd.io>" }))).toEqual([]);
+      expect(nameLinks(fixtureA({ sender: "<noreply@botmd.io>" }))).toEqual([]);
+      expect(nameLinks(fixtureA({ links: analyzeLinks("<p>No links</p>") }))).toEqual([]);
+    });
   });
 
   it("warns when a display name the user knows arrives from a new address", () => {

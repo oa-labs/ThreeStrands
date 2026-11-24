@@ -621,6 +621,8 @@ export type SenderFamiliarity = {
   firstSentAt: string | null;
   /** Whether mail from the address arrived before this message. */
   receivedBefore: boolean;
+  /** When the earliest earlier message from the exact address was sent; null when none arrived before. */
+  firstReceivedAt: string | null;
   /** The saved contact's name, when the address belongs to a saved contact. */
   contactName: string | null;
   /** Other addresses the user knows under the same display name. */
