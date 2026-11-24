@@ -361,11 +361,57 @@ describe("trust signals from the user's own history", () => {
       deliveryInput({ sender: "other@signing.example" }),
       deliveryInput({ sender: "requests@new-service.example", trust: { ...verified, fromDomain: "new-service.example", replyTo: confirmedPattern.replyTo } }),
       ...["http://secure.signing.example", "https://secure.signing.example:8443", "https://other.signing.example", "https://unfamiliar.example"].map((origin) => deliveryInput({ links: analyzeLinks(`<a href="${origin}/sign">Review</a><a href="https://help.signing.example/faq">Help</a>`) })),
-      deliveryInput({ links: analyzeLinks('<a href="https://secure.signing.example/sign">Review</a>') }),
     ]) {
       expect(warnings(value).map((finding) => finding.title)).toContain("Different delivery pattern");
       expect(trustReport(value).rows.some((finding) => finding.key === "delivery-confirmed")).toBe(false);
     }
+  });
+
+  describe("trust that grows with each confirmation", () => {
+    const delivery = (urls: string[], patterns: SenderDeliveryPattern[], overrides: Partial<TrustInput> = {}) => deliveryInput({
+      links: analyzeLinks(urls.map((url) => `<a href="${url}">Open</a>`).join("")),
+      familiarity: { ...stranger, knownDomains: [], deliveryPatterns: patterns },
+      ...overrides,
+    });
+    const changed = (value: TrustInput) => warnings(value).find((finding) => finding.key === "delivery-changed");
+    const first: SenderDeliveryPattern = { ...confirmedPattern, id: "a", linkOrigins: ["https://a.example"] };
+    const second: SenderDeliveryPattern = { ...confirmedPattern, id: "b", linkOrigins: ["https://b.example", "https://c.example"] };
+
+    it("covers a subset of one confirmation and the union of several, without an exact match", () => {
+      const subset = delivery(["https://secure.signing.example/x"], [confirmedPattern]);
+      expect(changed(subset)).toBeUndefined();
+      expect(trustReport(subset).feedback).toMatchObject({ covered: true, matching: null });
+      expect(trustReport(subset).rows[0].key).toBe("delivery-confirmed");
+
+      const union = delivery(["https://a.example/1", "https://c.example/2"], [first, second]);
+      expect(changed(union)).toBeUndefined();
+      expect(trustReport(union).feedback?.covered).toBe(true);
+      expect(trustReport(delivery([], [first])).feedback?.covered).toBe(true);
+    });
+
+    it("names the one new site, and warns again once a confirmation is forgotten", () => {
+      expect(changed(delivery(["https://a.example", "https://new.example"], [first, second]))?.detail)
+        .toBe("Links to 1 site you haven't confirmed for ana@customer.example: new.example");
+      expect(changed(delivery(["https://a.example", "https://c.example"], [first]))?.detail).toContain("c.example");
+    });
+
+    it("lets only authenticated confirmations contribute to the union", () => {
+      const value = delivery(["https://a.example", "https://b.example"], [first, { ...second, authenticated: false }]);
+      expect(changed(value)?.detail).toContain("b.example");
+      expect(trustReport(value).feedback?.covered).toBe(false);
+    });
+
+    it("shows non-default schemes and ports, and caps the list with a count of the rest", () => {
+      const detail = changed(delivery(["http://a.example", "https://a.example:8443", "https://one.example", "https://two.example", "https://three.example"], [first]))?.detail;
+      expect(detail).toBe("Links to 5 sites you haven't confirmed for ana@customer.example: http://a.example, a.example:8443, one.example (and 2 more)");
+    });
+
+    it("says the address differs when no confirmation matches this sender address or Reply-To", () => {
+      expect(changed(delivery(["https://a.example"], [first], { sender: "other@signing.example" }))?.detail)
+        .toBe("Sent from other@signing.example with replies to ana@customer.example, not an address you've confirmed for ana@customer.example");
+      expect(changed(delivery(["https://a.example"], [first], { trust: { ...verified, fromDomain: "signing.example", replyTo: null } }))?.detail)
+        .toBe("Sent from requests@signing.example, not an address you've confirmed for requests@signing.example");
+    });
   });
 
   it("does not recognize another person at the same organization or an unconfirmed service", () => {

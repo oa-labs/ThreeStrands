@@ -257,6 +257,8 @@ export type TrustReport = {
     linkOrigins: string[];
     patterns: SenderDeliveryPattern[];
     matching: SenderDeliveryPattern | null;
+    /** Every link origin here was confirmed in an authenticated request with this sender address and Reply-To. */
+    covered: boolean;
     /** Keep the section available for mediated mail and remembered relationships. */
     relevant: boolean;
   };
@@ -345,6 +347,17 @@ function describeHost(host: string): string {
   const shown = unicodeHost(asciiHost(host));
   const ascii = asciiHost(host);
   return shown === ascii ? shown : `${shown} (${ascii})`;
+}
+
+/** An origin as people read it: the host, with the scheme or port when they are not plain https. */
+function describeOrigin(origin: string): string {
+  try {
+    const url = new URL(origin);
+    const host = describeHost(url.hostname);
+    return `${url.protocol === "https:" ? "" : `${url.protocol}//`}${host}${url.port ? `:${url.port}` : ""}`;
+  } catch {
+    return origin;
+  }
 }
 
 function registrableName(site: string): string {
@@ -498,13 +511,26 @@ export function trustReport({ messageId, trust, links, familiarity, sender, subj
     && pattern.replyTo === (trust?.replyTo?.toLocaleLowerCase() ?? null)
     && pattern.linkOrigins.length === linkOrigins.length
     && pattern.linkOrigins.every((origin, index) => origin === linkOrigins[index])) ?? null;
+  // Trust grows: each confirmation adds its origins for the same sender
+  // address and Reply-To. Forgetting a confirmation shrinks the set again.
+  const sameIdentity = patterns?.filter((pattern) => pattern.authenticated
+    && pattern.senderEmail === email
+    && pattern.replyTo === (trust?.replyTo?.toLocaleLowerCase() ?? null)) ?? [];
+  const confirmedOrigins = new Set(sameIdentity.flatMap((pattern) => pattern.linkOrigins));
+  const newOrigins = linkOrigins.filter((origin) => !confirmedOrigins.has(origin));
+  const covered = sameIdentity.length > 0 && newOrigins.length === 0;
   const feedback = trust && patterns && email.includes("@") && domain === trust.fromDomain && links.links.length < TRUST_LINK_LIMIT
-    ? { requester, replyTo: trust.replyTo, linkOrigins, patterns, matching, relevant: Boolean(trust.replyTo || patterns.length) }
+    ? { requester, replyTo: trust.replyTo, linkOrigins, patterns, matching, covered, relevant: Boolean(trust.replyTo || patterns.length) }
     : undefined;
-  const recognizedDelivery = Boolean(feedback && matching?.authenticated && trust?.authentication?.dmarc === "pass");
+  const recognizedDelivery = Boolean(feedback && covered && trust?.authentication?.dmarc === "pass");
   const confirmedMessage = Boolean(feedback && messageId && matching?.sourceMessageId === messageId);
-  if (feedback && !matching && patterns?.some((pattern) => pattern.authenticated)) {
-    warn({ key: "delivery-changed", kind: "delivery", title: "Different delivery pattern", detail: `You've confirmed other requests for ${requester}; this sending address or its link destinations are different` });
+  if (feedback && !covered && patterns?.some((pattern) => pattern.authenticated)) {
+    const listed = newOrigins.slice(0, TRUST_MISMATCH_LIMIT).map(describeOrigin);
+    const more = newOrigins.length - listed.length;
+    const detail = sameIdentity.length === 0
+      ? `Sent from ${email}${trust?.replyTo ? ` with replies to ${trust.replyTo}` : ""}, not an address you've confirmed for ${requester}`
+      : `Links to ${newOrigins.length} ${newOrigins.length === 1 ? "site" : "sites"} you haven't confirmed for ${requester}: ${listed.join(", ")}${more > 0 ? ` (and ${more} more)` : ""}`;
+    warn({ key: "delivery-changed", kind: "delivery", title: "Different delivery pattern", detail });
   }
 
   // Confirming this exact delivery answers the borrowed-name question, but
