@@ -741,6 +741,12 @@ describe("MeetingScheduler", () => {
       renderScheduler(week);
       await screen.findByRole("group", { name: "Open times" });
       expect(find.mock.calls[0][0]).not.toHaveProperty("inPerson");
+      cleanup();
+      find.mockClear();
+      // A plan that names no meeting type is not in person either.
+      renderScheduler({ ...week, meetingType: null });
+      await screen.findByRole("group", { name: "Open times" });
+      expect(find.mock.calls[0][0]).not.toHaveProperty("inPerson");
     });
 
     it("keeps the empty state when only days after the range are open", async () => {

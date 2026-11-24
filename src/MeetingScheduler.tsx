@@ -4,7 +4,7 @@ import { CalendarCheck, CalendarPlus, ChevronLeft, ChevronRight, CircleCheck, Ci
 import { type ReactNode, useContext, useCallback, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { useStableValue } from "./useStableValue";
 import { availabilityKey, readAvailability, rememberAvailabilityView, sameAvailability, storeAvailability, type AvailabilityView } from "./availabilityCache";
-import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, CoworkerCalendars, ProposedTimeCheck, ScheduleEvent } from "./domain";
+import { IN_PERSON_MEETING_TYPES, type AvailabilityCandidate, type AvailabilityPreferences, type AvailabilityResult, type CoworkerCalendars, type ProposedTimeCheck, type ScheduleEvent } from "./domain";
 import { findCalendarMatch, findDayMatch, SAME_EVENT_START_TOLERANCE_MINUTES, type CalendarMatch, type EventIdentity } from "./eventMatching";
 import { mailClient } from "./data/client";
 import { breakWarning, cachedEventsInRange, eventsInRange, eventsOnDay } from "./SlotDayPreview";
@@ -241,7 +241,7 @@ export function MeetingScheduler({
 
   // The search whose times are shown.
   const rangeKey = useRef<string | null>(null);
-  const inPerson = plan.meetingType !== undefined;
+  const inPerson = plan.meetingType ? IN_PERSON_MEETING_TYPES[plan.meetingType] : false;
   const run = useCallback(async (target: ScheduleQuery, isCurrent: () => boolean) => {
     // Shows a range's times, keeping the user's choices among them where they still apply.
     const showRange = (result: AvailabilityResult, view: AvailabilityView | null, keepCurrent: boolean) => {

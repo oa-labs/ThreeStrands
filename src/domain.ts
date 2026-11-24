@@ -217,6 +217,12 @@ export type AvailabilityPreferences = {
 /** Meeting purposes that can select explicitly configured hours. */
 export const MEETING_TYPES = ["breakfast", "lunch", "dinner", "coffee"] as const;
 export type MeetingType = typeof MEETING_TYPES[number];
+/**
+ * Whether each meeting type means meeting somewhere in person, so a time for it
+ * keeps the profile's drive time buffer free on both sides. Every type states it,
+ * so a new, possibly virtual type is never padded for travel by default.
+ */
+export const IN_PERSON_MEETING_TYPES: Readonly<Record<MeetingType, boolean>> = { breakfast: true, lunch: true, dinner: true, coffee: true };
 
 /** A named set of hours, such as Work or Church, that shares the timezone and slot increment. */
 export type AvailabilityProfile = {
