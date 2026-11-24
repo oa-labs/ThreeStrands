@@ -185,7 +185,9 @@ impl Database {
             connection.execute(
                 "INSERT INTO sender_delivery_patterns(id, account_id, requester, sender_email, reply_to, link_origins, authenticated, source_message_id, confirmed_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                 ON CONFLICT(account_id, requester, sender_email, link_origins) DO NOTHING",
+                 ON CONFLICT(account_id, requester, sender_email, link_origins) DO UPDATE SET
+                    confirmed_at=excluded.confirmed_at, source_message_id=excluded.source_message_id, authenticated=excluded.authenticated
+                 WHERE excluded.authenticated OR NOT sender_delivery_patterns.authenticated",
                 params![id, identity.account, identity.requester(), identity.sender, identity.reply_to, origins, identity.authenticated, message_id, Utc::now().to_rfc3339()],
             )?;
             if enabled {

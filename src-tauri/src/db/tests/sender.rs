@@ -417,6 +417,49 @@ fn sender_feedback_without_authentication_never_teaches_a_reusable_pattern() {
 }
 
 #[test]
+fn reconfirming_refreshes_authenticated_trust_but_never_extends_or_downgrades_it() {
+    let database = database();
+    let (sender, requester) = ("requests@service.example", "ana@partner.example");
+    for (id, dmarc) in [("first", "pass"), ("again", "pass"), ("spoofed", "fail")] {
+        database
+            .upsert_thread(ACCOUNT, &[delivery_message(id, sender, requester, dmarc)])
+            .unwrap();
+    }
+    let stored = |database: &crate::db::Database| {
+        let patterns = database
+            .sender_familiarity("first", sender, "")
+            .unwrap()
+            .delivery_patterns;
+        assert_eq!(patterns.len(), 1);
+        patterns.into_iter().next().unwrap()
+    };
+    let origins = ["https://service.example".to_string()];
+    database.confirm_sender_delivery("first", &origins).unwrap();
+    database
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE sender_delivery_patterns SET confirmed_at='2020-01-01T00:00:00+00:00'",
+            [],
+        )
+        .unwrap();
+
+    database
+        .confirm_sender_delivery("spoofed", &origins)
+        .unwrap();
+    let unchanged = stored(&database);
+    assert!(unchanged.authenticated);
+    assert_eq!(unchanged.source_message_id, "first");
+    assert!(unchanged.confirmed_at.starts_with("2020-01-01"));
+
+    database.confirm_sender_delivery("again", &origins).unwrap();
+    let renewed = stored(&database);
+    assert!(renewed.authenticated);
+    assert_eq!(renewed.source_message_id, "again");
+    assert!(!renewed.confirmed_at.starts_with("2020-01-01"));
+}
+
+#[test]
 fn sender_feedback_requires_cached_headers_and_never_stores_document_urls_or_tokens() {
     let database = database();
     assert!(database.confirm_sender_delivery("missing", &[]).is_err());

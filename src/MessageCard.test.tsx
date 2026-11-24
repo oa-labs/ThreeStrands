@@ -505,7 +505,7 @@ describe("MessageCard", () => {
       // The side panel leaves the warning to the reader until it is confirmed.
       expect(screen.queryByRole("region", { name: "Sender checks" })).not.toBeInTheDocument();
       const card = screen.getByRole("group", { name: "Sender details: Be careful" });
-      expect(card).toHaveTextContent("Trust will apply to this sending address and its current link destinations for this mail account. Includes replies to person@customer.example.");
+      expect(card).toHaveTextContent("Trust will apply to this sending address and its current link destinations for this mail account for a year. Includes replies to person@customer.example.");
       fireEvent.click(within(card).getByRole("button", { name: "Trust this address for this account" }));
       expect(await screen.findByRole("region", { name: "Sender checks" })).toHaveTextContent("You confirmed this email is legitimate");
       await waitFor(() => expect(screen.queryByRole("button", { name: /^Be careful:/ })).not.toBeInTheDocument());
@@ -612,7 +612,7 @@ describe("MessageCard", () => {
       expect(seen.nextElementSibling).toHaveTextContent(previous.join(", "));
       const trustButton = within(banner).getByRole("button", { name: "Trust this sender" });
       expect(trustButton).toHaveClass("btn");
-      expect(trustButton).toHaveAccessibleDescription("Trust will apply to this sending address and its current link destinations for this mail account. Authentication failures and suspicious links still warn.");
+      expect(trustButton).toHaveAccessibleDescription("Trust will apply to this sending address and its current link destinations for this mail account for a year. Authentication failures and suspicious links still warn.");
       fireEvent.click(trustButton);
       expect(confirm).toHaveBeenCalledWith("m1", []);
       await waitFor(() => expect(screen.queryByRole("note", { name: "Be careful" })).not.toBeInTheDocument());

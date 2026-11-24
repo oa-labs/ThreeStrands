@@ -254,7 +254,7 @@ export function SenderFeedback({ messageId, feedback, compact = false, inSpam, o
   };
   const matchingId = feedback.matching?.id;
   const scopeId = useId();
-  const scope = `Trust ${matchingId ? "applies" : "will apply"} to this sending address and its current link destinations for this mail account.${feedback.replyTo ? ` Includes replies to ${feedback.replyTo}.` : ""} Authentication failures and suspicious links still warn.`;
+  const scope = `Trust ${matchingId || feedback.covered ? "applies" : "will apply"} to this sending address and its current link destinations for this mail account for a year.${feedback.replyTo ? ` Includes replies to ${feedback.replyTo}.` : ""} Authentication failures and suspicious links still warn.`;
   const trustLabel = busy ? "Saving…" : compact ? "Trust this sender" : "Trust this address for this account";
   const trustButton = <button type="button" className={`btn btn-sm${compact ? "" : " btn-wrap"}`} aria-describedby={scopeId} disabled={busy} onClick={() => { void save(); }}>{trustLabel}</button>;
   return (
@@ -264,6 +264,7 @@ export function SenderFeedback({ messageId, feedback, compact = false, inSpam, o
         <SpamActionButton inSpam={inSpam} onMarkSpam={onMarkSpam} onNotSpam={onNotSpam} />
         {matchingId
           ? <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(matchingId); }}>Forget confirmation</button>
+          : feedback.covered ? null
           : compact ? <HoverTooltip label="Trust this sender" hint={scope} hintId={scopeId} placement="bottom">{trustButton}</HoverTooltip> : trustButton}
       </div>
       {!compact && !matchingId && feedback.patterns.length > 0 ? (
