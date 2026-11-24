@@ -586,7 +586,7 @@ describe("MessageCard", () => {
       render(<MessageCard message={unmatched} isExpanded {...stableProps} subject="Hello" />);
       const banner = await screen.findByRole("note", { name: "Be careful" });
       expect(banner).toHaveTextContent("Name doesn't match the sender");
-      fireEvent.click(within(banner).getByRole("button", { name: "Trust this address for this account" }));
+      fireEvent.click(within(banner).getByRole("button", { name: "Trust this sender" }));
       expect(confirm).toHaveBeenCalledWith("m1", ["http://url1106.botmd.io"]);
       await waitFor(() => expect(screen.queryByRole("note", { name: "Be careful" })).not.toBeInTheDocument());
     });
@@ -610,22 +610,42 @@ describe("MessageCard", () => {
       const seen = within(banner).getByText("Previously seen");
       expect(sending.nextElementSibling).toHaveTextContent("hello@example.com");
       expect(seen.nextElementSibling).toHaveTextContent(previous.join(", "));
-      const trustButton = within(banner).getByRole("button", { name: "Trust this address for this account" });
+      const trustButton = within(banner).getByRole("button", { name: "Trust this sender" });
       expect(trustButton).toHaveClass("btn");
       expect(trustButton).toHaveAccessibleDescription("Trust will apply to this sending address and its current link destinations for this mail account. Authentication failures and suspicious links still warn.");
-      const scope = document.getElementById(trustButton.getAttribute("aria-describedby")!);
-      expect(scope!.compareDocumentPosition(trustButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       fireEvent.click(trustButton);
       expect(confirm).toHaveBeenCalledWith("m1", []);
       await waitFor(() => expect(screen.queryByRole("note", { name: "Be careful" })).not.toBeInTheDocument());
       expect(screen.queryByRole("button", { name: /^Be careful:/ })).not.toBeInTheDocument();
     });
 
+    it("offers Mark Spam first in the banner's actions, for the conversation shown, whether or not the warning can be confirmed", async () => {
+      const onMarkSpam = vi.fn();
+      reads({ ...stranger, deliveryPatterns: [] });
+      const { unmount } = render(<MessageCard message={{ ...message, threadId: "t9", bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="Invoice" onMarkSpam={onMarkSpam} />);
+      let banner = await screen.findByRole("note", { name: "Be careful" });
+      fireEvent.click(within(banner).getByRole("button", { name: "Mark Spam" }));
+      expect(onMarkSpam).toHaveBeenCalledExactlyOnceWith("t9");
+      unmount();
+      reads({ ...stranger, nameMatches: ["ada@engines.example"], deliveryPatterns: [] });
+      render(<MessageCard message={{ ...message, sender: "Ada Lovelace <hello@example.com>" }} isExpanded {...stableProps} subject="Hello" onMarkSpam={onMarkSpam} />);
+      banner = await screen.findByRole("note", { name: "Be careful" });
+      const buttons = within(banner).getAllByRole("button").map((button) => button.textContent);
+      expect(buttons).toEqual(["Mark Spam", "Trust this sender"]);
+    });
+
+    it("shows no Mark Spam in the banner without a handler", async () => {
+      reads({ ...stranger, deliveryPatterns: [] });
+      render(<MessageCard message={{ ...message, bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="Invoice" />);
+      const banner = await screen.findByRole("note", { name: "Be careful" });
+      expect(within(banner).queryByRole("button", { name: "Mark Spam" })).not.toBeInTheDocument();
+    });
+
     it("offers no confirmation in the banner for warnings it would not clear", async () => {
       reads({ ...stranger, deliveryPatterns: [] });
       render(<MessageCard message={{ ...message, bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="Invoice" />);
       const banner = await screen.findByRole("note", { name: "Be careful" });
-      expect(within(banner).queryByRole("button", { name: "Trust this address for this account" })).not.toBeInTheDocument();
+      expect(within(banner).queryByRole("button", { name: "Trust this sender" })).not.toBeInTheDocument();
     });
 
     it("keeps the details open on click until clicked again or Escape, and shows a link from them", async () => {

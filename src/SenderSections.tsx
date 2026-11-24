@@ -1,10 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useEffectEvent, useId, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Eye, Globe, Link2, Mail, Paperclip, Reply, Shield, ShieldCheck, TriangleAlert, UserCheck, UserRound } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, Globe, Link2, Mail, Paperclip, Reply, Shield, ShieldAlert, ShieldCheck, TriangleAlert, UserCheck, UserRound } from "lucide-react";
 import type { Message, MessageTrust, SenderFamiliarity, SenderHistory, SenderRule, SplitInbox } from "./domain";
 import { parseAddress } from "./emailAddress";
 import { mailClient } from "./data/client";
 import { ContextRow, ContextSection } from "./ContextSections";
+import { HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
 import type { PriorThreadText } from "./quotedHistory";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -234,7 +235,7 @@ export function useTrustReport({ message, subject, bulk, prior, enabled = true }
  * storage. `compact` leaves out the list of remembered senders, for the
  * warning above the message body.
  */
-export function SenderFeedback({ messageId, feedback, compact = false }: { messageId: string; feedback: NonNullable<TrustReport["feedback"]>; compact?: boolean }) {
+export function SenderFeedback({ messageId, feedback, compact = false, onMarkSpam }: { messageId: string; feedback: NonNullable<TrustReport["feedback"]>; compact?: boolean; onMarkSpam?(): void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const save = async (forgetId?: string) => {
@@ -253,16 +254,17 @@ export function SenderFeedback({ messageId, feedback, compact = false }: { messa
   };
   const matchingId = feedback.matching?.id;
   const scopeId = useId();
+  const scope = `Trust ${matchingId ? "applies" : "will apply"} to this sending address and its current link destinations for this mail account.${feedback.replyTo ? ` Includes replies to ${feedback.replyTo}.` : ""} Authentication failures and suspicious links still warn.`;
+  const trustLabel = busy ? "Saving…" : compact ? "Trust this sender" : "Trust this address for this account";
+  const trustButton = <button type="button" className={`btn btn-sm${compact ? "" : " btn-wrap"}`} aria-describedby={scopeId} disabled={busy} onClick={() => { void save(); }}>{trustLabel}</button>;
   return (
     <div className="context-sender-feedback">
-      <p id={scopeId} className="context-sender-feedback-scope">
-        Trust {matchingId ? "applies" : "will apply"} to this sending address and its current link destinations for this mail account.
-        {feedback.replyTo ? <> Includes replies to {feedback.replyTo}.</> : null} Authentication failures and suspicious links still warn.
-      </p>
+      {compact ? null : <p id={scopeId} className="context-sender-feedback-scope">{scope}</p>}
       <div className="context-sender-actions">
+        {onMarkSpam ? <MarkSpamButton onClick={onMarkSpam} /> : null}
         {matchingId
           ? <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(matchingId); }}>Forget confirmation</button>
-          : <button type="button" className="btn btn-sm btn-wrap" aria-describedby={scopeId} disabled={busy} onClick={() => { void save(); }}>{busy ? "Saving…" : "Trust this address for this account"}</button>}
+          : compact ? <HoverTooltip label="Trust this sender" hint={scope} hintId={scopeId} placement="bottom">{trustButton}</HoverTooltip> : trustButton}
       </div>
       {!compact && !matchingId && feedback.patterns.length > 0 ? (
         <details>
@@ -310,4 +312,9 @@ export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
       closing={<><TrustDetails key={message.id} details={report.details} />{report.feedback ? <SenderFeedback key={message.id} messageId={message.id} feedback={report.feedback} /> : null}</>}
     />
   );
+}
+
+/** Marks the conversation the warning sits in as spam, through the same command as the toolbar. */
+export function MarkSpamButton({ onClick }: { onClick(): void }) {
+  return <button type="button" className="btn btn-sm btn-danger" onClick={onClick}><ShieldAlert size={ICON_SIZE.sm} aria-hidden="true" />Mark Spam</button>;
 }

@@ -918,6 +918,17 @@ export function App() {
     undo: undoResult,
   }), [executeCommand, mutateIds]);
 
+  // The banner's Mark Spam acts on the conversation it sits in: the toolbar's command when that is
+  // the selected one, otherwise the same mutation for the shown thread.
+  const markShownThreadSpam = useCallback((threadId: string) => {
+    if (selected?.id === threadId) return executeById("thread.spam");
+    return executeCommand({
+      id: "reader.markSpam", title: "Mark Spam", keys: [], group: "Triage", enabled: () => true,
+      run: () => mutateIds([threadId], { kind: "spam", value: true }, { includeUnloaded: true }),
+      undo: undoResult,
+    });
+  }, [executeById, executeCommand, mutateIds, selected?.id]);
+
   /**
    * Mutes a sender, archiving the chosen Inbox conversations in the same
    * step. Undo removes the rule and puts those conversations back as they
@@ -1596,6 +1607,7 @@ export function App() {
                     subject={visibleDetail.thread.subject}
                     bulk={visibleBulk}
                     onShowLink={showTrustLink}
+                    onMarkSpam={markShownThreadSpam}
                   />
                 );
             }) : null}

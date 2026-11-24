@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { ShieldCheck, TriangleAlert } from "lucide-react";
 import { placeHoverCard } from "./AddressWithCard";
 import { ICON_SIZE } from "./iconSizes";
-import { SenderFeedback, TrustDetails, trustRow } from "./SenderSections";
+import { MarkSpamButton, SenderFeedback, TrustDetails, trustRow } from "./SenderSections";
 import { trustHeadline, type TrustLink, type TrustReport } from "./senderSignals";
 
 /** How long the details stay open after the pointer leaves, so it can cross into them. */
@@ -132,7 +132,7 @@ export function TrustBadge({ messageId, report, onShowLink }: { messageId: strin
  * here with the same account-scoped trust action as the badge details,
  * which quiets that warning for this exact delivery.
  */
-export function TrustBanner({ messageId, report, onShowLink }: { messageId: string; report: TrustReport; onShowLink?(link: TrustLink): void }) {
+export function TrustBanner({ messageId, report, onShowLink, onMarkSpam }: { messageId: string; report: TrustReport; onShowLink?(link: TrustLink): void; onMarkSpam?(): void }) {
   const strong = strongWarnings(report);
   if (strong.length === 0) return null;
   const confirmable = report.feedback && strong.some((finding) => finding.key === "impersonation" || finding.key === "name-sender");
@@ -158,7 +158,9 @@ export function TrustBanner({ messageId, report, onShowLink }: { messageId: stri
             );
           })}
         </ul>
-        {confirmable && report.feedback ? <SenderFeedback key={messageId} messageId={messageId} feedback={report.feedback} compact /> : null}
+        {confirmable && report.feedback
+          ? <SenderFeedback key={messageId} messageId={messageId} feedback={report.feedback} compact onMarkSpam={onMarkSpam} />
+          : onMarkSpam ? <div className="message-trust-banner-actions"><MarkSpamButton onClick={onMarkSpam} /></div> : null}
       </div>
     </div>
   );

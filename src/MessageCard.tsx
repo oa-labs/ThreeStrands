@@ -68,6 +68,8 @@ type MessageCardProps = {
   bulk?: boolean;
   /** Shows a link a trust warning is about. */
   onShowLink?: (messageId: string, link: TrustLink) => void;
+  /** Marks this message's conversation as spam, offered on the sender warning above the body. */
+  onMarkSpam?: (threadId: string) => void;
 };
 
 /**
@@ -103,6 +105,7 @@ export const MessageCard = memo(function MessageCard({
   subject,
   bulk = false,
   onShowLink,
+  onMarkSpam,
 }: MessageCardProps) {
   const parsedSender = parseAddress(message.sender);
   const senderAccount = accounts.find(
@@ -118,6 +121,7 @@ export const MessageCard = memo(function MessageCard({
     enabled: isExpanded && subject !== undefined && !senderAccount && !queuedItem,
   });
   const showTrustLink = useMemo(() => onShowLink ? (link: TrustLink) => onShowLink(message.id, link) : undefined, [onShowLink, message.id]);
+  const markSpam = useMemo(() => onMarkSpam ? () => onMarkSpam(message.threadId) : undefined, [onMarkSpam, message.threadId]);
   const senderDisplayName = formatDisplayName(senderName);
   const downloadableAttachments = useMemo(() => {
     const referencedContentIds = referencedImageContentIds(message.bodyHtml);
@@ -302,7 +306,7 @@ export const MessageCard = memo(function MessageCard({
         </button>
       </header>
       <div id={cardBodyId} className="message-card-body">
-        {trust ? <TrustBanner messageId={message.id} report={trust} onShowLink={showTrustLink} /> : null}
+        {trust ? <TrustBanner messageId={message.id} report={trust} onShowLink={showTrustLink} onMarkSpam={markSpam} /> : null}
         <SafeMessage
           html={message.bodyHtml}
           text={message.bodyText}
