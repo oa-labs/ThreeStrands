@@ -61,10 +61,12 @@ export async function eventsInRange(start: string, end: string): Promise<Schedul
  * such as "Back-to-back" with no break at all, so it shows before the day
  * is opened. Null when every break is at least the tight limit.
  */
-export function breakWarning(events: readonly ScheduleEvent[], slot: Slot, context: SlotContext = {}): string | null {
+export function breakWarning(events: readonly ScheduleEvent[], slot: Slot, context: SlotContext = {}, driveTimeBufferMinutes = 0): string | null {
   const breaks = slotNeighborhood(events, slot, false, context).rows.flatMap((row) => row.kind === "break" ? [row.minutes] : []);
   if (breaks.some((minutes) => minutes <= 0)) return "Back-to-back";
-  if (breaks.some((minutes) => minutes < TIGHT_BREAK_MINUTES)) return "Short break";
+  // An in-person meeting needs its drive time buffer, when that is longer than a tight break.
+  const shortest = Math.max(TIGHT_BREAK_MINUTES, driveTimeBufferMinutes);
+  if (breaks.some((minutes) => minutes < shortest)) return "Short break";
   return null;
 }
 

@@ -728,6 +728,21 @@ describe("MeetingScheduler", () => {
       expect(shown.filter((text) => text.includes("Oct 1"))).toHaveLength(2);
     });
 
+    it("asks for drive time around every event only for an in-person meeting type", async () => {
+      pinClock();
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+        candidates: [slotAt(30, 9)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
+      });
+      renderScheduler({ ...week, meetingType: "lunch" });
+      await screen.findByRole("group", { name: "Open times" });
+      expect(find).toHaveBeenLastCalledWith(expect.objectContaining({ inPerson: true }));
+      cleanup();
+      find.mockClear();
+      renderScheduler(week);
+      await screen.findByRole("group", { name: "Open times" });
+      expect(find.mock.calls[0][0]).not.toHaveProperty("inPerson");
+    });
+
     it("keeps the empty state when only days after the range are open", async () => {
       pinClock();
       vi.spyOn(mailClient, "findAvailability").mockResolvedValue({

@@ -427,7 +427,7 @@ export interface MailClient extends CorrespondenceClient {
   findAvailability(request: FindAvailabilityRequest): Promise<AvailabilityResult>;
   meetingAvailability(request: MeetingAvailabilityRequest): Promise<MeetingAvailabilityResult>;
   checkProposedTimes(request: CheckProposedTimesRequest): Promise<CheckedProposedTime[]>;
-  checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number }): Promise<ProposedTimeCheck>;
+  checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number; inPerson?: boolean }): Promise<ProposedTimeCheck>;
   /** Lists labels for the primary account, or for the specified account when provided. */
   listLabels(accountId?: string): Promise<Label[]>;
   /** Mutates the primary account's labels, or the specified account's when provided. */

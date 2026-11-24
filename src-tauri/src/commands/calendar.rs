@@ -1156,6 +1156,21 @@ mod meeting_availability_tests {
     }
 
     #[test]
+    fn in_person_defaults_to_false_in_availability_requests() {
+        assert!(!find_request().in_person);
+        let check: CheckProposedTimeRequest = serde_json::from_value(serde_json::json!({
+            "start": "2099-09-21T09:00:00Z", "end": "2099-09-21T09:30:00Z", "timeZone": "UTC",
+        }))
+        .unwrap();
+        assert!(!check.in_person);
+        let check: CheckProposedTimeRequest = serde_json::from_value(serde_json::json!({
+            "start": "2099-09-21T09:00:00Z", "end": "2099-09-21T09:30:00Z", "timeZone": "UTC", "inPerson": true,
+        }))
+        .unwrap();
+        assert!(check.in_person);
+    }
+
+    #[test]
     fn coworker_requests_default_to_none_and_validate_before_querying() {
         let mut value = find_request();
         assert!(coworker_emails(&value).unwrap().is_empty());
@@ -1509,7 +1524,7 @@ pub(crate) async fn find_availability(
         unchecked,
         errors,
     } = coverage;
-    let candidates = availability::find_candidates(
+    let candidates = availability::find_candidates_for(
         &request.range_start,
         &request.range_end,
         &request.preferences,
@@ -1517,6 +1532,7 @@ pub(crate) async fn find_availability(
         checked,
         total,
         request.max_per_day,
+        request.in_person,
     )?;
     Ok(models::AvailabilityResult {
         candidates,
@@ -1610,7 +1626,16 @@ pub(crate) async fn check_proposed_time(
         &state,
     )
     .await?;
-    let status = availability::check_time(&request.start, &request.end, &busy, checked, total)?;
+    let padding =
+        availability::meeting_padding(request.in_person, request.drive_time_buffer_minutes);
+    let status = availability::check_time_padded(
+        &request.start,
+        &request.end,
+        &busy,
+        checked,
+        total,
+        padding,
+    )?;
     let start = chrono::DateTime::parse_from_rfc3339(&request.start)
         .map_err(|_| "Proposed time must be RFC3339 timestamps".to_string())?
         .with_timezone(&chrono::Utc);
@@ -1626,8 +1651,8 @@ pub(crate) async fn check_proposed_time(
             let Ok(interval_end) = chrono::DateTime::parse_from_rfc3339(&interval.end) else {
                 return false;
             };
-            interval_start.with_timezone(&chrono::Utc) < end
-                && interval_end.with_timezone(&chrono::Utc) > start
+            interval_start.with_timezone(&chrono::Utc) < end + padding
+                && interval_end.with_timezone(&chrono::Utc) > start - padding
         })
         .collect();
     Ok(ProposedTimeCheck {

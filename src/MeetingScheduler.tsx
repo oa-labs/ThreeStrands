@@ -241,6 +241,7 @@ export function MeetingScheduler({
 
   // The search whose times are shown.
   const rangeKey = useRef<string | null>(null);
+  const inPerson = plan.meetingType !== undefined;
   const run = useCallback(async (target: ScheduleQuery, isCurrent: () => boolean) => {
     // Shows a range's times, keeping the user's choices among them where they still apply.
     const showRange = (result: AvailabilityResult, view: AvailabilityView | null, keepCurrent: boolean) => {
@@ -272,11 +273,14 @@ export function MeetingScheduler({
     try {
       if (target.kind === "specific") {
         setState({ phase: "loading" });
-        const check = await mailClient.checkProposedTime({ start: target.start, end: target.end, timeZone, driveTimeBufferMinutes: preferences.driveTimeBufferMinutes });
+        const check = await mailClient.checkProposedTime({ start: target.start, end: target.end, timeZone, driveTimeBufferMinutes: preferences.driveTimeBufferMinutes, ...(inPerson ? { inPerson } : {}) });
         // The day feeds conflict names, match detection, break warnings, and the day preview.
         // A failed read stays null so the day preview reads it again and can offer Try Again.
         const dayEvents = await eventsOnDay(new Date(target.start)).catch(() => null);
-        const overlapping = check.status === "conflicting" ? (dayEvents ?? []).filter((event) => overlaps(event, target)) : [];
+        // An in-person time also conflicts with a meeting inside the drive time buffer.
+        const pad = inPerson ? preferences.driveTimeBufferMinutes * 60_000 : 0;
+        const bufferedTarget = { start: new Date(Date.parse(target.start) - pad).toISOString(), end: new Date(Date.parse(target.end) + pad).toISOString() };
+        const overlapping = check.status === "conflicting" ? (dayEvents ?? []).filter((event) => overlaps(event, bufferedTarget)) : [];
         const match = identity ? findCalendarMatch(identity, target, dayEvents ?? []) : null;
         const conflictTitles = [...new Set(overlapping.filter((event) => !match || !sameEvent(event, match.event)).map((event) => event.title))];
         if (isCurrent()) setState({ phase: "specific", check, conflictTitles, match, dayEvents });
@@ -291,6 +295,7 @@ export function MeetingScheduler({
             defaultDurationMinutes: durationMinutes,
           },
           maxPerDay: SLOTS_PER_DAY,
+          ...(inPerson ? { inPerson } : {}),
           ...(coworkers ? { coworkers } : {}),
         };
         const key = availabilityKey(request);
@@ -308,7 +313,7 @@ export function MeetingScheduler({
     } catch (reason) {
       if (isCurrent()) setState({ phase: "error", message: errorMessage(reason) });
     }
-  }, [bounds, coworkers, identity, durationMinutes, preferences, timeZone]);
+  }, [bounds, coworkers, identity, durationMinutes, inPerson, preferences, timeZone]);
 
   // The user's choices among the shown times outlast the card.
   useEffect(() => {
@@ -535,7 +540,7 @@ export function MeetingScheduler({
               const open = previewing === key;
               const label = formatSlot(candidate, timeZone);
               const id = `${previewId}-${index}`;
-              const warning = rangeEvents ? breakWarning(rangeEvents, candidate) : null;
+              const warning = rangeEvents ? breakWarning(rangeEvents, candidate, {}, inPerson ? preferences.driveTimeBufferMinutes : 0) : null;
               // Including a time and looking at its day are separate choices.
               return <SlotDayToggle
                 key={key}

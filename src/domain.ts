@@ -280,6 +280,8 @@ export type FindAvailabilityRequest = {
   preferences: AvailabilityPreferences;
   maxPerDay?: number;
   coworkers?: CoworkerCalendars;
+  /** An in-person meeting, whose time needs the drive time buffer free beside every other event. */
+  inPerson?: boolean;
 };
 
 export type AvailabilityResult = {

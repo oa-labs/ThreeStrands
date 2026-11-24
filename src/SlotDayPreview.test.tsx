@@ -176,6 +176,16 @@ describe("SlotDayPreview", () => {
     expect(breakWarning([], slot)).toBeNull();
   });
 
+  it("flags a break shorter than the drive time buffer when that is longer than a tight break", () => {
+    // The slot starts at 13:00; a 30 minute break is fine for a call but short for a 45 minute drive.
+    const before = [event("before", "Planning", at(12, 0), at(12, 30))];
+    expect(breakWarning(before, slot)).toBeNull();
+    expect(breakWarning(before, slot, {}, 45)).toBe("Short break");
+    expect(breakWarning(before, slot, {}, 30)).toBeNull();
+    // A buffer under the tight limit changes nothing.
+    expect(breakWarning(before, slot, {}, 5)).toBeNull();
+  });
+
   it("says when nothing else is on the calendar that day", async () => {
     renderDay([]);
     await rows();

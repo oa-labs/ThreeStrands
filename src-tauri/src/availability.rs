@@ -122,6 +122,15 @@ fn busy_overlaps(start: DateTime<Utc>, end: DateTime<Utc>, busy: &[BusyInterval]
     })
 }
 
+/// The buffer an in-person meeting keeps free on each side; zero otherwise.
+pub(crate) fn meeting_padding(in_person: bool, drive_time_buffer_minutes: u32) -> Duration {
+    if in_person {
+        Duration::minutes(i64::from(drive_time_buffer_minutes))
+    } else {
+        Duration::zero()
+    }
+}
+
 fn local_datetime(zone: Tz, date: NaiveDate, time: NaiveTime) -> Option<DateTime<Utc>> {
     let local = NaiveDateTime::new(date, time);
     match zone.from_local_datetime(&local) {
@@ -150,6 +159,32 @@ pub fn find_candidates(
     total_calendar_count: usize,
     max_per_day: Option<usize>,
 ) -> Result<Vec<AvailabilityCandidate>, String> {
+    find_candidates_for(
+        range_start,
+        range_end,
+        preferences,
+        busy,
+        checked_calendar_count,
+        total_calendar_count,
+        max_per_day,
+        false,
+    )
+}
+
+/// `find_candidates`, where an in-person meeting also keeps the drive time
+/// buffer free on both sides of the slot against every busy interval.
+#[allow(clippy::too_many_arguments)]
+pub fn find_candidates_for(
+    range_start: &str,
+    range_end: &str,
+    preferences: &AvailabilityPreferences,
+    busy: &[BusyInterval],
+    checked_calendar_count: usize,
+    total_calendar_count: usize,
+    max_per_day: Option<usize>,
+    in_person: bool,
+) -> Result<Vec<AvailabilityCandidate>, String> {
+    let padding = meeting_padding(in_person, preferences.drive_time_buffer_minutes);
     if max_per_day.is_some_and(|limit| !(1..=MAX_CANDIDATES).contains(&limit)) {
         return Err(format!(
             "Slots per day must be between 1 and {MAX_CANDIDATES}"
@@ -189,7 +224,7 @@ pub fn find_candidates(
                 if slot_start >= range_start
                     && slot_end <= range_end
                     && slot_start > now
-                    && !busy_overlaps(slot_start, slot_end, busy)
+                    && !busy_overlaps(slot_start - padding, slot_end + padding, busy)
                 {
                     let status = if total_calendar_count == 0 {
                         "unverified"
@@ -236,12 +271,31 @@ pub fn check_time(
     checked_calendar_count: usize,
     total_calendar_count: usize,
 ) -> Result<String, String> {
+    check_time_padded(
+        start,
+        end,
+        busy,
+        checked_calendar_count,
+        total_calendar_count,
+        Duration::zero(),
+    )
+}
+
+/// `check_time`, with `padding` kept free on each side of the time.
+pub fn check_time_padded(
+    start: &str,
+    end: &str,
+    busy: &[BusyInterval],
+    checked_calendar_count: usize,
+    total_calendar_count: usize,
+    padding: Duration,
+) -> Result<String, String> {
     let start = parse_range(start)?;
     let end = parse_range(end)?;
     if end <= start {
         return Err("Proposed time must end after it starts".to_string());
     }
-    if busy_overlaps(start, end, busy) {
+    if busy_overlaps(start - padding, end + padding, busy) {
         return Ok("conflicting".to_string());
     }
     if total_calendar_count == 0 {
@@ -358,6 +412,78 @@ mod tests {
                 ("2099-03-08T07:00:00+00:00", "2099-03-08T07:30:00+00:00"),
                 ("2099-03-08T07:30:00+00:00", "2099-03-08T08:00:00+00:00"),
             ]
+        );
+    }
+
+    #[test]
+    fn an_in_person_slot_keeps_the_drive_time_buffer_beside_any_busy_interval() {
+        let mut preferences = preferences();
+        preferences.drive_time_buffer_minutes = 30;
+        // Monday 2099-09-21, 9:00 to 9:30 in New York: a meeting with no location.
+        let busy = [BusyInterval {
+            start: "2099-09-21T13:00:00Z".to_string(),
+            end: "2099-09-21T13:30:00Z".to_string(),
+        }];
+        let range = ("2099-09-21T04:00:00Z", "2099-09-22T04:00:00Z");
+        let starts = |preferences: &AvailabilityPreferences, in_person| {
+            find_candidates_for(range.0, range.1, preferences, &busy, 1, 1, None, in_person)
+                .unwrap()
+                .into_iter()
+                .map(|candidate| candidate.start)
+                .collect::<Vec<_>>()
+        };
+        // Not in person, 9:30 is offered right after it.
+        assert_eq!(starts(&preferences, false)[0], "2099-09-21T13:30:00+00:00");
+        // In person, the first time a full buffer later is 10:00.
+        assert_eq!(
+            starts(&preferences, true),
+            vec![
+                "2099-09-21T14:00:00+00:00",
+                "2099-09-21T14:30:00+00:00",
+                "2099-09-21T15:00:00+00:00",
+                "2099-09-21T15:30:00+00:00"
+            ]
+        );
+        // The buffer also applies before the busy interval.
+        let early = [BusyInterval {
+            start: "2099-09-21T14:00:00Z".to_string(),
+            end: "2099-09-21T14:30:00Z".to_string(),
+        }];
+        let before =
+            find_candidates_for(range.0, range.1, &preferences, &early, 1, 1, None, true).unwrap();
+        assert!(before
+            .iter()
+            .all(|c| c.start != "2099-09-21T13:30:00+00:00"));
+        assert!(before
+            .iter()
+            .any(|c| c.start == "2099-09-21T13:00:00+00:00"));
+        // With no buffer, in person changes nothing.
+        preferences.drive_time_buffer_minutes = 0;
+        assert_eq!(starts(&preferences, true), starts(&preferences, false));
+    }
+
+    #[test]
+    fn checking_an_in_person_time_counts_the_buffer_as_a_conflict() {
+        let busy = [BusyInterval {
+            start: "2099-09-21T13:00:00Z".to_string(),
+            end: "2099-09-21T13:30:00Z".to_string(),
+        }];
+        let (start, end) = ("2099-09-21T13:40:00Z", "2099-09-21T14:10:00Z");
+        assert_eq!(check_time(start, end, &busy, 1, 1).unwrap(), "free");
+        let padding = meeting_padding(true, 30);
+        assert_eq!(
+            check_time_padded(start, end, &busy, 1, 1, padding).unwrap(),
+            "conflicting"
+        );
+        // Not in person, the buffer is not applied.
+        assert_eq!(
+            check_time_padded(start, end, &busy, 1, 1, meeting_padding(false, 30)).unwrap(),
+            "free"
+        );
+        // Exactly the buffer away is free.
+        assert_eq!(
+            check_time_padded("2099-09-21T14:00:00Z", end, &busy, 1, 1, padding).unwrap(),
+            "free"
         );
     }
 

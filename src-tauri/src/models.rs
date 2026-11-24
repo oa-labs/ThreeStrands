@@ -335,6 +335,10 @@ pub struct FindAvailabilityRequest {
     /// Spreads candidates across days; `None` keeps the earliest slots.
     #[serde(default)]
     pub max_per_day: Option<usize>,
+    /// An in-person meeting: the slot itself needs the drive time buffer free
+    /// beside every busy interval, not only beside events with a location.
+    #[serde(default)]
+    pub in_person: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -345,6 +349,9 @@ pub struct CheckProposedTimeRequest {
     pub start: String,
     pub end: String,
     pub time_zone: String,
+    /// See `FindAvailabilityRequest::in_person`.
+    #[serde(default)]
+    pub in_person: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
