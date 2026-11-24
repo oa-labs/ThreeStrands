@@ -11,6 +11,13 @@ export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const reportCheckFailure = logBackgroundFailure("Checking for app updates");
 const reportOpenFailure = logBackgroundFailure("Opening the release page");
 
+const APP_UPDATE_FOUND_EVENT = "threestrands:app-update-found";
+
+/** Shows the update prompt for a release found by a manual check, even one dismissed earlier. */
+export function announceAppUpdate(update: AvailableUpdate) {
+  window.dispatchEvent(new CustomEvent<AvailableUpdate>(APP_UPDATE_FOUND_EVENT, { detail: update }));
+}
+
 type InstallState = "idle" | "installing" | "failed";
 
 /**
@@ -37,6 +44,15 @@ export function UpdateNotice() {
     const interval = window.setInterval(() => check().catch(reportCheckFailure), UPDATE_CHECK_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [check]);
+
+  useEffect(() => {
+    const onFound = (event: Event) => {
+      setUpdate((event as CustomEvent<AvailableUpdate>).detail);
+      setDismissedVersion(null);
+    };
+    window.addEventListener(APP_UPDATE_FOUND_EVENT, onFound);
+    return () => window.removeEventListener(APP_UPDATE_FOUND_EVENT, onFound);
+  }, []);
 
   if (!update || update.version === dismissedVersion) return null;
 
