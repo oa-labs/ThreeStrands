@@ -5,7 +5,7 @@ import { aiActivityFeatureLabel } from "./AiActivityList";
 import { formatUsd } from "./aiUsage";
 import { errorMessage } from "./errors";
 
-export function AiCancelButton({ command, owner, label, className = "btn btn-sm" }: { command: string | string[]; owner?: string | null; label?: string; className?: string }) {
+export function AiCancelButton({ command, owner, label, className = "btn btn-sm ai-cancel-button" }: { command: string | string[]; owner?: string | null; label?: string; className?: string }) {
   const pending = usePendingAiRequests();
   const [error, setError] = useState("");
   const matching = pending.filter((request) => owner != null && request.owner === owner && (typeof command === "string" ? request.command === command : command.includes(request.command)));
