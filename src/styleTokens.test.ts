@@ -634,6 +634,12 @@ describe("component sizes", () => {
     expect(grow).toBe("1 1 auto");
   });
 
+  it("keeps tooltip text in sentence style when the anchor sits inside an uppercase section label", () => {
+    const reset: Record<string, string> = {};
+    css.walkRules(".hover-tooltip", (rule) => rule.walkDecls(/^(text-transform|letter-spacing|font-weight)$/, (declaration) => { reset[declaration.prop] = declaration.value; }));
+    expect(reset).toEqual({ "font-weight": "var(--weight-regular)", "letter-spacing": "normal", "text-transform": "none" });
+  });
+
   it("lets message attachment tooltips hang outside the chip instead of clipping them", () => {
     const clipped: string[] = [];
     css.walkRules(".message-attachment", (rule) => rule.walkDecls(/^overflow/, (declaration) => { clipped.push(declaration.toString()); }));

@@ -459,6 +459,10 @@ select:disabled { opacity: var(--opacity-disabled); cursor: default; }
   box-shadow: var(--shadow-popover);
   color: var(--text);
   font-size: var(--text-secondary);
+  /* A tooltip inside a section label must not inherit its uppercase, weight, or tracking. */
+  font-weight: var(--weight-regular);
+  letter-spacing: normal;
+  text-transform: none;
   line-height: var(--leading-tight);
   white-space: nowrap;
   opacity: 0;
