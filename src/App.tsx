@@ -137,7 +137,9 @@ import { MuteSenderDialog } from "./MuteSenderDialog";
 import { useSenderRules } from "./useSenderRules";
 import { describeSenderRule } from "./MutedSendersSettings";
 import type { SenderActions, SenderTarget } from "./SenderSections";
-import { UpdateNotice } from "./UpdateNotice";
+import { UpdateNotice, announceAppUpdate } from "./UpdateNotice";
+import { useAppMenu } from "./useAppMenu";
+import { checkForAppUpdate } from "./appUpdate";
 import { useAccounts } from "./useAccounts";
 import { useAiAvailability } from "./useAiAvailability";
 import { useAppCommandContext } from "./useAppCommandContext";
@@ -880,6 +882,14 @@ export function App() {
   const {
     executeCommand, executeById, paletteExtraCommands, runOnSelection,
   } = useCommandExecution({ context, accounts, accountSplitInboxes, checkedIds, mutateIds, rememberUndo, setNotice });
+  useAppMenu(context, executeCommand, useCallback(() => {
+    checkForAppUpdate()
+      .then((found) => {
+        if (found && typeof found.version === "string") announceAppUpdate(found);
+        else setNotice({ message: "ThreeStrands is up to date." });
+      })
+      .catch((reason: unknown) => setNotice({ message: `Update check failed: ${errorMessage(reason)}` }));
+  }, [setNotice]));
   const senderActions = useMemo<SenderActions>(() => ({
     splits: splitInboxCatalog.splitInboxes,
     onUnsubscribe: canUnsubscribe ? () => executeById("thread.unsubscribe") : undefined,

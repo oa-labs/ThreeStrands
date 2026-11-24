@@ -6,7 +6,7 @@ vi.mock("./appUpdate");
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 import * as appUpdate from "./appUpdate";
-import { UPDATE_CHECK_INTERVAL_MS, UpdateNotice } from "./UpdateNotice";
+import { UPDATE_CHECK_INTERVAL_MS, UpdateNotice, announceAppUpdate } from "./UpdateNotice";
 
 const update = (overrides: Partial<appUpdate.AvailableUpdate> = {}): appUpdate.AvailableUpdate => ({
   version: "0.73.0",
@@ -111,5 +111,16 @@ describe("UpdateNotice", () => {
     vi.mocked(appUpdate.checkForAppUpdate).mockResolvedValue(update({ version: "0.74.0" }));
     await act(async () => { await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS); });
     expect(await screen.findByText("ThreeStrands 0.74.0 is available.")).toBeInTheDocument();
+  });
+});
+
+describe("UpdateNotice manual check", () => {
+  it("shows a release announced by a manual check even after dismissing it", async () => {
+    vi.mocked(appUpdate.checkForAppUpdate).mockResolvedValue(update());
+    render(<UpdateNotice />);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss Update" }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    act(() => announceAppUpdate(update()));
+    expect(await screen.findByRole("button", { name: "Dismiss Update" })).toBeInTheDocument();
   });
 });
