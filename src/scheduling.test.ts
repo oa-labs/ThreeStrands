@@ -3,7 +3,7 @@ import type { MeetingProposal } from "./domain";
 import {
   boundedRange, clampMeetingMinutes, MAX_MEETING_MINUTES, MAX_SCHEDULE_RANGE_DAYS, MIN_MEETING_MINUTES,
   AFTERNOONS, ANY_TIME, MIDDAY, MORNINGS, planChatAvailability, planMeeting, planTimeSearch, SCHEDULE_LOOKAHEAD_DAYS, shiftedRange,
-  offersFindTimes, spreadAcrossDays, suggestedSearch, windowsWithin,
+  offersFindTimes, searchedRange, spreadAcrossDays, suggestedSearch, windowsWithin,
 } from "./scheduling";
 
 const now = new Date("2026-09-29T12:00:00Z");
@@ -244,6 +244,29 @@ describe("adjusting open-time searches", () => {
     // A day without an afternoon opening offers its morning instead.
     expect(spreadAcrossDays([{ start: "2026-12-01T09:00:00Z" }, { start: "2026-12-02T09:00:00Z" }], "UTC").map((candidate) => candidate.start))
       .toEqual(["2026-12-01T09:00:00Z", "2026-12-02T09:00:00Z"]);
+  });
+
+  it("offers days after the shown range before a second time on a day already shown", () => {
+    const slot = (start: string) => ({ start });
+    // Range Jan 1-14: only the 4th, 6th and 8th are open, with three times each; the 15th and 18th are past it.
+    const candidates = [
+      ...["11:00", "11:30", "11:45"].flatMap((time) => ["04", "06", "08"].map((day) => slot(`2027-01-${day}T${time}:00Z`))),
+      slot("2027-01-15T11:00:00Z"), slot("2027-01-15T11:30:00Z"), slot("2027-01-18T11:00:00Z"),
+    ];
+    const ordered = spreadAcrossDays(candidates, "UTC", 3, "2027-01-15T00:00:00Z").map((candidate) => candidate.start);
+    // The defaults stay inside the range, spread from its first open day to its last.
+    expect(ordered.slice(0, 3)).toEqual(["2027-01-04T11:00:00Z", "2027-01-06T11:00:00Z", "2027-01-08T11:00:00Z"]);
+    // Show More: the later days' first times, not the 4th's second time.
+    expect(ordered.slice(3, 5)).toEqual(["2027-01-15T11:00:00Z", "2027-01-18T11:00:00Z"]);
+    expect(ordered.slice(5, 8)).toEqual(["2027-01-04T11:30:00Z", "2027-01-06T11:30:00Z", "2027-01-08T11:30:00Z"]);
+    expect(ordered).toHaveLength(candidates.length);
+    // Without a range end, nothing is held back from the leading times.
+    expect(spreadAcrossDays(candidates, "UTC").slice(0, 3).map((candidate) => candidate.start)).toContain("2027-01-18T11:00:00Z");
+  });
+
+  it("searches one more span past the shown range", () => {
+    const week = { kind: "range" as const, start: "2026-10-12T04:00:00.000Z", end: "2026-10-19T04:00:00.000Z" };
+    expect(searchedRange(week)).toEqual({ kind: "range", start: week.start, end: "2026-10-26T04:00:00.000Z" });
   });
 });
 

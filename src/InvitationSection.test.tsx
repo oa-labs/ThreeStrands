@@ -178,7 +178,9 @@ describe("invitation card responses", () => {
   });
 
   it("uses the invitation's duration to find alternatives and passes its source to the reply draft", async () => {
-    const candidate = { start: "2030-01-09T15:00:00Z", end: "2030-01-09T17:00:00Z", status: "verified" as const };
+    // Inside the coming week that is searched.
+    const soon = Math.floor(Date.now() / 1000) * 1000 + 86_400_000;
+    const candidate = { start: new Date(soon).toISOString(), end: new Date(soon + 2 * 3_600_000).toISOString(), status: "verified" as const };
     vi.mocked(mailClient.findAvailability).mockResolvedValue({ candidates: [candidate], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     const callbacks = props();
     render(<InvitationCard {...callbacks} />);

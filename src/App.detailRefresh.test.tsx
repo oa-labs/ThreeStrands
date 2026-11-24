@@ -4,7 +4,7 @@ import { clearScheduleCache } from "./calendarScheduleCache";
 import { clearInvitationEventCache } from "./useInvitationEvent";
 import { clearAiApiKey, DEFAULT_AI_FEATURES, saveAiFeatures, saveAiProvider, setAiApiKey, type AiFeatureFlags } from "./aiSettings";
 import { proactiveDwellMs } from "./proactiveBrief";
-import { SLOTS_PER_DAY } from "./scheduling";
+import { searchedRange, SLOTS_PER_DAY } from "./scheduling";
 import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
 import { DEMO_ACCOUNT_ID } from "./data/demoDataset";
@@ -100,12 +100,14 @@ it("follows a reply's recipients in the conversation panel", async () => {
 it("inserts open times from the reply's context panel into that reply instead of starting another", async () => {
   localStorage.removeItem("threestrands.demoCorrespondence");
   clearScheduleCache();
+  const soonStart = new Date(Math.floor(Date.now() / 1000) * 1000 + 86_400_000).toISOString();
   vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
     { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
   ]);
   vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
   vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
-    candidates: [{ start: "2030-01-07T15:00:00Z", end: "2030-01-07T15:30:00Z", status: "verified" }],
+    // Inside the coming week that is searched.
+    candidates: [{ start: soonStart, end: new Date(Date.parse(soonStart) + 30 * 60_000).toISOString(), status: "verified" }],
     checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
   });
   try {
@@ -131,10 +133,10 @@ it("inserts open times from the reply's context panel into that reply instead of
     fireEvent.click(within(availability).getByRole("button", { name: "Find Times" }));
     fireEvent.click(await within(availability).findByRole("button", { name: /^Insert / }));
 
-    await waitFor(() => expect(editor.textContent).toContain("2030"));
+    await waitFor(() => expect(editor.textContent).toContain(String(new Date(soonStart).getFullYear())));
     const text = editor.textContent ?? "";
     expect(text.indexOf("Here is what I have")).toBe(0);
-    expect(text.indexOf("Here is what I have")).toBeLessThan(text.indexOf("2030"));
+    expect(text.indexOf("Here is what I have")).toBeLessThan(text.indexOf(String(new Date(soonStart).getFullYear())));
     expect(screen.getByRole("dialog", { name: "Reply Message" })).toBe(composer);
   } finally {
     localStorage.removeItem("threestrands.demoCorrespondence");
@@ -739,7 +741,7 @@ describe("conversation brief", () => {
 
       const times = await within(panel).findByRole("group", { name: "Open times" });
       expect(within(times).getAllByRole("button")).toHaveLength(1);
-      expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart, rangeEnd, maxPerDay: SLOTS_PER_DAY, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }) }));
+      expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart, rangeEnd: searchedRange({ kind: "range", start: rangeStart, end: rangeEnd }).end, maxPerDay: SLOTS_PER_DAY, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }) }));
     });
   });
 
@@ -1040,7 +1042,7 @@ describe("conversation brief", () => {
 
       expect(await within(availability).findByText("From the suggested meeting: “early next week”.")).toBeInTheDocument();
       await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({
-        rangeStart: searchRangeStart, rangeEnd: searchRangeEnd, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }),
+        rangeStart: searchRangeStart, rangeEnd: searchedRange({ kind: "range", start: searchRangeStart, end: searchRangeEnd }).end, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }),
       })));
       expect(findTimes).not.toHaveBeenCalled();
     } finally {
@@ -1078,7 +1080,7 @@ describe("conversation brief", () => {
         "openai", expect.any(String), null, expect.any(String),
       );
       await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({
-        rangeStart, rangeEnd, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }),
+        rangeStart, rangeEnd: searchedRange({ kind: "range", start: rangeStart, end: rangeEnd }).end, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }),
       })));
       expect(within(availability).getByRole("textbox", { name: "Adjust times" })).toBeInTheDocument();
     } finally {

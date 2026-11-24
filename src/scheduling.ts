@@ -233,14 +233,22 @@ export function shiftedRange(query: ScheduleQuery, steps: number): ScheduleQuery
   return { kind: "range", start: new Date(start + steps * span).toISOString(), end: new Date(start + (steps + 1) * span).toISOString() };
 }
 
+/** The range a search covers: the shown range plus one more span after it, which Show More draws later days from. */
+export function searchedRange(query: ScheduleQuery): ScheduleQuery {
+  return { kind: "range", start: query.start, end: shiftedRange(query, 1).end };
+}
+
 /**
  * Orders open times so the first few, the ones offered by default, are spread
  * across the whole range rather than bunched on its first days: one on the
  * first day, one on the last, the rest evenly between, alternating mornings
  * and afternoons where a day has both. After them, each day's first slot
  * comes before any day's second, so "Show 3 More" still covers new days first.
+ * With `rangeEnd`, the leading times come only from days inside the shown
+ * range; times after it, found by searching beyond it, follow in the same
+ * order and so come before any day's second time.
  */
-export function spreadAcrossDays<T extends Pick<AvailabilityCandidate, "start">>(candidates: T[], timeZone: string, leading = SUGGESTED_SLOT_COUNT): T[] {
+export function spreadAcrossDays<T extends Pick<AvailabilityCandidate, "start">>(candidates: T[], timeZone: string, leading = SUGGESTED_SLOT_COUNT, rangeEnd?: string): T[] {
   const dayOf = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone });
   const hourOf = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone });
   const chronological = [...candidates].sort((left, right) => Date.parse(left.start) - Date.parse(right.start));
@@ -259,7 +267,10 @@ export function spreadAcrossDays<T extends Pick<AvailabilityCandidate, "start">>
     })
     .sort((left, right) => left.rank - right.rank || Date.parse(left.candidate.start) - Date.parse(right.candidate.start))
     .map(({ candidate }) => candidate);
-  const slotsByDay = [...days.values()];
+  const end = rangeEnd === undefined ? Infinity : Date.parse(rangeEnd);
+  const slotsByDay = [...days.values()]
+    .map((slots) => slots.filter((slot) => Date.parse(slot.start) < end))
+    .filter((slots) => slots.length > 0);
   const count = Math.min(leading, slotsByDay.length);
   const picks: T[] = [];
   for (let index = 0; index < count; index += 1) {

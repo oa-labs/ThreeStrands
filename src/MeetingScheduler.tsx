@@ -12,7 +12,7 @@ import { SlotDayToggle } from "./SlotDayToggle";
 import { AvailabilityProfileChoiceContext, AvailabilityProfileSelect } from "./AvailabilityProfileChoice";
 import { errorMessage } from "./errors";
 import {
-  AFTERNOONS, ANY_TIME, lookaheadRange, MORNINGS, shiftedRange, slotKey, SLOTS_PER_DAY, spreadAcrossDays, SUGGESTED_SLOT_COUNT,
+  AFTERNOONS, ANY_TIME, lookaheadRange, MORNINGS, searchedRange, shiftedRange, slotKey, SLOTS_PER_DAY, spreadAcrossDays, SUGGESTED_SLOT_COUNT,
   windowsWithin, type DayBounds, type SchedulePlan, type ScheduleQuery,
 } from "./scheduling";
 import { ICON_SIZE } from "./iconSizes";
@@ -244,9 +244,11 @@ export function MeetingScheduler({
   const run = useCallback(async (target: ScheduleQuery, isCurrent: () => boolean) => {
     // Shows a range's times, keeping the user's choices among them where they still apply.
     const showRange = (result: AvailabilityResult, view: AvailabilityView | null, keepCurrent: boolean) => {
-      const candidates = spreadAcrossDays(result.candidates, timeZone);
+      // Times past the range are only for Show More; a range with none of its own shows the empty state.
+      const inRange = result.candidates.some((candidate) => Date.parse(candidate.start) < Date.parse(target.end));
+      const candidates = inRange ? spreadAcrossDays(result.candidates, timeZone, SUGGESTED_SLOT_COUNT, target.end) : [];
       const keys = new Set(candidates.map(slotKey));
-      const defaults = () => new Set(candidates.slice(0, SUGGESTED_SLOT_COUNT).map(slotKey));
+      const defaults = () => new Set(candidates.filter((candidate) => Date.parse(candidate.start) < Date.parse(target.end)).slice(0, SUGGESTED_SLOT_COUNT).map(slotKey));
       setState({
         phase: "range",
         candidates,
@@ -281,7 +283,8 @@ export function MeetingScheduler({
       } else {
         const request = {
           rangeStart: target.start,
-          rangeEnd: target.end,
+          // One more span than shown, so Show More can offer later days.
+          rangeEnd: searchedRange(target).end,
           preferences: {
             ...preferences,
             workingWindows: windowsWithin(preferences.workingWindows, bounds),
@@ -325,7 +328,7 @@ export function MeetingScheduler({
   // The range's meetings, read once, flag a time with little break beside it before its day is opened.
   const [rangeEvents, setRangeEvents] = useState<ScheduleEvent[] | null>(null);
   const rangeStart = state.phase === "range" && query?.kind === "range" ? query.start : null;
-  const rangeEnd = rangeStart && query ? query.end : null;
+  const rangeEnd = rangeStart && query ? searchedRange(query).end : null;
   useEffect(() => {
     setRangeEvents(rangeStart && rangeEnd ? cachedEventsInRange(rangeStart, rangeEnd) : null);
     if (!rangeStart || !rangeEnd) return;

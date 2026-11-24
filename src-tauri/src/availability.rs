@@ -138,6 +138,9 @@ pub(crate) const MAX_CANDIDATES: usize = 20;
 
 /// Free working-hour slots in the range, earliest first. `max_per_day`
 /// spreads the result across days instead of filling it from the first one.
+/// When the days hold more slots than `MAX_CANDIDATES`, the later-ranked slots
+/// are dropped (every day's first slot before any day's second), never the
+/// later days.
 pub fn find_candidates(
     range_start: &str,
     range_end: &str,
@@ -162,20 +165,19 @@ pub fn find_candidates(
     let first_date = range_start.with_timezone(&zone).date_naive();
     let last_date = range_end.with_timezone(&zone).date_naive();
     let mut date = first_date;
-    let mut candidates = Vec::new();
+    let mut by_day: Vec<Vec<AvailabilityCandidate>> = Vec::new();
+    let mut total = 0;
     let duration = Duration::minutes(preferences.default_duration_minutes as i64);
     let increment = Duration::minutes(preferences.slot_increment_minutes as i64);
     let now = Utc::now();
 
-    while date <= last_date && candidates.len() < MAX_CANDIDATES {
+    // Without a per-day limit the earliest slots fill the cap, so stop early.
+    while date <= last_date && (max_per_day.is_some() || total < MAX_CANDIDATES) {
         let weekday = date.weekday().num_days_from_sunday() as u8;
-        let day_start = candidates.len();
+        let mut candidates = Vec::new();
         for (start, end) in merged_windows(preferences, weekday)? {
             let mut cursor = start;
-            while cursor + duration <= end
-                && candidates.len() < MAX_CANDIDATES
-                && candidates.len() - day_start < per_day
-            {
+            while cursor + duration <= end && candidates.len() < per_day {
                 let Some(slot_start) = local_datetime(zone, date, cursor) else {
                     cursor += increment;
                     continue;
@@ -205,9 +207,26 @@ pub fn find_candidates(
                 cursor += increment;
             }
         }
+        total += candidates.len();
+        by_day.push(candidates);
         date += Duration::days(1);
     }
-    Ok(candidates)
+    let mut kept = Vec::new();
+    let deepest = by_day.iter().map(Vec::len).max().unwrap_or(0);
+    for rank in 0..deepest {
+        kept.extend(by_day.iter().filter_map(|day| day.get(rank)).cloned());
+    }
+    if max_per_day.is_none() {
+        // One rank per day would otherwise reorder a plain earliest-first search.
+        kept = by_day.into_iter().flatten().collect();
+    }
+    kept.truncate(MAX_CANDIDATES);
+    kept.sort_by_key(|candidate| {
+        chrono::DateTime::parse_from_rfc3339(&candidate.start)
+            .map(|time| time.timestamp())
+            .unwrap_or_default()
+    });
+    Ok(kept)
 }
 
 pub fn check_time(
@@ -339,6 +358,65 @@ mod tests {
                 ("2099-03-08T07:00:00+00:00", "2099-03-08T07:30:00+00:00"),
                 ("2099-03-08T07:30:00+00:00", "2099-03-08T08:00:00+00:00"),
             ]
+        );
+    }
+
+    #[test]
+    fn a_full_cap_drops_later_slots_not_later_days() {
+        let mut preferences = preferences();
+        preferences.working_windows = (0..=6)
+            .map(|weekday| AvailabilityWindow {
+                weekday,
+                start: "09:00".to_string(),
+                end: "17:00".to_string(),
+            })
+            .collect();
+        // Fourteen days of three slots each is far over the cap.
+        let found = find_candidates(
+            "2099-09-21T04:00:00Z",
+            "2099-10-05T04:00:00Z",
+            &preferences,
+            &[],
+            1,
+            1,
+            Some(3),
+        )
+        .unwrap();
+        assert_eq!(found.len(), MAX_CANDIDATES);
+        for day in 21..=30 {
+            let prefix = format!("2099-09-{day}");
+            assert!(
+                found.iter().any(|c| c.start.starts_with(&prefix)),
+                "{prefix}"
+            );
+        }
+        for day in 1..=4 {
+            let prefix = format!("2099-10-0{day}");
+            assert!(
+                found.iter().any(|c| c.start.starts_with(&prefix)),
+                "{prefix}"
+            );
+        }
+        // Fourteen first slots, then six second slots on the earliest days.
+        assert_eq!(
+            found
+                .iter()
+                .filter(|c| c.start.starts_with("2099-09-21"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            found
+                .iter()
+                .filter(|c| c.start.starts_with("2099-10-04"))
+                .count(),
+            1
+        );
+        let mut sorted = found.iter().map(|c| c.start.clone()).collect::<Vec<_>>();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            found.iter().map(|c| c.start.clone()).collect::<Vec<_>>()
         );
     }
 

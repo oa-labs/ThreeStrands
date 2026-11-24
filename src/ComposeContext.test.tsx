@@ -4,7 +4,7 @@ import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { AvailabilitySection, PersonSummary } from "./RecipientSections";
 import { mailClient } from "./data/client";
 import { ICON_SIZE } from "./iconSizes";
-import { offersFindTimes, SLOTS_PER_DAY } from "./scheduling";
+import { offersFindTimes, searchedRange, SLOTS_PER_DAY } from "./scheduling";
 import { saveAiProvider } from "./aiSettings";
 import type { Draft } from "./correspondence";
 import type { Account, AvailabilityPreferences, ContactActivity, ContactProfile, ContactSuggestion } from "./domain";
@@ -189,10 +189,15 @@ describe("ComposeContext", () => {
   });
 
   it("finds open times on request and inserts the chosen ones into the draft", async () => {
+    // Inside the coming week that is searched.
+    const soonAt = (days: number, minutes = 0) => new Date(Math.floor(Date.now() / 1000) * 1000 + days * 86_400_000 + minutes * 60_000).toISOString();
+
+    const first = soonAt(1);
+    const second = soonAt(2);
     vi.mocked(mailClient.findAvailability).mockResolvedValue({
       candidates: [
-        { start: "2030-01-07T15:00:00Z", end: "2030-01-07T15:30:00Z", status: "verified" },
-        { start: "2030-01-08T15:00:00Z", end: "2030-01-08T15:30:00Z", status: "verified" },
+        { start: first, end: soonAt(1, 30), status: "verified" },
+        { start: second, end: soonAt(2, 30), status: "verified" },
       ],
       checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
     });
@@ -212,8 +217,8 @@ describe("ComposeContext", () => {
     })));
     fireEvent.click(await within(section).findByRole("button", { name: /^Insert \d+ Times$/ }));
     expect(props.onInsertTimes).toHaveBeenCalledWith([
-      expect.objectContaining({ start: "2030-01-07T15:00:00Z" }),
-      expect.objectContaining({ start: "2030-01-08T15:00:00Z" }),
+      expect.objectContaining({ start: first }),
+      expect.objectContaining({ start: second }),
     ]);
     expect(within(section).queryByRole("button", { name: /Draft Reply/ })).not.toBeInTheDocument();
     // Open times are only offered; booking waits for the recipient to pick one.
@@ -367,7 +372,7 @@ describe("Find Times with AI", () => {
     await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalled());
     const request = vi.mocked(mailClient.findAvailability).mock.calls[0][0];
     expect(request.rangeStart).toBe(search.rangeStart);
-    expect(request.rangeEnd).toBe(search.rangeEnd);
+    expect(request.rangeEnd).toBe(searchedRange({ kind: "range", start: search.rangeStart, end: search.rangeEnd }).end);
     expect(request.preferences.workingWindows).toEqual([
       { weekday: 4, start: "13:00", end: "17:00" },
       { weekday: 5, start: "13:00", end: "17:00" },
@@ -423,7 +428,7 @@ describe("Find Times with AI", () => {
     expect(await within(section()).findByRole("alert")).toHaveTextContent("No AI API key configured. Showing the coming week instead.");
     await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(1));
     const request = vi.mocked(mailClient.findAvailability).mock.calls[0][0];
-    expect(Date.parse(request.rangeEnd) - Date.parse(request.rangeStart)).toBe(7 * day);
+    expect(Date.parse(request.rangeEnd) - Date.parse(request.rangeStart)).toBe(14 * day);
     expect(request.preferences.workingWindows).toEqual(preferences.workingWindows);
 
     // The read never happened, so trying it again is offered beside the failure rather than as Re-read.
@@ -475,7 +480,7 @@ describe("Find Times with AI", () => {
     fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
     expect(await within(section()).findByText("From the suggested meeting: “next week”.")).toBeInTheDocument();
     await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledWith(expect.objectContaining({
-      rangeStart: search.rangeStart, rangeEnd: search.rangeEnd, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }),
+      rangeStart: search.rangeStart, rangeEnd: searchedRange({ kind: "range", start: search.rangeStart, end: search.rangeEnd }).end, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }),
     })));
     // Nothing was sent to the AI provider; the suggestion's search is adjustable like any other.
     expect(mailClient.findTimes).not.toHaveBeenCalled();

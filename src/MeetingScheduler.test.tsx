@@ -9,7 +9,7 @@ import { MeetingScheduler, uncheckedNote, zoneName } from "./MeetingScheduler";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences } from "./domain";
-import { SLOTS_PER_DAY, TIGHT_BREAK_MINUTES, type SchedulePlan } from "./scheduling";
+import { searchedRange, SLOTS_PER_DAY, TIGHT_BREAK_MINUTES, type SchedulePlan } from "./scheduling";
 
 const preferences: AvailabilityPreferences = {
   timeZone: "America/New_York",
@@ -98,8 +98,8 @@ describe("MeetingScheduler", () => {
   });
 
   it.each([
-    { when: "on a later day", start: at(NOW, 26), rangeStart: "2026-09-30T04:00:00.000Z", rangeEnd: "2026-10-07T04:00:00.000Z" },
-    { when: "later today", start: at(NOW, 2), rangeStart: NOW, rangeEnd: "2026-10-06T14:00:00.000Z" },
+    { when: "on a later day", start: at(NOW, 26), rangeStart: "2026-09-30T04:00:00.000Z", rangeEnd: "2026-10-14T04:00:00.000Z" },
+    { when: "later today", start: at(NOW, 2), rangeStart: NOW, rangeEnd: "2026-10-13T14:00:00.000Z" },
   ])("names the conflicting events and switches to a search for other times $when", async ({ start, rangeStart, rangeEnd }) => {
     pinClock();
     const conflicting: SchedulePlan = { query: { kind: "specific", start, end: at(start, 0.5) }, durationMinutes: 30, timeZoneAssumed: false };
@@ -132,7 +132,7 @@ describe("MeetingScheduler", () => {
     const slots = within(await screen.findByRole("group", { name: "Open times" })).getAllByRole("checkbox");
     expect(slots).toHaveLength(3);
     expect(find).toHaveBeenCalledWith({
-      rangeStart: range.query!.start, rangeEnd: range.query!.end, maxPerDay: SLOTS_PER_DAY,
+      rangeStart: range.query!.start, rangeEnd: searchedRange(range.query!).end, maxPerDay: SLOTS_PER_DAY,
       preferences: { ...preferences, defaultDurationMinutes: 45 },
     });
     expect(screen.getByText("Eastern Time · assumed")).toHaveAccessibleDescription("The email didn’t specify a time zone, so these times use your availability time zone.");
@@ -183,7 +183,7 @@ describe("MeetingScheduler", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find New Times" }));
     expect(await screen.findByText("No open times within the selected hours for this range.")).toBeInTheDocument();
     expect(find).toHaveBeenCalledTimes(1);
-    expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart: NOW, rangeEnd: "2026-10-06T14:00:00.000Z" }));
+    expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart: NOW, rangeEnd: "2026-10-13T14:00:00.000Z" }));
   });
 
   it("names the calendars it could not check once for the whole list, not on each time", async () => {
@@ -704,6 +704,39 @@ describe("MeetingScheduler", () => {
       expect(screen.queryByRole("button", { name: /^Show \d+ More$/ })).not.toBeInTheDocument();
     });
 
+    it("searches past the range and shows a later day before a same-day alternate", async () => {
+      pinClock();
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+        // Week is Sep 30 - Oct 7; Oct 8 is past it.
+        candidates: [slotAt(30, 9), slotAt(30, 10), slotAt(30, 11), slotAt(31, 9), slotAt(31, 10), slotAt(38, 9)],
+        checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
+      });
+      renderScheduler(week);
+
+      const group = await screen.findByRole("group", { name: "Open times" });
+      expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart: week.query!.start, rangeEnd: "2026-10-14T04:00:00.000Z" }));
+      // Only two days are open in the range, so the third time shown is the later day's first, not a same-day alternate; it is not preselected.
+      expect(within(group).getAllByRole("button").map((slot) => slot.textContent)).toEqual([
+        expect.stringContaining("Sep 30"), expect.stringContaining("Oct 1"), expect.stringContaining("Oct 8"),
+      ]);
+      expect(within(group).getAllByRole("checkbox").map((box) => (box as HTMLInputElement).checked)).toEqual([true, true, false]);
+      fireEvent.click(screen.getByRole("button", { name: "Show 3 More" }));
+      const shown = within(group).getAllByRole("button").map((slot) => slot.textContent ?? "");
+      // Oct 8's first time came before any second time on Sep 30 or Oct 1.
+      expect(shown.filter((text) => text.includes("Oct 8"))).toHaveLength(1);
+      expect(shown.filter((text) => text.includes("Sep 30"))).toHaveLength(3);
+      expect(shown.filter((text) => text.includes("Oct 1"))).toHaveLength(2);
+    });
+
+    it("keeps the empty state when only days after the range are open", async () => {
+      pinClock();
+      vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+        candidates: [slotAt(38, 9)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
+      });
+      renderScheduler(week);
+      expect(await screen.findByText("No open times within the selected hours for this range.")).toBeInTheDocument();
+    });
+
     it("opens a time's day below it without changing whether the time is included, one day at a time", async () => {
       pinClock();
       vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
@@ -718,7 +751,8 @@ describe("MeetingScheduler", () => {
       const group = await screen.findByRole("group", { name: "Open times" });
       // The range is read once, to flag tight breaks, before any day is asked for.
       await waitFor(() => expect(events).toHaveBeenCalledTimes(1));
-      expect(events.mock.calls[0].slice(0, 2)).toEqual([week.query!.start, week.query!.end]);
+      // It covers the later days Show More can offer too.
+      expect(events.mock.calls[0].slice(0, 2)).toEqual([week.query!.start, "2026-10-14T04:00:00.000Z"]);
       const [first, second] = within(group).getAllByRole("button");
       expect(first).toHaveAttribute("aria-expanded", "false");
       expect(first).toHaveAccessibleDescription();
@@ -920,7 +954,7 @@ describe("MeetingScheduler", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Later" }));
       expect(await screen.findByText("Wed, Oct 7 – Tue, Oct 13")).toBeInTheDocument();
-      expect(find).toHaveBeenLastCalledWith(expect.objectContaining({ rangeStart: "2026-10-07T04:00:00.000Z", rangeEnd: "2026-10-14T04:00:00.000Z" }));
+      expect(find).toHaveBeenLastCalledWith(expect.objectContaining({ rangeStart: "2026-10-07T04:00:00.000Z", rangeEnd: "2026-10-21T04:00:00.000Z" }));
 
       fireEvent.click(screen.getByRole("button", { name: "Earlier" }));
       expect(await screen.findByText("Wed, Sep 30 – Tue, Oct 6")).toBeInTheDocument();
