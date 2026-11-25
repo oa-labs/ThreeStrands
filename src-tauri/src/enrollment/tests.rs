@@ -5332,4 +5332,112 @@ mod unverifiable_control_objects {
         assert!(victim.database.seen_control_object(&cid).unwrap());
         assert_eq!(transport.gets_of(&cid), 1);
     }
+    /// The case that motivates reviving ignored objects: with the cap full
+    /// of junk, a rotation that revokes D is ignored, and once its member's
+    /// announcement applies it must still take effect, so this device
+    /// neither trusts D nor shares keys with it.
+    #[tokio::test]
+    async fn a_revoking_rotation_ignored_under_a_full_cap_still_revokes_once_revived() {
+        let policy = RetryPolicy {
+            max_tracked: 3,
+            ..RetryPolicy::DEFAULT
+        };
+        let shared = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &shared, false)
+            .await
+            .unwrap();
+        let c = Member::new();
+        join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &shared)
+            .await
+            .unwrap();
+        let d = Member::new();
+        join_with_recovery_phrase(&d.database, &d.identity, &d.epoch_keys, &phrase, &shared)
+            .await
+            .unwrap();
+        a.sweep(&shared).await;
+        c.sweep(&shared).await;
+        let d_hex = encode_id(d.identity.device_id.as_bytes());
+        let d_status = |member: &Member| -> String {
+            member
+                .database
+                .test_connection()
+                .unwrap()
+                .query_row(
+                    "SELECT status FROM sync_devices WHERE device_id=?1",
+                    params![d_hex],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(d_status(&c), "active");
+
+        // B joins after C last looked, then revokes D.
+        let b = Member::new();
+        join_with_recovery_phrase(&b.database, &b.identity, &b.epoch_keys, &phrase, &shared)
+            .await
+            .unwrap();
+        b.sweep(&shared).await;
+        rotate_epoch(
+            &b.database,
+            &b.identity,
+            &b.keys(),
+            &b.epoch_keys,
+            &shared,
+            Some(&d_hex),
+        )
+        .await
+        .unwrap();
+        let (_, rotation) = rotation_at(&shared[0], 1).await;
+        let announcement = recovery_announcement_of(&shared[0], &b.identity).await;
+        let rotation_only = Counting::new("rotation-only");
+        let rotation_cid = rotation_only
+            .plant(&encode_signed_key_rotation(&rotation).unwrap())
+            .await;
+        let announcement_only = Counting::new("announcement-only");
+        announcement_only
+            .plant(&encode_signed_enrollment_grant(&announcement).unwrap())
+            .await;
+
+        // The cap fills with junk, so the rotation is ignored.
+        let junk = Counting::new("junk");
+        let start = now_ms();
+        for _ in 0..3 {
+            junk.plant(&forged(Kind::Rotation, &c, start)).await;
+        }
+        sweep_all(&c, &[junk.clone()], start, &policy).await;
+        assert_eq!(tracked(&c), 3);
+        sweep_all(
+            &c,
+            &[junk.clone(), rotation_only.clone()],
+            start + MINUTE_MS,
+            &policy,
+        )
+        .await;
+        assert!(c.database.seen_control_object(&rotation_cid).unwrap());
+        assert_eq!(c.active_epoch(), 0);
+        assert_eq!(d_status(&c), "active");
+
+        // B's announcement applies, reviving the rotation, which applies.
+        let all = [
+            junk.clone(),
+            rotation_only.clone(),
+            announcement_only.clone(),
+        ];
+        sweep_all(&c, &all, start + 2 * MINUTE_MS, &policy).await;
+        sweep_all(&c, &all, start + 3 * MINUTE_MS, &policy).await;
+        assert_eq!(c.active_epoch(), 1);
+        assert_eq!(d_status(&c), "revoked");
+
+        // D, still on epoch 0, advertises a lagging head: no keys go to it.
+        d.write_snippet("from-d");
+        d.push(&shared).await;
+        c.pull(&shared).await;
+        assert_eq!(
+            share_keys_with_lagging_peers(&c.database, &c.keys(), &shared)
+                .await
+                .unwrap(),
+            0
+        );
+    }
 }
