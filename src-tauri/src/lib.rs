@@ -42,6 +42,7 @@ mod meeting_policy;
 #[cfg(target_os = "android")]
 mod mobile;
 mod models;
+mod pdf_worker;
 mod proposed_times;
 mod scheduled_send;
 mod signatures;
@@ -1051,6 +1052,12 @@ fn record_synced_value<T: serde::Serialize>(
 }
 
 #[cfg(desktop)]
+/// Becomes the PDF worker and exits when the process was started as one.
+/// `main` calls this before anything else.
+pub fn run_pdf_worker_if_requested() {
+    pdf_worker::run_worker_if_requested();
+}
+
 pub fn run() {
     let builder = tauri::Builder::default();
     // Registered first so a second launch forwards its link or file and exits

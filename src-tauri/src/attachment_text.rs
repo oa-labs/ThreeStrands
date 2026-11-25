@@ -3,8 +3,17 @@
 //! Attachments come from arbitrary senders, so every format is parsed under
 //! fixed limits: the file size, the decompressed size of each Office part and
 //! of the whole archive, the number of parts read, and the characters kept.
-//! Callers run `extract` off the async runtime with a timeout, so a parser
-//! that loops or panics on a hostile file fails only that question.
+//!
+//! Office and text files are parsed in-process under those limits, off the
+//! async runtime with a timeout. PDF parsing is different: the PDF crates
+//! cannot cap decompressed stream size or parse depth, and a stack overflow
+//! aborts the whole process. On desktop, PDFs are therefore parsed in a
+//! killable child process (see `pdf_worker`) with CPU, memory, file
+//! descriptor, output, and wall-clock limits, one at a time, and a PDF that
+//! fails is not retried for the rest of the session. A hostile PDF can cost
+//! its question and a few seconds of one worker, but not the app. Platforms
+//! that cannot spawn a worker (Android) parse PDFs in-process and lack that
+//! isolation; they keep the one-at-a-time limit and the failure cache.
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
@@ -22,6 +31,22 @@ pub(crate) const MAX_CHAT_ATTACHMENTS: usize = 4;
 pub(crate) const MAX_ATTACHMENT_TEXT_CHARS: usize = 24_000;
 /// Longest one extraction may run before the question fails.
 pub(crate) const ATTACHMENT_EXTRACT_TIMEOUT: Duration = Duration::from_secs(20);
+/// Most PDF parsers running at once; further PDFs wait their turn.
+pub(crate) const MAX_CONCURRENT_PDF_WORKERS: usize = 1;
+/// Largest memory a PDF worker may use: enforced with `RLIMIT_AS` on Linux
+/// and by the parent polling the worker's physical footprint on macOS.
+pub(crate) const PDF_WORKER_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
+/// Most framed text a PDF worker may write before it is killed.
+pub(crate) const MAX_PDF_WORKER_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+/// CPU seconds a PDF worker may use (`RLIMIT_CPU`): just over the timeout.
+pub(crate) const PDF_WORKER_CPU_SECONDS: u64 = ATTACHMENT_EXTRACT_TIMEOUT.as_secs() + 2;
+/// File descriptors a PDF worker may hold open (`RLIMIT_NOFILE`).
+pub(crate) const PDF_WORKER_MAX_OPEN_FILES: u64 = 16;
+/// Stack of the thread a PDF worker parses on, so moderately deep but
+/// legitimate files parse while pathological nesting still dies in the worker.
+pub(crate) const PDF_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
+/// Extraction failures remembered so a retry does not rerun the same file.
+const FAILURE_CACHE_ENTRIES: usize = 32;
 /// Largest decompressed XML part read from an Office file.
 const MAX_OFFICE_PART_BYTES: u64 = 16 * 1024 * 1024;
 /// Largest total decompressed size read from one Office file.
@@ -98,11 +123,20 @@ pub(crate) fn extract(kind: DocumentKind, bytes: &[u8]) -> Result<ExtractedText,
     }
     let text = match kind {
         DocumentKind::Text => decode_text(bytes),
-        DocumentKind::Pdf => pdf_text(bytes)?,
+        DocumentKind::Pdf => pdf_pages_text(&pdf_pages(bytes).map_err(PdfFailure::message)?),
         DocumentKind::Docx => docx_text(bytes)?,
         DocumentKind::Xlsx => xlsx_text(bytes)?,
         DocumentKind::Pptx => pptx_text(bytes)?,
     };
+    finish(kind, text)
+}
+
+/// Extracts the text of a PDF whose pages a worker already parsed.
+pub(crate) fn extract_pdf_pages(pages: &[String]) -> Result<ExtractedText, String> {
+    finish(DocumentKind::Pdf, pdf_pages_text(pages))
+}
+
+fn finish(kind: DocumentKind, text: String) -> Result<ExtractedText, String> {
     let text = tidy(&text);
     if text.is_empty() {
         return Err(match kind {
@@ -168,15 +202,42 @@ fn tidy(text: &str) -> String {
     out.trim().to_string()
 }
 
-fn pdf_text(bytes: &[u8]) -> Result<String, String> {
-    let pages = pdf_extract::extract_text_from_mem_by_pages(bytes).map_err(|error| {
-        let detail = error.to_string();
-        if detail.to_ascii_lowercase().contains("encrypt") {
-            "it is password protected".to_string()
-        } else {
-            "it isn't a readable PDF".to_string()
+/// Why a PDF could not be parsed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PdfFailure {
+    Password,
+    Unreadable,
+}
+
+impl PdfFailure {
+    pub(crate) fn message(self) -> String {
+        match self {
+            PdfFailure::Password => "it is password protected",
+            PdfFailure::Unreadable => "it isn't a readable PDF",
         }
-    })?;
+        .to_string()
+    }
+}
+
+/// Parses a PDF into the text of each page. This is the hostile-input parse:
+/// on desktop it only runs inside the PDF worker process.
+pub(crate) fn pdf_pages(bytes: &[u8]) -> Result<Vec<String>, PdfFailure> {
+    pdf_extract::extract_text_from_mem_by_pages(bytes).map_err(|error| {
+        // lopdf reports the empty password failing as "decryption error: the
+        // supplied password is incorrect", which never says "encrypt".
+        let detail = error.to_string().to_ascii_lowercase();
+        if ["encrypt", "decrypt", "password"]
+            .iter()
+            .any(|word| detail.contains(word))
+        {
+            PdfFailure::Password
+        } else {
+            PdfFailure::Unreadable
+        }
+    })
+}
+
+fn pdf_pages_text(pages: &[String]) -> String {
     let mut out = String::new();
     for (index, page) in pages.iter().enumerate() {
         if page.trim().is_empty() {
@@ -191,7 +252,7 @@ fn pdf_text(bytes: &[u8]) -> Result<String, String> {
             break;
         }
     }
-    Ok(out)
+    out
 }
 
 /// An Office file opened with a budget for how much it may decompress.
@@ -545,6 +606,8 @@ pub(crate) type CachedAttachment = (String, String, ExtractedText);
 #[derive(Default)]
 pub(crate) struct ExtractCache {
     entries: Mutex<Vec<((String, String), CachedAttachment)>>,
+    /// Why an attachment could not be read, so asking again does not rerun it.
+    failures: Mutex<Vec<((String, String), String)>>,
 }
 
 impl ExtractCache {
@@ -568,10 +631,32 @@ impl ExtractCache {
         }
         entries.push(((message_id.to_string(), attachment_id.to_string()), cached));
     }
+
+    /// The error an earlier attempt on this attachment ended with.
+    pub(crate) fn failure(&self, message_id: &str, attachment_id: &str) -> Option<String> {
+        let failures = self.failures.lock().ok()?;
+        failures
+            .iter()
+            .find(|((message, attachment), _)| message == message_id && attachment == attachment_id)
+            .map(|(_, reason)| reason.clone())
+    }
+
+    pub(crate) fn insert_failure(&self, message_id: &str, attachment_id: &str, error: String) {
+        let Ok(mut failures) = self.failures.lock() else {
+            return;
+        };
+        failures.retain(|((message, attachment), _)| {
+            !(message == message_id && attachment == attachment_id)
+        });
+        if failures.len() >= FAILURE_CACHE_ENTRIES {
+            failures.remove(0);
+        }
+        failures.push(((message_id.to_string(), attachment_id.to_string()), error));
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::Write;
     use zip::write::SimpleFileOptions;
@@ -589,7 +674,7 @@ mod tests {
 
     /// A PDF whose pages each draw the given content stream with Helvetica,
     /// with a correct cross-reference table.
-    fn pdf(page_streams: &[&str]) -> Vec<u8> {
+    pub(crate) fn pdf(page_streams: &[&str]) -> Vec<u8> {
         let page_count = page_streams.len();
         // Objects: 1 catalog, 2 pages, 3 font, then a page and a content
         // stream for each page.
@@ -733,6 +818,31 @@ mod tests {
         );
     }
 
+    /// A PDF whose trailer names an indirect encryption dictionary that the
+    /// empty password does not open.
+    pub(crate) fn encrypted_pdf() -> Vec<u8> {
+        let mut out = pdf(&["BT /F1 12 Tf 72 700 Td (Secret) Tj ET"]);
+        // Append an incremental update: the dictionary as object 7 and a
+        // second cross-reference section whose trailer names it.
+        let encrypt_offset = out.len();
+        out.extend_from_slice(
+            b"7 0 obj\n<< /Filter /Standard /V 1 /R 2 /P -4 /O (01234567890123456789012345678901) /U (01234567890123456789012345678901) >>\nendobj\n",
+        );
+        let xref = out.len();
+        let previous = String::from_utf8_lossy(&out)
+            .rsplit("startxref\n")
+            .next()
+            .and_then(|tail| tail.lines().next()?.parse::<usize>().ok())
+            .unwrap();
+        out.extend_from_slice(
+            format!(
+                "xref\n7 1\n{encrypt_offset:010} 00000 n \ntrailer\n<< /Size 8 /Root 1 0 R /Prev {previous} /Encrypt 7 0 R /ID [<00> <00>] >>\nstartxref\n{xref}\n%%EOF\n"
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
     #[test]
     fn extracts_pdf_text_from_single_and_multi_page_documents() {
         let single = extract(
@@ -776,6 +886,56 @@ mod tests {
         );
         assert!(extract(DocumentKind::Pdf, b"%PDF-1.4\nnot really a pdf").is_err());
         assert!(extract(DocumentKind::Pdf, b"").is_err());
+        assert_eq!(
+            extract(DocumentKind::Pdf, &encrypted_pdf()).unwrap_err(),
+            "it is password protected"
+        );
+        assert_eq!(
+            extract(DocumentKind::Pdf, b"garbage").unwrap_err(),
+            "it isn't a readable PDF"
+        );
+    }
+
+    #[test]
+    fn worker_pages_get_the_same_markers_and_empty_page_handling() {
+        let pages =
+            |items: &[&str]| -> Vec<String> { items.iter().map(|i| i.to_string()).collect() };
+        assert_eq!(extract_pdf_pages(&pages(&["only"])).unwrap().text, "only");
+        assert_eq!(
+            extract_pdf_pages(&pages(&["one", " ", "three"]))
+                .unwrap()
+                .text,
+            "[Page 1]\none\n\n[Page 3]\nthree"
+        );
+        assert_eq!(
+            extract_pdf_pages(&pages(&[" "])).unwrap_err(),
+            "it has no readable text (it may be a scanned image)"
+        );
+        let long = "x".repeat(MAX_ATTACHMENT_TEXT_CHARS + 1);
+        assert!(extract_pdf_pages(&pages(&[&long])).unwrap().truncated);
+    }
+
+    #[test]
+    fn failures_are_remembered_up_to_the_cache_size() {
+        let cache = ExtractCache::default();
+        for index in 0..FAILURE_CACHE_ENTRIES {
+            cache.insert_failure(&format!("m{index}"), "a", format!("failed {index}"));
+        }
+        assert_eq!(cache.failure("m0", "a").as_deref(), Some("failed 0"));
+        cache.insert_failure("m-new", "a", "new".into());
+        assert_eq!(cache.failure("m0", "a"), None);
+        assert_eq!(cache.failure("m1", "a").as_deref(), Some("failed 1"));
+        // Re-recording replaces rather than duplicating.
+        cache.insert_failure("m1", "a", "again".into());
+        assert_eq!(cache.failure("m1", "a").as_deref(), Some("again"));
+        assert_eq!(cache.failure("m2", "a").as_deref(), Some("failed 2"));
+    }
+
+    #[test]
+    fn worker_limits_are_ordered_sensibly() {
+        assert!(PDF_WORKER_CPU_SECONDS > ATTACHMENT_EXTRACT_TIMEOUT.as_secs());
+        assert!(MAX_PDF_WORKER_OUTPUT_BYTES > MAX_ATTACHMENT_TEXT_CHARS * 4);
+        assert!(PDF_WORKER_STACK_BYTES as u64 <= PDF_WORKER_MEMORY_BYTES / 4);
     }
 
     #[test]

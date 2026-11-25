@@ -6029,6 +6029,7 @@ dependencies = [
  "jiff",
  "jni 0.22.4",
  "keyring",
+ "libc",
  "log",
  "mail-builder",
  "mail-parser",
