@@ -50,8 +50,9 @@ pub use enrollment::{
     encode_signed_enrollment_rejection, encode_signed_enrollment_request,
     encode_signed_key_rotation, enrollment_fingerprint, sign_enrollment_grant,
     sign_enrollment_rejection, sign_enrollment_request, sign_key_rotation, verify_enrollment_grant,
-    verify_enrollment_rejection, verify_enrollment_request, verify_key_rotation, EnrollmentGrant,
-    EnrollmentRejection, EnrollmentRequest, KeyRotation, RosterEntry, SealedEpochKey,
+    verify_enrollment_rejection, verify_enrollment_request, verify_key_rotation,
+    verify_rotation_anchor, verify_rotation_link, EnrollmentGrant, EnrollmentRejection,
+    EnrollmentRequest, KeyRotation, RosterEntry, RotationProof, SealedEpochKey,
     SignedEnrollmentGrant, SignedEnrollmentRejection, SignedEnrollmentRequest, SignedKeyRotation,
 };
 pub use error::EnvelopeError;
@@ -81,11 +82,15 @@ pub use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519Stati
 use header::{build_aad, EnvelopeHeader, HEADER_LEN, MESSAGE_ID_LEN, NONCE_LEN, TAG_LEN};
 
 /// The exact bytes of the protocol marker: an ordinary content-addressed
-/// object every protocol-version-3 group stores on each of its connectors.
+/// object every protocol-version-4 group stores on each of its connectors.
 /// Its presence is how a device tells a group it can join from one created
 /// by an earlier, incompatible build — the key rotation objects every
 /// version publishes look alike.
-pub const PROTOCOL_MARKER: &[u8] = b"threestrands-sync protocol 3\n";
+///
+/// Protocol 4 added the recovery anchor and epoch link to key rotations
+/// (see [`SignedKeyRotation`]). A protocol-3 group's rotations carry
+/// neither, so a recovery-phrase join could never trust them.
+pub const PROTOCOL_MARKER: &[u8] = b"threestrands-sync protocol 4\n";
 
 /// The CID of [`PROTOCOL_MARKER`].
 pub fn protocol_marker_cid() -> String {

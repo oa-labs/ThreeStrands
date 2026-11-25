@@ -44,4 +44,6 @@ pub enum EnvelopeError {
     DecodingFailed,
     #[error("a CID-referencing field is not a valid CIDv1 string")]
     InvalidCidReference,
+    #[error("key rotation does not carry exactly the proof its epoch requires")]
+    RotationProofMismatch,
 }

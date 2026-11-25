@@ -65,6 +65,7 @@ const MIGRATIONS: &[Migration] = &[
     (118, to_v118),
     (119, to_v119),
     (120, to_v120),
+    (121, to_v121),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1599,6 +1600,74 @@ fn to_v120(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v121(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Replicated-sync protocol version 4: key rotations carry a recovery
+    // anchor (genesis) or an epoch link (every later epoch), so a
+    // recovery-phrase join can tell the group's rotations from ones planted
+    // in its storage. A protocol 3 group has neither, so a device in one
+    // leaves it, as version 36 left protocol 2 groups: local data,
+    // connectors, and the beta toggle stay, the user is told once, and the
+    // sync loop forgets the old keys (`sync_pending_keychain_cleanup`). The
+    // statements match `Database::leave_sync_space` as of this version.
+    let was_enrolled: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sync_epoch_history)",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)?;
+    if !was_enrolled {
+        // A request to join a protocol 3 group can never complete now.
+        tx.execute("DELETE FROM replicated_sync_enrollment_requests", [])
+            .map_err(error)?;
+        return Ok(());
+    }
+    let highest_epoch: i64 = tx
+        .query_row(
+            "SELECT MAX(COALESCE((SELECT MAX(key_epoch) FROM sync_epoch_history), 0),
+                        COALESCE((SELECT MAX(active_epoch) FROM sync_spaces), 0))",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)?;
+    tx.execute(
+        "INSERT OR REPLACE INTO sync_pending_keychain_cleanup(id, highest_epoch) VALUES (1, ?1)",
+        [highest_epoch],
+    )
+    .map_err(error)?;
+    tx.execute(
+        "INSERT OR IGNORE INTO sync_notices(kind, created_at) VALUES ('protocol_reset', ?1)",
+        [Utc::now().to_rfc3339()],
+    )
+    .map_err(error)?;
+    tx.execute_batch(
+        "DELETE FROM scheduled_send_summaries;
+         DELETE FROM sync_deliveries;
+         DELETE FROM sync_values;
+         DELETE FROM sync_context;
+         DELETE FROM sync_objects;
+         DELETE FROM sync_epoch_history;
+         DELETE FROM replicated_sync_enrollment_requests;
+         DELETE FROM replicated_sync_invitation_redemptions;
+         DELETE FROM replicated_sync_invitations;
+         DELETE FROM sync_control_objects_seen;
+         DELETE FROM sync_device_labels;
+         DELETE FROM sync_devices;
+         DELETE FROM sync_remote_states;
+         DELETE FROM sync_local_state;
+         DELETE FROM sync_retired_objects;
+         DELETE FROM sync_head_publications;
+         DELETE FROM note_attachment_objects;
+         DELETE FROM note_attachments WHERE id NOT IN (SELECT id FROM note_attachment_data);
+         UPDATE note_attachments SET sealed_by=NULL, index_cid=NULL,
+             fetch_attempts=0, fetch_after=NULL, fetch_error=NULL;
+         UPDATE sync_spaces SET active_epoch=0, lamport=0, recovery_public_key=NULL,
+             recovery_x25519_public=NULL, last_error=NULL;",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
 fn to_v119(tx: &rusqlite::Transaction) -> Result<(), String> {
     ensure_note_exclude_from_ai_column(tx)
 }
@@ -2643,6 +2712,133 @@ mod tests {
             })
             .unwrap();
         assert_eq!(logged, 0);
+    }
+
+    /// A device enrolled in a protocol 3 sync group, as a v120 database
+    /// holds it, with local data that must survive leaving the group.
+    fn v120_database_in_a_protocol_3_group() -> Connection {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT OR REPLACE INTO sync_spaces(id, active_epoch, recovery_public_key, lamport, enabled, recovery_x25519_public)
+                     VALUES ('default', 2, x'01', 9, 1, x'02');
+                 INSERT INTO sync_epoch_history(key_epoch, activated_at, source_cid) VALUES
+                     (0, '2026-11-01T00:00:00Z', 'cid-0'), (1, '2026-11-02T00:00:00Z', 'cid-1'), (2, '2026-11-03T00:00:00Z', 'cid-2');
+                 INSERT INTO sync_devices(device_id, public_key, status, x25519_public, is_self) VALUES
+                     ('self', x'03', 'active', x'04', 1), ('peer', x'05', 'active', x'06', 0);
+                 INSERT INTO sync_values VALUES ('snippet', 's1', 'name', 'self', 1, 1, '\"Kept\"');
+                 INSERT INTO sync_context(device_id, counter) VALUES ('self', 1);
+                 INSERT INTO sync_control_objects_seen(cid, object_kind) VALUES ('cid-2', 'key_rotation');
+                 INSERT INTO replicated_sync_enrollment_requests(request_id, direction, fingerprint, created_at)
+                     VALUES ('request', 'incoming', 'AAAA-BBBB', '2026-11-04T00:00:00Z');
+                 INSERT INTO snippets(id, name, body, created_at) VALUES ('s1', 'Kept', 'body', '2026-11-01T00:00:00Z');
+                 INSERT INTO sync_transports(instance_id, kind, enabled) VALUES ('folder-1', 'folder', 1);",
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 120).unwrap();
+        connection
+    }
+
+    #[test]
+    fn a_v120_device_leaves_its_protocol_3_sync_group_and_is_told_once() {
+        let mut connection = v120_database_in_a_protocol_3_group();
+        super::migrate(&mut connection).unwrap();
+
+        let count = |connection: &Connection, sql: &str| -> i64 {
+            connection.query_row(sql, [], |row| row.get(0)).unwrap()
+        };
+        for table in [
+            "sync_epoch_history",
+            "sync_devices",
+            "sync_values",
+            "sync_context",
+            "sync_control_objects_seen",
+            "replicated_sync_enrollment_requests",
+        ] {
+            assert_eq!(
+                count(&connection, &format!("SELECT COUNT(*) FROM {table}")),
+                0,
+                "{table} should be empty"
+            );
+        }
+        let space: (i64, Option<Vec<u8>>, Option<Vec<u8>>) = connection
+            .query_row(
+                "SELECT active_epoch, recovery_public_key, recovery_x25519_public FROM sync_spaces WHERE id='default'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(space, (0, None, None));
+        assert_eq!(
+            count(
+                &connection,
+                "SELECT COUNT(*) FROM sync_notices WHERE kind='protocol_reset'"
+            ),
+            1
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "SELECT highest_epoch FROM sync_pending_keychain_cleanup WHERE id=1"
+            ),
+            2,
+            "every old epoch key is forgotten"
+        );
+        // Local data and connectors stay.
+        assert_eq!(count(&connection, "SELECT COUNT(*) FROM snippets"), 1);
+        assert_eq!(
+            count(&connection, "SELECT COUNT(*) FROM sync_transports"),
+            1
+        );
+
+        // Opening again changes nothing, and a dismissed notice stays gone.
+        connection
+            .execute("DELETE FROM sync_notices WHERE kind='protocol_reset'", [])
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(count(&connection, "SELECT COUNT(*) FROM sync_notices"), 0);
+    }
+
+    #[test]
+    fn a_v120_device_outside_any_sync_group_gets_no_reset_notice() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO sync_devices(device_id, public_key, status, x25519_public, is_self)
+                     VALUES ('self', x'03', 'active', x'04', 1);
+                 INSERT INTO replicated_sync_enrollment_requests(request_id, direction, fingerprint, created_at)
+                     VALUES ('mine', 'outgoing', 'AAAA-BBBB', '2026-11-04T00:00:00Z');
+                 INSERT INTO snippets(id, name, body, created_at) VALUES ('s1', 'Kept', 'body', '2026-11-01T00:00:00Z');",
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 120).unwrap();
+        super::migrate(&mut connection).unwrap();
+
+        let count = |sql: &str| -> i64 { connection.query_row(sql, [], |row| row.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM sync_notices"), 0);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sync_pending_keychain_cleanup"),
+            0
+        );
+        // A request to join a protocol 3 group can't complete any more.
+        assert_eq!(
+            count("SELECT COUNT(*) FROM replicated_sync_enrollment_requests"),
+            0
+        );
+        // This device's identity and data stay.
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sync_devices WHERE is_self=1"),
+            1
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM snippets"), 1);
     }
 
     #[test]

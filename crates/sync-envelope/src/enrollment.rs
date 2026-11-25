@@ -21,6 +21,10 @@ const GRANT_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-gr
 const REJECTION_SIGNATURE_DOMAIN: &[u8] =
     b"threestrands/sync-envelope/enrollment-rejection-signature/v1";
 const ROTATION_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/key-rotation-signature/v1";
+const ROTATION_ANCHOR_SIGNATURE_DOMAIN: &[u8] =
+    b"threestrands/sync-envelope/key-rotation-recovery-anchor/v1";
+const ROTATION_LINK_SIGNATURE_DOMAIN: &[u8] =
+    b"threestrands/sync-envelope/key-rotation-epoch-link/v1";
 const FINGERPRINT_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-fingerprint/v1";
 
 /// A snapshot of one device's roster entry, carried inside a grant or
@@ -283,15 +287,65 @@ pub struct KeyRotation {
     pub created_at_ms: i64,
 }
 
+/// A signed [`KeyRotation`] and the proofs that place it in its group's
+/// chain of epochs.
+///
+/// `signature` is the initiator's device signature, which a member checks
+/// against its own roster. The two proofs let a device that holds only the
+/// recovery phrase, and no roster yet, tell the group's real rotations from
+/// ones planted by anyone who can merely write to the connector:
+///
+/// - `recovery_anchor`, on the genesis rotation (epoch 0) only: a signature
+///   by the recovery Ed25519 key, which only a holder of the recovery
+///   phrase can make.
+/// - `epoch_link`, on every later rotation (epoch `n + 1`) only: a
+///   signature by a key derived from the raw `K_n` of the epoch it replaces
+///   (see [`crate::crypto::derive_epoch_link_signing_key`]), which only a
+///   member holding that key can make.
+///
+/// Both sign the rotation's canonical encoding, each under its own domain.
+/// Each is omitted from the encoding when absent, so a rotation published
+/// before they existed (protocol 3) still decodes byte for byte, and is
+/// then refused by [`verify_rotation_anchor`] and [`verify_rotation_link`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SignedKeyRotation {
     pub rotation: KeyRotation,
     pub signature: Signature,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_anchor: Option<Signature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch_link: Option<Signature>,
+}
+
+/// The proof a new rotation carries besides its initiator's signature.
+pub enum RotationProof<'a> {
+    /// The genesis rotation (epoch 0): signed by the recovery Ed25519 key.
+    Genesis {
+        recovery_signing_key: &'a SigningKey,
+    },
+    /// A rotation to epoch `n + 1`: `previous_k_epoch` is the raw `K_n`
+    /// of the epoch it replaces.
+    Successor { previous_k_epoch: &'a [u8; 32] },
+}
+
+/// Epoch 0 carries an anchor and no link; every later epoch carries a link
+/// and no anchor.
+fn check_rotation_proof_shape(signed: &SignedKeyRotation) -> Result<(), EnvelopeError> {
+    let genesis = signed.rotation.key_epoch == 0;
+    match (
+        genesis,
+        signed.recovery_anchor.is_some(),
+        signed.epoch_link.is_some(),
+    ) {
+        (true, true, false) | (false, false, true) => Ok(()),
+        _ => Err(EnvelopeError::RotationProofMismatch),
+    }
 }
 
 pub fn sign_key_rotation(
     signing_key: &SigningKey,
     rotation: KeyRotation,
+    proof: RotationProof<'_>,
 ) -> Result<SignedKeyRotation, EnvelopeError> {
     let canonical = canonical_dag_cbor(&rotation)?;
     let signature = Signature(crypto::sign_bytes(
@@ -299,15 +353,47 @@ pub fn sign_key_rotation(
         ROTATION_SIGNATURE_DOMAIN,
         &canonical,
     ));
-    Ok(SignedKeyRotation {
+    let (recovery_anchor, epoch_link) = match proof {
+        RotationProof::Genesis {
+            recovery_signing_key,
+        } => (
+            Some(Signature(crypto::sign_bytes(
+                recovery_signing_key,
+                ROTATION_ANCHOR_SIGNATURE_DOMAIN,
+                &canonical,
+            ))),
+            None,
+        ),
+        RotationProof::Successor { previous_k_epoch } => {
+            let previous_epoch = rotation
+                .key_epoch
+                .checked_sub(1)
+                .ok_or(EnvelopeError::RotationProofMismatch)?;
+            let link_key = crypto::derive_epoch_link_signing_key(previous_k_epoch, previous_epoch);
+            (
+                None,
+                Some(Signature(crypto::sign_bytes(
+                    &link_key,
+                    ROTATION_LINK_SIGNATURE_DOMAIN,
+                    &canonical,
+                ))),
+            )
+        }
+    };
+    let signed = SignedKeyRotation {
         rotation,
         signature,
-    })
+        recovery_anchor,
+        epoch_link,
+    };
+    check_rotation_proof_shape(&signed)?;
+    Ok(signed)
 }
 
 /// Verifies the rotation was signed by whoever holds `verifying_key`.
 /// Callers resolve it from their own current (pre-rotation) roster by
-/// `signed.rotation.initiator_device_id` before calling this.
+/// `signed.rotation.initiator_device_id` before calling this. Checks the
+/// initiator's signature only, never the anchor or link.
 pub fn verify_key_rotation(
     verifying_key: &VerifyingKey,
     signed: &SignedKeyRotation,
@@ -321,10 +407,64 @@ pub fn verify_key_rotation(
     )
 }
 
+/// Verifies a genesis rotation's recovery anchor against the recovery
+/// Ed25519 public key. Callers derive `recovery_verifying_key` from the
+/// recovery phrase themselves, never from the rotation's own
+/// `recovery_ed25519_public`. Fails unless the rotation is at epoch 0 and
+/// carries an anchor and no link.
+pub fn verify_rotation_anchor(
+    recovery_verifying_key: &VerifyingKey,
+    signed: &SignedKeyRotation,
+) -> Result<(), EnvelopeError> {
+    check_rotation_proof_shape(signed)?;
+    let anchor = signed
+        .recovery_anchor
+        .as_ref()
+        .ok_or(EnvelopeError::RotationProofMismatch)?;
+    let canonical = canonical_dag_cbor(&signed.rotation)?;
+    crypto::verify_bytes(
+        recovery_verifying_key,
+        ROTATION_ANCHOR_SIGNATURE_DOMAIN,
+        &canonical,
+        anchor.as_bytes(),
+    )
+}
+
+/// Verifies that a rotation to epoch `n + 1` was made by a holder of
+/// `previous_k_epoch`, the raw `K_n` the verifier already trusts. Fails
+/// unless the rotation is past epoch 0 and carries a link and no anchor.
+pub fn verify_rotation_link(
+    previous_k_epoch: &[u8; 32],
+    signed: &SignedKeyRotation,
+) -> Result<(), EnvelopeError> {
+    check_rotation_proof_shape(signed)?;
+    let link = signed
+        .epoch_link
+        .as_ref()
+        .ok_or(EnvelopeError::RotationProofMismatch)?;
+    let previous_epoch = signed
+        .rotation
+        .key_epoch
+        .checked_sub(1)
+        .ok_or(EnvelopeError::RotationProofMismatch)?;
+    let link_key = crypto::derive_epoch_link_signing_key(previous_k_epoch, previous_epoch);
+    let canonical = canonical_dag_cbor(&signed.rotation)?;
+    crypto::verify_bytes(
+        &link_key.verifying_key(),
+        ROTATION_LINK_SIGNATURE_DOMAIN,
+        &canonical,
+        link.as_bytes(),
+    )
+}
+
 pub fn encode_signed_key_rotation(signed: &SignedKeyRotation) -> Result<Vec<u8>, EnvelopeError> {
     canonical_dag_cbor(signed)
 }
 
+/// Decodes a rotation of either shape, so a connector holding a protocol-3
+/// group is still recognized as holding one. Whether it carries the proof
+/// its epoch requires is checked by [`verify_rotation_anchor`] and
+/// [`verify_rotation_link`].
 pub fn decode_signed_key_rotation(bytes: &[u8]) -> Result<SignedKeyRotation, EnvelopeError> {
     decode_canonical_dag_cbor(bytes)
 }
@@ -611,23 +751,341 @@ mod tests {
         }
     }
 
-    #[test]
-    fn rotation_round_trips_and_verifies() {
-        let initiator = SigningKey::generate(&mut os_rng());
-        let rotation = KeyRotation {
-            key_epoch: 5,
+    fn sample_rotation(key_epoch: u32) -> KeyRotation {
+        KeyRotation {
+            key_epoch,
             initiator_device_id: DeviceId::from_bytes([4u8; 16]),
             roster: vec![],
             sealed_stanzas: vec![ByteBuf::from(vec![1u8; 40]), ByteBuf::from(vec![2u8; 40])],
             recovery_ed25519_public: ByteBuf::from(vec![5u8; 32]),
             recovery_x25519_public: ByteBuf::from(vec![6u8; 32]),
             created_at_ms: 3000,
-        };
-        let signed = sign_key_rotation(&initiator, rotation).unwrap();
+        }
+    }
+
+    #[test]
+    fn rotation_round_trips_and_verifies() {
+        let initiator = SigningKey::generate(&mut os_rng());
+        let signed = sign_key_rotation(
+            &initiator,
+            sample_rotation(5),
+            RotationProof::Successor {
+                previous_k_epoch: &[7u8; 32],
+            },
+        )
+        .unwrap();
         verify_key_rotation(&initiator.verifying_key(), &signed).unwrap();
+        verify_rotation_link(&[7u8; 32], &signed).unwrap();
 
         let bytes = encode_signed_key_rotation(&signed).unwrap();
-        assert_eq!(decode_signed_key_rotation(&bytes).unwrap(), signed);
+        let decoded = decode_signed_key_rotation(&bytes).unwrap();
+        assert_eq!(decoded, signed);
+        assert_eq!(encode_signed_key_rotation(&decoded).unwrap(), bytes);
+    }
+
+    #[test]
+    fn a_genesis_anchor_verifies_only_under_the_recovery_key() {
+        let initiator = SigningKey::generate(&mut os_rng());
+        let recovery = SigningKey::generate(&mut os_rng());
+        let signed = sign_key_rotation(
+            &initiator,
+            sample_rotation(0),
+            RotationProof::Genesis {
+                recovery_signing_key: &recovery,
+            },
+        )
+        .unwrap();
+        assert!(signed.epoch_link.is_none());
+        verify_rotation_anchor(&recovery.verifying_key(), &signed).unwrap();
+        verify_key_rotation(&initiator.verifying_key(), &signed).unwrap();
+        assert_eq!(
+            verify_rotation_anchor(&initiator.verifying_key(), &signed),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+
+        let mut tampered = signed.clone();
+        tampered.rotation.created_at_ms += 1;
+        assert!(verify_rotation_anchor(&recovery.verifying_key(), &tampered).is_err());
+
+        let bytes = encode_signed_key_rotation(&signed).unwrap();
+        let decoded = decode_signed_key_rotation(&bytes).unwrap();
+        assert_eq!(decoded, signed);
+        assert_eq!(encode_signed_key_rotation(&decoded).unwrap(), bytes);
+    }
+
+    #[test]
+    fn an_epoch_link_verifies_only_under_the_previous_epochs_key() {
+        let initiator = SigningKey::generate(&mut os_rng());
+        let k_previous = [7u8; 32];
+        let signed = sign_key_rotation(
+            &initiator,
+            sample_rotation(5),
+            RotationProof::Successor {
+                previous_k_epoch: &k_previous,
+            },
+        )
+        .unwrap();
+        assert!(signed.recovery_anchor.is_none());
+        verify_rotation_link(&k_previous, &signed).unwrap();
+        assert_eq!(
+            verify_rotation_link(&[8u8; 32], &signed),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+
+        let mut tampered = signed.clone();
+        tampered.rotation.roster.push(RosterEntry {
+            device_id: DeviceId::from_bytes([9u8; 16]),
+            ed25519_public: ByteBuf::from(vec![9u8; 32]),
+            x25519_public: ByteBuf::from(vec![9u8; 32]),
+            status: "active".to_string(),
+        });
+        assert_eq!(
+            verify_rotation_link(&k_previous, &tampered),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+        let mut flipped = signed;
+        flipped.epoch_link.as_mut().unwrap().0[0] ^= 1;
+        assert_eq!(
+            verify_rotation_link(&k_previous, &flipped),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+    }
+
+    /// The link key is derived for the epoch it replaces, so a link made
+    /// from `K_n` for epoch `n + 1` proves nothing about epoch `n + 2`,
+    /// even when the rest of the rotation is copied unchanged.
+    #[test]
+    fn an_epoch_link_is_bound_to_the_epoch_it_follows() {
+        let initiator = SigningKey::generate(&mut os_rng());
+        let k_previous = [7u8; 32];
+        let for_epoch_5 = sign_key_rotation(
+            &initiator,
+            sample_rotation(5),
+            RotationProof::Successor {
+                previous_k_epoch: &k_previous,
+            },
+        )
+        .unwrap();
+        let mut moved = for_epoch_5.clone();
+        moved.rotation.key_epoch = 6;
+        moved.signature = sign_key_rotation(
+            &initiator,
+            moved.rotation.clone(),
+            RotationProof::Successor {
+                previous_k_epoch: &k_previous,
+            },
+        )
+        .unwrap()
+        .signature;
+        verify_key_rotation(&initiator.verifying_key(), &moved).unwrap();
+        assert_eq!(
+            verify_rotation_link(&k_previous, &moved),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+
+        // Signed with the link key for epoch 4 -> 5, but checked as if it
+        // followed epoch 5: the derived keys differ.
+        let link_key_4 = crypto::derive_epoch_link_signing_key(&k_previous, 4);
+        let link_key_5 = crypto::derive_epoch_link_signing_key(&k_previous, 5);
+        assert_ne!(link_key_4.verifying_key(), link_key_5.verifying_key());
+    }
+
+    /// The device signature, the anchor, and the link each sign the same
+    /// canonical rotation under their own domain, so one never passes as
+    /// another even when the same key makes both.
+    #[test]
+    fn rotation_signatures_are_domain_separated() {
+        let key = SigningKey::generate(&mut os_rng());
+        let genesis = sign_key_rotation(
+            &key,
+            sample_rotation(0),
+            RotationProof::Genesis {
+                recovery_signing_key: &key,
+            },
+        )
+        .unwrap();
+        assert_ne!(Some(genesis.signature), genesis.recovery_anchor);
+
+        let mut anchor_as_device = genesis.clone();
+        anchor_as_device.signature = genesis.recovery_anchor.unwrap();
+        assert_eq!(
+            verify_key_rotation(&key.verifying_key(), &anchor_as_device),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+        let mut device_as_anchor = genesis.clone();
+        device_as_anchor.recovery_anchor = Some(genesis.signature);
+        assert_eq!(
+            verify_rotation_anchor(&key.verifying_key(), &device_as_anchor),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+
+        // A link made with a key that is also the initiator's device key.
+        let k_previous = [3u8; 32];
+        let link_key = crypto::derive_epoch_link_signing_key(&k_previous, 4);
+        let successor = sign_key_rotation(
+            &link_key,
+            sample_rotation(5),
+            RotationProof::Successor {
+                previous_k_epoch: &k_previous,
+            },
+        )
+        .unwrap();
+        let mut link_as_device = successor.clone();
+        link_as_device.signature = successor.epoch_link.unwrap();
+        assert_eq!(
+            verify_key_rotation(&link_key.verifying_key(), &link_as_device),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+        let mut device_as_link = successor.clone();
+        device_as_link.epoch_link = Some(successor.signature);
+        assert_eq!(
+            verify_rotation_link(&k_previous, &device_as_link),
+            Err(EnvelopeError::SignatureInvalid)
+        );
+    }
+
+    #[test]
+    fn each_epoch_requires_exactly_its_own_proof() {
+        let initiator = SigningKey::generate(&mut os_rng());
+        let recovery = SigningKey::generate(&mut os_rng());
+        let k_previous = [7u8; 32];
+
+        // Signing refuses the wrong proof for the epoch.
+        assert_eq!(
+            sign_key_rotation(
+                &initiator,
+                sample_rotation(3),
+                RotationProof::Genesis {
+                    recovery_signing_key: &recovery
+                }
+            )
+            .map(|_| ()),
+            Err(EnvelopeError::RotationProofMismatch)
+        );
+        assert_eq!(
+            sign_key_rotation(
+                &initiator,
+                sample_rotation(0),
+                RotationProof::Successor {
+                    previous_k_epoch: &k_previous
+                }
+            )
+            .map(|_| ()),
+            Err(EnvelopeError::RotationProofMismatch)
+        );
+
+        let genesis = sign_key_rotation(
+            &initiator,
+            sample_rotation(0),
+            RotationProof::Genesis {
+                recovery_signing_key: &recovery,
+            },
+        )
+        .unwrap();
+        let successor = sign_key_rotation(
+            &initiator,
+            sample_rotation(1),
+            RotationProof::Successor {
+                previous_k_epoch: &k_previous,
+            },
+        )
+        .unwrap();
+
+        // Missing.
+        let mut no_anchor = genesis.clone();
+        no_anchor.recovery_anchor = None;
+        let mut no_link = successor.clone();
+        no_link.epoch_link = None;
+        // Extra.
+        let mut genesis_with_link = genesis.clone();
+        genesis_with_link.epoch_link = successor.epoch_link;
+        let mut successor_with_anchor = successor.clone();
+        successor_with_anchor.recovery_anchor = genesis.recovery_anchor;
+        // The wrong one for the epoch.
+        let mut genesis_with_only_a_link = no_anchor.clone();
+        genesis_with_only_a_link.epoch_link = successor.epoch_link;
+        let mut successor_with_only_an_anchor = no_link.clone();
+        successor_with_only_an_anchor.recovery_anchor = genesis.recovery_anchor;
+
+        for bad in [&no_anchor, &genesis_with_link, &genesis_with_only_a_link] {
+            assert_eq!(
+                verify_rotation_anchor(&recovery.verifying_key(), bad),
+                Err(EnvelopeError::RotationProofMismatch)
+            );
+            assert_eq!(
+                verify_rotation_link(&k_previous, bad),
+                Err(EnvelopeError::RotationProofMismatch)
+            );
+        }
+        for bad in [
+            &no_link,
+            &successor_with_anchor,
+            &successor_with_only_an_anchor,
+        ] {
+            assert_eq!(
+                verify_rotation_link(&k_previous, bad),
+                Err(EnvelopeError::RotationProofMismatch)
+            );
+            assert_eq!(
+                verify_rotation_anchor(&recovery.verifying_key(), bad),
+                Err(EnvelopeError::RotationProofMismatch)
+            );
+        }
+        // Every shape still decodes and re-encodes byte for byte; only the
+        // verifiers refuse it.
+        for shape in [
+            &no_anchor,
+            &genesis_with_link,
+            &no_link,
+            &successor_with_anchor,
+        ] {
+            let bytes = encode_signed_key_rotation(shape).unwrap();
+            let decoded = decode_signed_key_rotation(&bytes).unwrap();
+            assert_eq!(&decoded, shape);
+            assert_eq!(encode_signed_key_rotation(&decoded).unwrap(), bytes);
+        }
+    }
+
+    /// The shape `SignedKeyRotation` had in protocol 3, before rotations
+    /// carried an anchor or link.
+    #[derive(Serialize)]
+    struct ProtocolThreeSignedRotation {
+        rotation: KeyRotation,
+        signature: Signature,
+    }
+
+    #[test]
+    fn a_protocol_3_rotation_decodes_byte_for_byte_but_proves_nothing() {
+        let initiator = SigningKey::generate(&mut os_rng());
+        for key_epoch in [0, 2] {
+            let rotation = sample_rotation(key_epoch);
+            let signature = Signature(crypto::sign_bytes(
+                &initiator,
+                ROTATION_SIGNATURE_DOMAIN,
+                &canonical_dag_cbor(&rotation).unwrap(),
+            ));
+            let legacy_bytes = canonical_dag_cbor(&ProtocolThreeSignedRotation {
+                rotation,
+                signature,
+            })
+            .unwrap();
+            let decoded = decode_signed_key_rotation(&legacy_bytes).unwrap();
+            assert_eq!(decoded.recovery_anchor, None);
+            assert_eq!(decoded.epoch_link, None);
+            assert_eq!(encode_signed_key_rotation(&decoded).unwrap(), legacy_bytes);
+            // Still self-consistent, so a connector holding it is seen to
+            // hold a group...
+            verify_key_rotation(&initiator.verifying_key(), &decoded).unwrap();
+            // ...but neither proof accepts it.
+            assert_eq!(
+                verify_rotation_anchor(&initiator.verifying_key(), &decoded),
+                Err(EnvelopeError::RotationProofMismatch)
+            );
+            assert_eq!(
+                verify_rotation_link(&[7u8; 32], &decoded),
+                Err(EnvelopeError::RotationProofMismatch)
+            );
+        }
     }
 
     #[test]

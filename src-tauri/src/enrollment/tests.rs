@@ -7,9 +7,11 @@ use threestrands_sync_envelope::limits::MAX_EARLIER_EPOCH_KEYS;
 use threestrands_sync_envelope::{
     compute_cid, decode_signed_enrollment_grant, decode_signed_key_rotation,
     encode_signed_enrollment_grant, encode_signed_key_rotation, generate_recovery_seed,
-    protocol_marker_cid, seal_to_x25519, sign_enrollment_grant, try_open_sealed_box,
-    verify_enrollment_grant, DeviceId as EnvelopeDeviceId, EnrollmentGrant, RequestId, RosterEntry,
-    X25519PublicKey, PROTOCOL_MARKER,
+    protocol_marker_cid, seal_to_x25519, sign_device_head, sign_enrollment_grant,
+    sign_key_rotation, try_open_sealed_box, verify_enrollment_grant, DeviceHead,
+    DeviceId as EnvelopeDeviceId, EnrollmentGrant, KeyRotation, RequestId, RosterEntry,
+    RotationProof, SignedEnrollmentGrant, SignedKeyRotation, SigningKey, X25519PublicKey,
+    PROTOCOL_MARKER,
 };
 use threestrands_sync_protocol::EntityType;
 use threestrands_sync_transport::fake::FakeTransport;
@@ -1800,6 +1802,813 @@ async fn meeting_an_older_rotation_after_a_newer_one_never_moves_the_active_epoc
     assert_eq!(c.active_epoch(), 2);
     assert_eq!(c.epoch_keys.get(1), a.epoch_keys.get(1));
     assert_eq!(c.epoch_keys.get(2), a.epoch_keys.get(2));
+}
+
+// ===================== Recovery joins trust only the chain =====================
+
+/// Every key rotation on the transport, with its CID.
+async fn rotations_on(transport: &Arc<dyn SyncTransport>) -> Vec<(String, SignedKeyRotation)> {
+    let mut found = Vec::new();
+    let page = transport.scan(None).await.unwrap().unwrap();
+    for locator in page.objects {
+        let bytes = transport.get_object(&locator.cid).await.unwrap();
+        if let Ok(signed) = decode_signed_key_rotation(&bytes) {
+            found.push((locator.cid.0, signed));
+        }
+    }
+    found
+}
+
+async fn rotation_at(
+    transport: &Arc<dyn SyncTransport>,
+    key_epoch: u32,
+) -> (String, SignedKeyRotation) {
+    let mut at_epoch: Vec<_> = rotations_on(transport)
+        .await
+        .into_iter()
+        .filter(|(_, signed)| signed.rotation.key_epoch == key_epoch)
+        .collect();
+    assert_eq!(at_epoch.len(), 1, "one rotation at epoch {key_epoch}");
+    at_epoch.remove(0)
+}
+
+/// Someone who can write to the connector but was never a member: it has
+/// its own device key and sees every rotation's cleartext, including the
+/// recovery public keys, but holds no epoch key and not the phrase.
+struct Intruder {
+    signing_key: SigningKey,
+    x25519_secret: [u8; 32],
+    device_id: EnvelopeDeviceId,
+}
+
+impl Intruder {
+    fn new() -> Self {
+        let mut x25519_secret = [0u8; 32];
+        rand::Rng::fill_bytes(
+            &mut threestrands_sync_envelope::os_rng(),
+            &mut x25519_secret,
+        );
+        Self {
+            signing_key: SigningKey::generate(&mut threestrands_sync_envelope::os_rng()),
+            x25519_secret,
+            device_id: EnvelopeDeviceId::from_bytes(random_id()),
+        }
+    }
+
+    fn roster_entry(&self) -> RosterEntry {
+        RosterEntry {
+            device_id: self.device_id,
+            ed25519_public: ByteBuf::from(self.signing_key.verifying_key().to_bytes().to_vec()),
+            x25519_public: ByteBuf::from(x25519_public_bytes(&self.x25519_secret).to_vec()),
+            status: "active".to_string(),
+        }
+    }
+
+    fn device_id_hex(&self) -> String {
+        encode_id(self.device_id.as_bytes())
+    }
+
+    /// A rotation it signs as initiator, adding itself to `roster`, sealing
+    /// a key of its choosing to `recovery_x25519` and itself, and carrying
+    /// `recovery_*` as its recovery keys.
+    fn forge(
+        &self,
+        key_epoch: u32,
+        mut roster: Vec<RosterEntry>,
+        recovery: ([u8; 32], [u8; 32]),
+        seal_to_recovery: [u8; 32],
+        created_at_ms: i64,
+        proof: RotationProof<'_>,
+    ) -> SignedKeyRotation {
+        roster.push(self.roster_entry());
+        let chosen_key = [0x66u8; 32];
+        sign_key_rotation(
+            &self.signing_key,
+            KeyRotation {
+                key_epoch,
+                initiator_device_id: self.device_id,
+                roster,
+                sealed_stanzas: vec![
+                    ByteBuf::from(seal_to_x25519(
+                        &x25519_public_bytes(&self.x25519_secret),
+                        &chosen_key,
+                    )),
+                    ByteBuf::from(seal_to_x25519(&seal_to_recovery, &chosen_key)),
+                ],
+                recovery_ed25519_public: ByteBuf::from(recovery.0.to_vec()),
+                recovery_x25519_public: ByteBuf::from(recovery.1.to_vec()),
+                created_at_ms,
+            },
+            proof,
+        )
+        .unwrap()
+    }
+
+    /// A rotation it can make for `key_epoch` without any group secret:
+    /// the real recovery keys, a stanza sealed to the real recovery key, and
+    /// a link made with a key it guessed.
+    fn forge_successor(
+        &self,
+        key_epoch: u32,
+        roster: Vec<RosterEntry>,
+        recovery: ([u8; 32], [u8; 32]),
+        created_at_ms: i64,
+    ) -> SignedKeyRotation {
+        self.forge(
+            key_epoch,
+            roster,
+            recovery,
+            recovery.1,
+            created_at_ms,
+            RotationProof::Successor {
+                previous_k_epoch: &[0x55u8; 32],
+            },
+        )
+    }
+
+    /// Publishes a head claiming it is still on epoch 0, the way a lagging
+    /// member would ask for key catch-up.
+    async fn publish_lagging_head(&self, transports: &[Arc<dyn SyncTransport>]) {
+        let head = sign_device_head(
+            &self.signing_key,
+            DeviceHead {
+                sync_space_id: SPACE_ID.as_bytes().to_vec(),
+                device_id: self.device_id,
+                epoch: 0,
+                state_sequence: 1,
+                state_cid: Some(compute_cid(b"the intruder's state")),
+                published_at_ms: now_ms(),
+            },
+        )
+        .unwrap();
+        for transport in transports {
+            transport.publish_head(&head).await.unwrap();
+        }
+    }
+
+    /// Whether any grant or rotation on the transport opens with its key.
+    async fn received_any_key(&self, transport: &Arc<dyn SyncTransport>) -> bool {
+        let page = transport.scan(None).await.unwrap().unwrap();
+        for locator in page.objects {
+            let bytes = transport.get_object(&locator.cid).await.unwrap();
+            if let Ok(signed) = decode_signed_enrollment_grant(&bytes) {
+                if try_open_sealed_box(&self.x25519_secret, &signed.grant.sealed_epoch_key)
+                    .is_some()
+                {
+                    return true;
+                }
+            }
+            if let Ok(signed) = decode_signed_key_rotation(&bytes) {
+                // Its own forgeries open, of course; only members' count.
+                if signed.rotation.initiator_device_id != self.device_id
+                    && signed
+                        .rotation
+                        .sealed_stanzas
+                        .iter()
+                        .any(|stanza| try_open_sealed_box(&self.x25519_secret, stanza).is_some())
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+/// The recovery-signed announcement `device` published when it joined.
+async fn recovery_announcement_of(
+    transport: &Arc<dyn SyncTransport>,
+    device: &DeviceIdentity,
+) -> SignedEnrollmentGrant {
+    let page = transport.scan(None).await.unwrap().unwrap();
+    for locator in page.objects {
+        let bytes = transport.get_object(&locator.cid).await.unwrap();
+        if let Ok(signed) = decode_signed_enrollment_grant(&bytes) {
+            if signed.grant.signed_by_recovery
+                && signed.grant.approver_device_id == device.device_id
+            {
+                return signed;
+            }
+        }
+    }
+    panic!("no recovery announcement from this device");
+}
+
+/// A founder at epoch 2 that has published a head there, and its phrase.
+async fn founder_at_epoch_two(transports: &[Arc<dyn SyncTransport>]) -> (Member, String) {
+    let a = Member::new();
+    let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, transports, false)
+        .await
+        .unwrap();
+    a.write_snippet("epoch-0");
+    a.push(transports).await;
+    a.rotate(transports).await;
+    a.rotate(transports).await;
+    a.write_snippet("epoch-2");
+    a.push(transports).await;
+    assert_eq!(a.active_epoch(), 2);
+    (a, phrase)
+}
+
+fn recovery_keys_of(member: &Member) -> ([u8; 32], [u8; 32]) {
+    member.database.recovery_public_keys().unwrap().unwrap()
+}
+
+async fn recover(
+    member: &Member,
+    phrase: &str,
+    transports: &[Arc<dyn SyncTransport>],
+) -> EnrollmentResult<()> {
+    join_with_recovery_phrase(
+        &member.database,
+        &member.identity,
+        &member.epoch_keys,
+        phrase,
+        transports,
+    )
+    .await
+}
+
+/// After `c` recovered next to `intruder`'s forgeries: `c` holds the real
+/// chain's keys and roster, its announcement leaves the intruder out, and
+/// no member ever hands the intruder a key.
+async fn assert_recovered_the_real_chain(
+    a: &Member,
+    c: &Member,
+    intruder: &Intruder,
+    transports: &[Arc<dyn SyncTransport>],
+) {
+    assert_eq!(c.active_epoch(), a.active_epoch());
+    for epoch in 0..=a.active_epoch() {
+        assert_eq!(
+            c.epoch_keys.get(epoch),
+            a.epoch_keys.get(epoch),
+            "epoch {epoch}"
+        );
+    }
+    assert!(!c.database.device_known(&intruder.device_id_hex()).unwrap());
+    assert_eq!(
+        c.database.recovery_public_keys().unwrap(),
+        Some(recovery_keys_of(a))
+    );
+    let announcement = recovery_announcement_of(&transports[0], &c.identity).await;
+    assert!(announcement
+        .grant
+        .roster
+        .iter()
+        .all(|entry| entry.device_id != intruder.device_id));
+    assert_eq!(
+        announcement.grant.recovery_x25519_public.as_slice(),
+        recovery_keys_of(a).1
+    );
+
+    // The members carry on, and the intruder asks to be caught up.
+    intruder.publish_lagging_head(transports).await;
+    for member in [a, c] {
+        member.sweep(transports).await;
+        member.pull(transports).await;
+        share_keys_with_lagging_peers(&member.database, &member.keys(), transports)
+            .await
+            .unwrap();
+        assert!(!member
+            .database
+            .device_known(&intruder.device_id_hex())
+            .unwrap());
+    }
+    assert_eq!(c.snippet("epoch-0").as_deref(), Some("epoch-0"));
+    assert_eq!(c.snippet("epoch-2").as_deref(), Some("epoch-2"));
+    assert!(!intruder.received_any_key(&transports[0]).await);
+}
+
+#[tokio::test]
+async fn a_recovery_join_ignores_a_rotation_planted_after_the_newest_epoch() {
+    let transports = fake_transports("shared");
+    let (a, phrase) = founder_at_epoch_two(&transports).await;
+    let intruder = Intruder::new();
+    let (_, latest) = rotation_at(&transports[0], 2).await;
+    // Sealed to the recovery key, so it opens with the phrase exactly like
+    // the real ones do; before protocol 4 that was enough to be trusted.
+    let forged = intruder.forge_successor(
+        3,
+        latest.rotation.roster.clone(),
+        recovery_keys_of(&a),
+        now_ms(),
+    );
+    publish_to_all(&transports, &encode_signed_key_rotation(&forged).unwrap()).await;
+
+    let c = Member::new();
+    recover(&c, &phrase, &transports).await.unwrap();
+    assert_recovered_the_real_chain(&a, &c, &intruder, &transports).await;
+    assert_eq!(c.epoch_keys.get(3), None);
+}
+
+/// A forgery at an epoch the group already has, whichever side of the real
+/// rotation's content address it lands on: before protocol 4 the first one
+/// scanned won.
+#[tokio::test]
+async fn a_recovery_join_ignores_a_rotation_competing_with_a_real_one() {
+    for forgery_sorts_first in [true, false] {
+        let transports = fake_transports("shared");
+        let (a, phrase) = founder_at_epoch_two(&transports).await;
+        let intruder = Intruder::new();
+        for epoch in [1, 2] {
+            let (real_cid, real) = rotation_at(&transports[0], epoch).await;
+            let mut created_at_ms = real.rotation.created_at_ms;
+            let forged = loop {
+                let forged = intruder.forge_successor(
+                    epoch,
+                    real.rotation.roster.clone(),
+                    recovery_keys_of(&a),
+                    created_at_ms,
+                );
+                let cid = compute_cid(&encode_signed_key_rotation(&forged).unwrap());
+                if (cid < real_cid) == forgery_sorts_first {
+                    break forged;
+                }
+                created_at_ms += 1;
+            };
+            publish_to_all(&transports, &encode_signed_key_rotation(&forged).unwrap()).await;
+        }
+
+        let c = Member::new();
+        recover(&c, &phrase, &transports).await.unwrap();
+        assert_recovered_the_real_chain(&a, &c, &intruder, &transports).await;
+    }
+}
+
+#[tokio::test]
+async fn a_recovery_join_needs_a_genesis_anchored_by_the_phrase() {
+    let transports = fake_transports("shared");
+    let (a, phrase) = founder_at_epoch_two(&transports).await;
+    let intruder = Intruder::new();
+    let recovery = recovery_keys_of(&a);
+    // A genesis "anchored" by the intruder's own key, sealed to the real
+    // recovery key and naming the real recovery keys.
+    let forged_genesis = intruder.forge(
+        0,
+        vec![],
+        recovery,
+        recovery.1,
+        now_ms(),
+        RotationProof::Genesis {
+            recovery_signing_key: &intruder.signing_key,
+        },
+    );
+    publish_to_all(
+        &transports,
+        &encode_signed_key_rotation(&forged_genesis).unwrap(),
+    )
+    .await;
+    let c = Member::new();
+    recover(&c, &phrase, &transports).await.unwrap();
+    assert_recovered_the_real_chain(&a, &c, &intruder, &transports).await;
+
+    // With the real genesis gone, nothing is anchored and nothing is joined.
+    let transports = fake_transports("alone");
+    let (a, phrase) = founder_at_epoch_two(&transports).await;
+    let (genesis_cid, _) = rotation_at(&transports[0], 0).await;
+    transports[0]
+        .delete_object(&TransportCid(genesis_cid))
+        .await
+        .unwrap();
+    let forged_genesis = intruder.forge(
+        0,
+        vec![],
+        recovery_keys_of(&a),
+        recovery_keys_of(&a).1,
+        now_ms(),
+        RotationProof::Genesis {
+            recovery_signing_key: &intruder.signing_key,
+        },
+    );
+    publish_to_all(
+        &transports,
+        &encode_signed_key_rotation(&forged_genesis).unwrap(),
+    )
+    .await;
+    let d = Member::new();
+    assert!(matches!(
+        recover(&d, &phrase, &transports).await.unwrap_err(),
+        EnrollmentError::NoRecoverableRotation
+    ));
+    assert!(
+        d.epoch_keys.get(0).is_none(),
+        "a refused join stores no keys"
+    );
+    assert!(matches!(
+        d.database.enrollment_status().unwrap(),
+        EnrollmentStatus::NotStarted
+    ));
+}
+
+/// Two genesis rotations both anchored by the phrase can only exist if the
+/// phrase itself leaked. Neither is picked.
+#[tokio::test]
+async fn a_recovery_join_refuses_two_genesis_rotations_anchored_by_the_phrase() {
+    let transports = fake_transports("shared");
+    let (a, phrase) = founder_at_epoch_two(&transports).await;
+    let seed = threestrands_sync_envelope::recovery_seed_from_phrase(&phrase).unwrap();
+    let recovery_signing_key = threestrands_sync_envelope::recovery_ed25519_signing_key(&seed);
+    let intruder = Intruder::new();
+    let second = intruder.forge(
+        0,
+        vec![],
+        recovery_keys_of(&a),
+        recovery_keys_of(&a).1,
+        now_ms(),
+        RotationProof::Genesis {
+            recovery_signing_key: &recovery_signing_key,
+        },
+    );
+    publish_to_all(&transports, &encode_signed_key_rotation(&second).unwrap()).await;
+    let c = Member::new();
+    assert!(matches!(
+        recover(&c, &phrase, &transports).await.unwrap_err(),
+        EnrollmentError::AmbiguousRecoveryGroup
+    ));
+    assert!(c.epoch_keys.get(0).is_none());
+}
+
+/// A rotation naming recovery keys other than the phrase's is ignored even
+/// when it links correctly, and the recovering device keeps the phrase's
+/// keys rather than any rotation's.
+#[tokio::test]
+async fn a_recovery_join_ignores_a_rotation_with_substituted_recovery_keys() {
+    let transports = fake_transports("shared");
+    let (a, phrase) = founder_at_epoch_two(&transports).await;
+    let intruder = Intruder::new();
+    let intruder_seed = generate_recovery_seed();
+    let intruder_recovery = (
+        threestrands_sync_envelope::recovery_ed25519_signing_key(&intruder_seed)
+            .verifying_key()
+            .to_bytes(),
+        X25519PublicKey::from(&threestrands_sync_envelope::recovery_x25519_secret(
+            &intruder_seed,
+        ))
+        .to_bytes(),
+    );
+    let (_, latest) = rotation_at(&transports[0], 2).await;
+    // Linked with the real K_2, as if a member had made it, so only the
+    // recovery-key check stands in its way.
+    let substituted = intruder.forge(
+        3,
+        latest.rotation.roster.clone(),
+        intruder_recovery,
+        recovery_keys_of(&a).1,
+        now_ms(),
+        RotationProof::Successor {
+            previous_k_epoch: &a.epoch_keys.get(2).unwrap(),
+        },
+    );
+    publish_to_all(
+        &transports,
+        &encode_signed_key_rotation(&substituted).unwrap(),
+    )
+    .await;
+
+    let c = Member::new();
+    recover(&c, &phrase, &transports).await.unwrap();
+    assert_ne!(
+        Some(intruder_recovery),
+        c.database.recovery_public_keys().unwrap()
+    );
+    assert_recovered_the_real_chain(&a, &c, &intruder, &transports).await;
+}
+
+/// The newest rotation replaced by one whose link is missing, broken, or
+/// no longer covers its contents: the chain stops short of the epoch the
+/// founder's head is on, so the join waits instead of trusting it.
+#[tokio::test]
+async fn a_recovery_join_never_follows_a_missing_or_tampered_link() {
+    let intruder = Intruder::new();
+    let tamperings: [(&str, fn(&mut SignedKeyRotation, &Intruder)); 3] = [
+        ("missing", |signed, _| signed.epoch_link = None),
+        ("broken", |signed, _| {
+            signed.epoch_link.as_mut().unwrap().0[0] ^= 1;
+        }),
+        ("re-signed with the intruder added", |signed, intruder| {
+            signed.rotation.roster.push(intruder.roster_entry());
+            signed.rotation.initiator_device_id = intruder.device_id;
+            signed.signature = sign_key_rotation(
+                &intruder.signing_key,
+                signed.rotation.clone(),
+                RotationProof::Successor {
+                    previous_k_epoch: &[0u8; 32],
+                },
+            )
+            .unwrap()
+            .signature;
+        }),
+    ];
+    for (name, tamper) in tamperings {
+        let transports = fake_transports("shared");
+        let (_, phrase) = founder_at_epoch_two(&transports).await;
+        let (real_cid, mut tampered) = rotation_at(&transports[0], 2).await;
+        tamper(&mut tampered, &intruder);
+        assert!(
+            is_self_consistent_rotation(&encode_signed_key_rotation(&tampered).unwrap()),
+            "{name}: still verifies against its own initiator"
+        );
+        transports[0]
+            .delete_object(&TransportCid(real_cid))
+            .await
+            .unwrap();
+        publish_to_all(&transports, &encode_signed_key_rotation(&tampered).unwrap()).await;
+
+        let c = Member::new();
+        assert!(
+            matches!(
+                recover(&c, &phrase, &transports).await.unwrap_err(),
+                EnrollmentError::RecoveryIncomplete
+            ),
+            "{name}"
+        );
+        assert!(c.epoch_keys.get(0).is_none(), "{name}: no keys stored");
+        assert!(!c.database.device_known(&intruder.device_id_hex()).unwrap());
+    }
+}
+
+/// Two members rotated to the same epoch at once. Until the collision is
+/// settled a recovering device takes the rotation with the greater content
+/// address, whose initiator is the one that rotates again; once it has,
+/// the device follows the chain through it.
+#[tokio::test]
+async fn a_recovery_join_follows_concurrent_rotations_the_way_members_settle_them() {
+    let transports = fake_transports("shared");
+    let a = Member::new();
+    let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false)
+        .await
+        .unwrap();
+    let b = Member::new();
+    recover(&b, &phrase, &transports).await.unwrap();
+    a.sweep(&transports).await;
+    a.rotate(&transports).await;
+    b.rotate(&transports).await;
+    let at_one: Vec<(String, SignedKeyRotation)> = rotations_on(&transports[0])
+        .await
+        .into_iter()
+        .filter(|(_, signed)| signed.rotation.key_epoch == 1)
+        .collect();
+    assert_eq!(at_one.len(), 2);
+    let (greater_cid, greater) = at_one.iter().max_by(|x, y| x.0.cmp(&y.0)).unwrap();
+    let (resolver, other) = if greater.rotation.initiator_device_id == a.identity.device_id {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+
+    let c = Member::new();
+    recover(&c, &phrase, &transports).await.unwrap();
+    assert_eq!(c.active_epoch(), 1);
+    assert_eq!(c.epoch_keys.get(1), resolver.epoch_keys.get(1));
+    assert_ne!(c.epoch_keys.get(1), other.epoch_keys.get(1));
+    let source: String = c
+        .database
+        .test_connection()
+        .unwrap()
+        .query_row(
+            "SELECT source_cid FROM sync_epoch_history WHERE key_epoch=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(&source, greater_cid);
+
+    // The resolver settles it, and a later recovery chains through it.
+    assert!(run_enrollment_sweep(
+        &resolver.database,
+        &resolver.identity,
+        &resolver.epoch_keys,
+        &transports
+    )
+    .await
+    .unwrap());
+    resolver.rotate(&transports).await;
+    let d = Member::new();
+    recover(&d, &phrase, &transports).await.unwrap();
+    assert_eq!(d.active_epoch(), 2);
+    for epoch in 0..=2 {
+        assert_eq!(
+            d.epoch_keys.get(epoch),
+            resolver.epoch_keys.get(epoch),
+            "epoch {epoch}"
+        );
+    }
+}
+
+fn candidate(signed: SignedKeyRotation, cid: &str, k_epoch: [u8; 32]) -> RecoveryCandidate {
+    RecoveryCandidate {
+        signed,
+        cid: cid.to_string(),
+        k_epoch,
+    }
+}
+
+/// A rotation the chain continues from wins over a dead end at the same
+/// epoch, even when the dead end's content address is greater.
+#[test]
+fn a_recovery_chain_prefers_the_rotation_it_continues_from() {
+    let recovery = SigningKey::generate(&mut threestrands_sync_envelope::os_rng());
+    let initiator = SigningKey::generate(&mut threestrands_sync_envelope::os_rng());
+    let rotation = |key_epoch: u32, created_at_ms: i64| KeyRotation {
+        key_epoch,
+        initiator_device_id: EnvelopeDeviceId::from_bytes([1u8; 16]),
+        roster: vec![],
+        sealed_stanzas: vec![],
+        recovery_ed25519_public: ByteBuf::from(recovery.verifying_key().to_bytes().to_vec()),
+        recovery_x25519_public: ByteBuf::from(vec![2u8; 32]),
+        created_at_ms,
+    };
+    let (k0, k1_continued, k1_dead_end, k2) = ([10u8; 32], [11u8; 32], [12u8; 32], [13u8; 32]);
+    let genesis = sign_key_rotation(
+        &initiator,
+        rotation(0, 0),
+        RotationProof::Genesis {
+            recovery_signing_key: &recovery,
+        },
+    )
+    .unwrap();
+    let successor = |key_epoch: u32, created_at_ms: i64, previous: &[u8; 32]| {
+        sign_key_rotation(
+            &initiator,
+            rotation(key_epoch, created_at_ms),
+            RotationProof::Successor {
+                previous_k_epoch: previous,
+            },
+        )
+        .unwrap()
+    };
+    let mut candidates = std::collections::BTreeMap::new();
+    candidates.insert(0, vec![candidate(genesis, "cid-0", k0)]);
+    candidates.insert(
+        1,
+        vec![
+            candidate(successor(1, 1, &k0), "cid-1-continued", k1_continued),
+            candidate(successor(1, 2, &k0), "cid-1-zz-dead-end", k1_dead_end),
+        ],
+    );
+    candidates.insert(
+        2,
+        vec![
+            candidate(successor(2, 3, &k1_continued), "cid-2", k2),
+            // Links to nothing the chain holds.
+            candidate(
+                successor(2, 4, &[99u8; 32]),
+                "cid-2-zz-unlinked",
+                [14u8; 32],
+            ),
+        ],
+    );
+    let chain = select_recovery_chain(&recovery.verifying_key(), candidates).unwrap();
+    let cids: Vec<&str> = chain.iter().map(|link| link.cid.as_str()).collect();
+    assert_eq!(cids, vec!["cid-0", "cid-1-continued", "cid-2"]);
+}
+
+/// A group as protocol 3 left it on `transports`: rotations without an
+/// anchor or link, and the protocol 3 marker. Returns its recovery phrase.
+async fn protocol_3_group(transports: &[Arc<dyn SyncTransport>]) -> String {
+    let a = Member::new();
+    let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, transports, false)
+        .await
+        .unwrap();
+    a.rotate(transports).await;
+    for (cid, mut signed) in rotations_on(&transports[0]).await {
+        signed.recovery_anchor = None;
+        signed.epoch_link = None;
+        for transport in transports {
+            transport
+                .delete_object(&TransportCid(cid.clone()))
+                .await
+                .unwrap();
+        }
+        publish_to_all(transports, &encode_signed_key_rotation(&signed).unwrap()).await;
+    }
+    let protocol_3_marker: &[u8] = b"threestrands-sync protocol 3\n";
+    for transport in transports {
+        transport
+            .delete_object(&TransportCid(protocol_marker_cid()))
+            .await
+            .unwrap();
+        transport
+            .put_object(
+                &TransportCid(compute_cid(protocol_3_marker)),
+                protocol_3_marker,
+            )
+            .await
+            .unwrap();
+    }
+    phrase
+}
+
+#[tokio::test]
+async fn a_protocol_3_group_is_reported_as_legacy_and_never_joined_or_replaced() {
+    let transports = fake_transports("shared");
+    let phrase = protocol_3_group(&transports).await;
+    assert_eq!(
+        inspect_sync_space(&transports).await,
+        SyncSpacePresence::Legacy
+    );
+    assert_eq!(
+        EnrollmentError::LegacySpace.to_string(),
+        LEGACY_SPACE_REFUSAL
+    );
+    let b = Member::new();
+    for allow_existing_space in [false, true] {
+        let refused = begin_genesis(
+            &b.database,
+            &b.identity,
+            &b.epoch_keys,
+            &transports,
+            allow_existing_space,
+        )
+        .await;
+        assert!(matches!(refused.unwrap_err(), EnrollmentError::LegacySpace));
+    }
+    assert!(matches!(
+        recover(&b, &phrase, &transports).await.unwrap_err(),
+        EnrollmentError::LegacySpace
+    ));
+    assert!(matches!(
+        publish_enrollment_request(&b.database, &b.identity, &transports)
+            .await
+            .unwrap_err(),
+        EnrollmentError::LegacySpace
+    ));
+    assert!(b.epoch_keys.get(0).is_none());
+
+    // Even with the protocol 4 marker planted beside it, the phrase finds no
+    // rotation it can trust: none carries an anchor.
+    publish_to_all(&transports, PROTOCOL_MARKER).await;
+    assert!(matches!(
+        recover(&b, &phrase, &transports).await.unwrap_err(),
+        EnrollmentError::NoRecoverableRotation
+    ));
+}
+
+/// Updating a device that belongs to a protocol 3 group leaves the group,
+/// keeps its data, says so once, and lets it start over.
+#[tokio::test]
+async fn updating_leaves_a_protocol_3_group_and_keeps_local_data() {
+    let transports = fake_transports("shared");
+    let (a, _) = founder_at_epoch_two(&transports).await;
+    a.database
+        .test_connection()
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO snippets(id,name,body,created_at) VALUES ('s1','Kept','body','2026-11-01T00:00:00Z');
+             INSERT INTO sync_transports(instance_id,kind,enabled) VALUES ('folder-1','folder',1);",
+        )
+        .unwrap();
+    assert!(!a.database.protocol_reset_notice().unwrap());
+    {
+        let mut connection = a.database.test_connection().unwrap();
+        connection.pragma_update(None, "user_version", 120).unwrap();
+        crate::schema::migrate(&mut connection).unwrap();
+    }
+
+    assert!(matches!(
+        a.database.enrollment_status().unwrap(),
+        EnrollmentStatus::NotStarted
+    ));
+    assert!(a.database.protocol_reset_notice().unwrap());
+    assert_eq!(a.database.pending_keychain_cleanup().unwrap(), Some(2));
+    assert!(a.database.device_roster().unwrap().is_empty());
+    assert!(a.database.recovery_public_keys().unwrap().is_none());
+    assert!(a.database.beta_features_enabled().unwrap());
+    assert_eq!(a.snippet("s1").as_deref(), Some("Kept"));
+    let transports_kept: i64 = a
+        .database
+        .test_connection()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM sync_transports WHERE instance_id='folder-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(transports_kept, 1);
+
+    // As a fresh identity, it starts a new group on a clean connector.
+    let fresh = Member {
+        identity: test_identity(&a.database),
+        database: a.database,
+        epoch_keys: FakeEpochKeyStore::default(),
+    };
+    assert_ne!(fresh.identity.device_id, a.identity.device_id);
+    let clean = fake_transports("clean");
+    begin_genesis(
+        &fresh.database,
+        &fresh.identity,
+        &fresh.epoch_keys,
+        &clean,
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        fresh.database.enrollment_status().unwrap(),
+        EnrollmentStatus::Enrolled { .. }
+    ));
 }
 
 /// A group as an earlier build left it on `transports`: a genesis
