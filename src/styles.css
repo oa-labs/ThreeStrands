@@ -620,7 +620,6 @@ select:disabled { opacity: var(--opacity-disabled); cursor: default; }
 }
 /* Field labels: the same label at regular weight, because they wrap inputs
    that inherit their weight. */
-.agent-field-label,
 .contact-editor-grid label,
 .contact-editor-grid .contact-multi-value-field,
 .contact-kit-controls label,
@@ -4263,9 +4262,6 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .agent-empty { padding:var(--space-5); overflow:auto; }
 .agent-empty h2 { font-size:var(--text-pane-title); margin:0 0 var(--space-2); }
 .agent-hint { font-size:var(--text-secondary); color:var(--secondary); margin:0; }
-.agent-field { display:grid; gap:var(--space-1-5); width:100%; }
-.agent-toggle { display:flex; align-items:center; gap:var(--space-2); font-size:var(--text-control); }
-.agent-toggle input { margin:0; flex-shrink:0; }
 
 .assistant-error-banner { margin:0; padding:var(--space-2-5) var(--space-4); border-bottom:1px solid var(--border); }
 .assistant-filter-group { display:grid; gap:var(--space-1); }
@@ -4305,8 +4301,7 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .assistant-context-card { display:grid; gap:var(--space-1-5); padding:var(--space-2-5); border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); }
 .assistant-card-meta { display:flex; align-items:center; gap:var(--space-1-5); font-size:var(--text-meta); color:var(--muted); }
 
-.assistant-config-form { display:grid; gap:var(--space-3); }
-.assistant-config-form input:not([type="checkbox"]), .assistant-config-form select { min-width:0; max-width:100%; width:100%; height:var(--control-h); box-sizing:border-box; font:inherit; color:var(--text); background-color:var(--input); border:1px solid var(--border); border-radius:var(--radius-sm); padding:0 var(--space-2); }
+.assistant-config-modal { overflow-y: auto; }
 
 @media (max-width:1000px) {
  .agents-layout { grid-template-columns:minmax(200px,260px) minmax(0,1fr); }

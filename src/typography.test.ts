@@ -82,8 +82,6 @@ describe("component typography", () => {
     for (const selector of [".assistant-filter-btn", ".assistant-config-head strong", ".assistant-card-headline"]) expect(sizeOf(selector), selector).toBe("--text-body");
     for (const selector of [".agent-hint", ".assistant-proposal-sender", ".assistant-card-reason", ".assistant-card-preview"]) expect(sizeOf(selector), selector).toBe("--text-secondary");
     for (const selector of [".assistant-count-badge", ".assistant-status-pill", ".assistant-config-meta", ".assistant-kind-badge"]) expect(sizeOf(selector), selector).toBe("--text-meta");
-    expect(sizeOf(".agent-field-label")).toBe("--text-label");
-    expect(sizeOf(".agent-toggle")).toBe("--text-control");
   });
 
   it("sizes text only by role, never by a raw value or size step", () => {

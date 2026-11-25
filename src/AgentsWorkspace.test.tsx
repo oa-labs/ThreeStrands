@@ -204,14 +204,22 @@ describe("AgentsWorkspace", () => {
     fireEvent.keyDown(section, { key: "e" });
     expect(onArchiveProposal).toHaveBeenCalledWith(expect.objectContaining({ id: "p2" }));
 
-    // Configure modal validation and save
-    fireEvent.click(screen.getByRole("button", { name: "Configure Stale Reads Summarizer" }));
+    // Configure modal layout, initial focus, validation, and save
+    const configureBtn = screen.getByRole("button", { name: "Configure Stale Reads Summarizer" });
+    fireEvent.click(configureBtn);
     const dialog = await screen.findByRole("dialog", { name: "Configure Stale Reads Summarizer" });
-    fireEvent.change(within(dialog).getByLabelText("Only review emails older than (days)"), { target: { value: "0" } });
+    expect(dialog.querySelector("form.modal-form")).not.toBeNull();
+    expect(dialog.querySelector(".modal-form-actions")).not.toBeNull();
+    expect(dialog.querySelectorAll(".modal-form-check")).toHaveLength(2);
+    const ageInput = within(dialog).getByLabelText("Only Review Emails Older Than (Days)");
+    expect(ageInput).toHaveFocus();
+
+    fireEvent.change(ageInput, { target: { value: "0" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("1 and 365");
+    expect(ageInput).toHaveValue(0);
 
-    fireEvent.change(within(dialog).getByLabelText("Only review emails older than (days)"), { target: { value: "10" } });
+    fireEvent.change(ageInput, { target: { value: "10" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(controller.updateConfig).toHaveBeenCalledWith(expect.objectContaining({ agentId: "stale_reads", ageDays: 10 })));
   });

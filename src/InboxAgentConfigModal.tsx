@@ -1,9 +1,9 @@
-import { useId, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Modal } from "./AppChrome";
 import type { Account, InboxAgentConfig, UpdateInboxAgentConfig } from "./domain";
 
 const SCHEDULE_OPTIONS: { value: string; label: string; hours: number | null }[] = [
-  { value: "manual", label: "Manual only", hours: null },
+  { value: "manual", label: "Manual Only", hours: null },
   { value: "daily", label: "Daily", hours: 24 },
   { value: "weekly", label: "Weekly", hours: 168 },
 ];
@@ -21,7 +21,6 @@ export function InboxAgentConfigModal({
   onSave(next: UpdateInboxAgentConfig): Promise<boolean>;
   onClose(): void;
 }) {
-  const id = useId();
   const ageInputRef = useRef<HTMLInputElement>(null);
   const [enabled, setEnabled] = useState(config.enabled);
   const [ageDays, setAgeDays] = useState(String(config.ageDays));
@@ -42,7 +41,7 @@ export function InboxAgentConfigModal({
       return;
     }
     if (!Number.isFinite(parsedMax) || parsedMax < 1 || parsedMax > 30) {
-      setValidationError("Max threads per run must be between 1 and 30.");
+      setValidationError("Max emails per run must be between 1 and 30.");
       return;
     }
     setValidationError("");
@@ -69,7 +68,7 @@ export function InboxAgentConfigModal({
       onClose={onClose}
     >
       <form
-        className="assistant-config-form"
+        className="modal-form"
         noValidate
         onSubmit={(e) => { void handleSubmit(e); }}
         onKeyDown={(e) => {
@@ -79,41 +78,40 @@ export function InboxAgentConfigModal({
           }
         }}
       >
-        <p className="agent-hint">{config.description}</p>
-        <label className="agent-toggle">
+        <p className="modal-form-hint">{config.description}</p>
+        <label className="modal-form-check">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          <span>Enable this assistant</span>
+          <span>Enable This Assistant</span>
         </label>
 
-        <div className="agent-field">
-          <label className="agent-field-label" htmlFor={`${id}-age`}>Only review emails older than (days)</label>
-          <input
-            ref={ageInputRef}
-            id={`${id}-age`}
-            type="number"
-            min={1}
-            max={365}
-            value={ageDays}
-            onChange={(e) => setAgeDays(e.target.value)}
-          />
+        <div className="modal-form-row">
+          <label>
+            Only Review Emails Older Than (Days)
+            <input
+              ref={ageInputRef}
+              type="number"
+              min={1}
+              max={365}
+              value={ageDays}
+              onChange={(e) => setAgeDays(e.target.value)}
+            />
+          </label>
+          <label>
+            Max Emails per Run (1–30)
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={maxThreads}
+              onChange={(e) => setMaxThreads(e.target.value)}
+            />
+          </label>
         </div>
 
-        <div className="agent-field">
-          <label className="agent-field-label" htmlFor={`${id}-max`}>Max emails per run (1–30)</label>
-          <input
-            id={`${id}-max`}
-            type="number"
-            min={1}
-            max={30}
-            value={maxThreads}
-            onChange={(e) => setMaxThreads(e.target.value)}
-          />
-        </div>
-
-        <div className="agent-field">
-          <label className="agent-field-label" htmlFor={`${id}-account`}>Mail account scope</label>
-          <select id={`${id}-account`} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            <option value="">All connected accounts</option>
+        <label>
+          Mail Account Scope
+          <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+            <option value="">All Connected Accounts</option>
             {accounts
               .filter((a) => a.onThisDevice !== false)
               .map((a) => (
@@ -122,29 +120,29 @@ export function InboxAgentConfigModal({
                 </option>
               ))}
           </select>
-        </div>
+        </label>
 
-        <div className="agent-field">
-          <label className="agent-field-label" htmlFor={`${id}-schedule`}>Run schedule</label>
-          <select id={`${id}-schedule`} value={schedule} onChange={(e) => setSchedule(e.target.value)}>
+        <label>
+          Run Schedule
+          <select value={schedule} onChange={(e) => setSchedule(e.target.value)}>
             {SCHEDULE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
-        </div>
+        </label>
 
-        <label className="agent-toggle">
+        <label className="modal-form-check">
           <input
             type="checkbox"
             checked={includeStarred}
             onChange={(e) => setIncludeStarred(e.target.checked)}
           />
-          <span>Include starred conversations</span>
+          <span>Include Starred Conversations</span>
         </label>
 
         {validationError ? <p className="form-error" role="alert">{validationError}</p> : null}
 
-        <div className="modal-actions">
+        <div className="modal-form-actions">
           <button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button>
           <button type="submit" className="btn btn-primary" disabled={busy}>Save</button>
         </div>
