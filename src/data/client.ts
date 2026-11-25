@@ -2,7 +2,7 @@ import { invokeAi } from "../aiRequests";
 import type { WritingProfile } from "../writingProfiles";
 import type { NoteDocument, NoteTaskRecord, NoteReference, NoteBacklink, AddToNoteRequest, NoteAddition, UndoAddToNote } from "../noteEntities";
 import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
-import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
+import type { AiRunConfig, InboxAgentConfig, InboxAgentId, InboxAgentsSnapshot, ProposalState, UpdateInboxAgentConfig } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { SentInRange, DoneNote, CompletedByEmail, MessageLocation, TaskSuggestion, LinkedSend } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
@@ -129,23 +129,13 @@ import { nativeCorrespondence, type CorrespondenceClient } from "../corresponden
 import { demoClient } from "./demoClient";
 
 export interface MailClient extends CorrespondenceClient {
-  markAgentTaskRead(id: string, generation: number, turnCount: number, artifactCount: number): Promise<AgentDetail>;
-  interactAgentTask(id: string, message: string, mode: "discuss" | "revise"): Promise<AgentDetail>;
-  linkAgentTask(id: string, linkedTaskId: string | null): Promise<AgentDetail>;
-  agentResearchSettings(): Promise<AgentResearchSettings>;
-  setAgentResearchSettings(config: AgentResearchConfig): Promise<void>;
-  setAgentResearchKey(provider: "model" | "search", key: string): Promise<void>;
-  checkAgentResearchConnection(): Promise<void>;
-  createAgentResearchTask(request: AgentResearchRequest): Promise<AgentDetail>;
-  openAgentResearchSource(id: string, sourceId: string): Promise<void>;
-  agentRunnerEnabled(): Promise<boolean>;
-  setAgentRunnerEnabled(enabled: boolean): Promise<void>;
-  createAgentTask(request: CreateAgentTaskRequest): Promise<AgentDetail>;
-  getAgentTask(id: string): Promise<AgentDetail>;
-  listAgentTasks(accountId?: string, includeArchived?: boolean): Promise<AgentDetail[]>;
-  controlAgentTask(id: string, action: AgentTaskControl): Promise<AgentDetail>;
-  answerAgentQuestion(id: string, questionId: string, answer: string): Promise<AgentDetail>;
-  deleteAgentTask(id: string): Promise<void>;
+  getInboxAgentsSnapshot(accountId?: string): Promise<InboxAgentsSnapshot>;
+  setInboxAgentRunnerEnabled(enabled: boolean): Promise<InboxAgentsSnapshot>;
+  updateInboxAgentConfig(config: UpdateInboxAgentConfig): Promise<InboxAgentConfig>;
+  runInboxAgent(agentId: InboxAgentId, aiConfig?: AiRunConfig | null, accountId?: string): Promise<InboxAgentsSnapshot>;
+  runEnabledInboxAgents(aiConfig?: AiRunConfig | null, accountId?: string): Promise<InboxAgentsSnapshot>;
+  resolveInboxAgentProposal(id: string, state: Extract<ProposalState, "accepted" | "dismissed">): Promise<void>;
+  syncInboxAgentAiConfig(aiConfig: AiRunConfig | null): Promise<void>;
   refreshGmailAliases(account: string): Promise<import("../domain").SendingIdentity[]>;
   snoozeThreads(ids: string[], until: string): Promise<import("../domain").ConversationSnooze[]>;
   returnSnoozedThreads(ids: string[]): Promise<void>;
@@ -862,23 +852,13 @@ const tauriClient: MailClient = {
   createSnippet: (name, body) => complete("create_snippet", { request: { name, body } }),
   updateSnippet: (id, name, body) => complete("update_snippet", { request: { id, name, body } }),
   deleteSnippet: (id) => complete("delete_snippet", { id }),
-  markAgentTaskRead: (id, generation, turnCount, artifactCount) => complete("mark_agent_task_read", { id, generation, turnCount, artifactCount }),
-  interactAgentTask: (id, message, mode) => complete("interact_agent_task", { id, message, mode }),
-  linkAgentTask: (id, linkedTaskId) => complete("link_agent_task", { id, linkedTaskId }),
-  agentResearchSettings: () => read("agent_research_settings"),
-  setAgentResearchSettings: (config) => complete("set_agent_research_settings", { config }),
-  setAgentResearchKey: (provider, key) => complete("set_agent_research_key", { provider, key }),
-  checkAgentResearchConnection: () => complete("check_agent_research_connection"),
-  createAgentResearchTask: (request) => complete("create_agent_research_task", { request }),
-  openAgentResearchSource: (id, sourceId) => complete("open_agent_research_source", { id, sourceId }),
-  agentRunnerEnabled: () => read("agent_runner_enabled"),
-  setAgentRunnerEnabled: (enabled) => complete("set_agent_runner_enabled", { enabled }),
-  createAgentTask: (request) => complete("create_agent_task", { request }),
-  getAgentTask: (id) => read("get_agent_task", { id }),
-  listAgentTasks: (accountId, includeArchived = false) => read("list_agent_tasks", { accountId, includeArchived }),
-  controlAgentTask: (id, action) => complete("control_agent_task", { id, action }),
-  answerAgentQuestion: (id, questionId, answer) => complete("answer_agent_question", { id, questionId, answer }),
-  deleteAgentTask: (id) => complete("delete_agent_task", { id }),
+  getInboxAgentsSnapshot: (accountId) => read("get_inbox_agents_snapshot", { accountId }),
+  setInboxAgentRunnerEnabled: (enabled) => complete("set_inbox_agent_runner_enabled", { enabled }),
+  updateInboxAgentConfig: (config) => complete("update_inbox_agent_config", { config }),
+  runInboxAgent: (agentId, aiConfig = null, accountId) => complete("run_inbox_agent", { agentId, aiConfig, accountId }),
+  runEnabledInboxAgents: (aiConfig = null, accountId) => complete("run_enabled_inbox_agents", { aiConfig, accountId }),
+  resolveInboxAgentProposal: (id, state) => complete("resolve_inbox_agent_proposal", { id, stateValue: state }),
+  syncInboxAgentAiConfig: (aiConfig) => complete("sync_inbox_agent_ai_config", { aiConfig }),
   listTasks: (accountId, status) => read("list_tasks", { accountId, status }),
   createTask: (request) => complete("create_task", { request }),
   updateTask: (request) => complete("update_task", { request }),

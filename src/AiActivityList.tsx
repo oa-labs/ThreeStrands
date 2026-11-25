@@ -12,7 +12,9 @@ export const AI_ACTIVITY_LIMIT = 100;
 const AI_ACTIVITY_SHOWN = 10;
 
 const FEATURE_LABELS: Record<string, string> = {
-  agent_research: "Agent Research",
+  agent_stale_reads: "Stale Reads Summarizer",
+  agent_resolved_sweeper: "Expired & Handled Sweeper",
+  agent_aging_replies: "Aging Reply Drafter",
   brief: "Brief",
   summary: "Brief",
   suggestions: "Suggestions",

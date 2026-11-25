@@ -1,225 +1,237 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useState } from "react";
 import { AgentsWorkspace } from "./AgentsWorkspace";
-import { useAgentTasks } from "./useAgentTasks";
-import { createDemoClient } from "./data/demoClient";
-import { defaultDemoDataset, DEMO_ACCOUNT_ID } from "./data/demoDataset";
-import { mailClient } from "./data/client";
-import type { AgentDetail } from "./domain";
+import type { Account, InboxAgentsSnapshot } from "./domain";
+import type { InboxAgentsController } from "./useInboxAgents";
 
-const dataset = defaultDemoDataset();
-const openThread = vi.fn();
-const openTask = vi.fn();
-const openResearchSettings = vi.fn();
-function Harness() {
-  const c = useAgentTasks();
-  const [shown, show] = useState(true);
-  return <><button onClick={() => show(!shown)}>Switch workspace</button>{shown ? <AgentsWorkspace controller={c} accounts={dataset.accounts} accountId={null} onOpenThread={openThread} onOpenTask={openTask} onOpenResearchSettings={openResearchSettings} /> : <p>Another workspace</p>}</>;
+const ACCOUNTS: Account[] = [
+  {
+    email: "you@example.com",
+    displayName: "You",
+    color: "#4285F4",
+    status: "connected",
+    provider: "gmail",
+    labelModel: "gmailLabels",
+    sortOrder: 0,
+    connectedAt: "2026-11-01T00:00:00Z",
+    lastSyncedAt: null,
+    onThisDevice: true,
+  },
+];
+
+function makeSnapshot(overrides?: Partial<InboxAgentsSnapshot>): InboxAgentsSnapshot {
+  return {
+    runnerEnabled: true,
+    agents: [
+      {
+        agentId: "stale_reads",
+        name: "Stale Reads Summarizer",
+        description: "Summarizes aging reads.",
+        enabled: true,
+        ageDays: 7,
+        maxThreadsPerRun: 15,
+        includeStarred: false,
+        accountId: null,
+        scheduleHours: null,
+        lastRunAt: null,
+        lastRunStatus: null,
+        lastRunError: null,
+        lastRunScanned: 0,
+        lastRunProposed: 0,
+        updatedAt: 0,
+      },
+      {
+        agentId: "resolved_and_expired",
+        name: "Expired & Already-Handled Sweeper",
+        description: "Spots resolved and expired mail.",
+        enabled: false,
+        ageDays: 7,
+        maxThreadsPerRun: 15,
+        includeStarred: false,
+        accountId: null,
+        scheduleHours: null,
+        lastRunAt: null,
+        lastRunStatus: null,
+        lastRunError: null,
+        lastRunScanned: 0,
+        lastRunProposed: 0,
+        updatedAt: 0,
+      },
+      {
+        agentId: "aging_replies",
+        name: "Aging Reply Drafter",
+        description: "Drafts replies to aging emails.",
+        enabled: true,
+        ageDays: 3,
+        maxThreadsPerRun: 10,
+        includeStarred: true,
+        accountId: null,
+        scheduleHours: 24,
+        lastRunAt: null,
+        lastRunStatus: null,
+        lastRunError: null,
+        lastRunScanned: 0,
+        lastRunProposed: 0,
+        updatedAt: 0,
+      },
+    ],
+    activeRuns: [],
+    proposals: [
+      {
+        id: "p1",
+        agentId: "stale_reads",
+        accountId: "you@example.com",
+        threadId: "t1",
+        threadRevision: "2026-11-01T00:00:00Z",
+        threadSubject: "Engineering Weekly",
+        threadSender: "news@example.com",
+        threadLastReceivedAt: "2026-11-01T00:00:00Z",
+        threadSnippet: "Release notes",
+        threadUnread: true,
+        threadStarred: false,
+        kind: "archive_with_summary",
+        state: "pending",
+        headline: "Summary of Engineering Weekly",
+        reason: "Informational digest from 3 weeks ago.",
+        payload: { summary: "• Key highlights", noteTitle: "Engineering Weekly", suggestSaveToNote: true },
+        evidence: [],
+        createdAt: 100,
+        updatedAt: 100,
+      },
+      {
+        id: "p2",
+        agentId: "resolved_and_expired",
+        accountId: "you@example.com",
+        threadId: "t2",
+        threadRevision: "2026-11-02T00:00:00Z",
+        threadSubject: "Old Webinar",
+        threadSender: "events@example.com",
+        threadLastReceivedAt: "2026-11-02T00:00:00Z",
+        threadSnippet: "Nov 10 webinar",
+        threadUnread: true,
+        threadStarred: false,
+        kind: "archive_as_expired",
+        state: "pending",
+        headline: "Webinar on Nov 10 already passed",
+        reason: "Event date passed.",
+        payload: { expiredDate: "2026-11-10" },
+        evidence: [],
+        createdAt: 99,
+        updatedAt: 99,
+      },
+      {
+        id: "p3",
+        agentId: "resolved_and_expired",
+        accountId: "you@example.com",
+        threadId: "t3",
+        threadRevision: "2026-11-03T00:00:00Z",
+        threadSubject: "Send Invoice",
+        threadSender: "acct@example.com",
+        threadLastReceivedAt: "2026-11-03T00:00:00Z",
+        threadSnippet: "Please send invoice",
+        threadUnread: false,
+        threadStarred: false,
+        kind: "archive_as_resolved",
+        state: "pending",
+        headline: "Completed task \"Send invoice\"",
+        reason: "Task marked completed.",
+        payload: { resolvedByKind: "task", resolvedById: "task-1" },
+        evidence: [{ kind: "task", id: "task-1", label: "Send invoice", excerpt: null }],
+        createdAt: 98,
+        updatedAt: 98,
+      },
+    ],
+    ...overrides,
+  };
 }
-async function start() {
-  fireEvent.click(await screen.findByRole("button", { name: "New Delegated Task" }));
-  fireEvent.click(screen.getByRole("button", { name: "Enable local demonstration" }));
-  expect(await screen.findByRole("button", { name: "Pause All" })).toBeEnabled();
-  fireEvent.change(screen.getByRole("textbox", { name: "What would you like to find out?" }), { target: { value: "Evaluate the podcast invitation" } });
-  fireEvent.click(screen.getByRole("button", { name: "Start demonstration" }));
-  await screen.findByRole("article", { name: "Delegated task details" });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh Agents" }));
-  const tab = screen.queryByRole("tab", { name: "Conversation" }); if (tab) fireEvent.click(tab);
-  await screen.findByRole("textbox", { name: "Your answer" });
+
+function makeController(snapshot: InboxAgentsSnapshot): InboxAgentsController {
+  return {
+    snapshot,
+    loaded: true,
+    busy: false,
+    error: "",
+    pendingCount: snapshot.proposals.length,
+    refresh: vi.fn().mockResolvedValue(undefined),
+    toggleRunner: vi.fn().mockResolvedValue(true),
+    updateConfig: vi.fn().mockResolvedValue(true),
+    runAgent: vi.fn().mockResolvedValue(true),
+    runEnabled: vi.fn().mockResolvedValue(true),
+    resolveProposal: vi.fn().mockResolvedValue(true),
+    proposalsForThread: (tid) => snapshot.proposals.filter((p) => p.threadId === tid),
+  };
 }
-describe("delegated workspace", () => {
-  beforeEach(() => {
-    const client = createDemoClient(dataset);
-    for (const key of ["agentRunnerEnabled", "setAgentRunnerEnabled", "createAgentTask", "getAgentTask", "listAgentTasks", "controlAgentTask", "deleteAgentTask", "answerAgentQuestion", "interactAgentTask", "linkAgentTask", "markAgentTaskRead", "listTasks", "getThread"] as const) vi.spyOn(mailClient, key).mockImplementation(client[key] as never);
-    openThread.mockReset(); openTask.mockReset();
-  });
-  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-  it("delegates, leaves, preserves an answer draft, returns, and refines immutable reports", async () => {
-    render(<Harness />); await start();
-    expect(screen.getAllByText("Answer needed")).toHaveLength(1);
-    const answer = screen.getByRole("textbox", { name: "Your answer" });
-    fireEvent.change(answer, { target: { value: "Prioritize customer introductions" } });
-    fireEvent.click(screen.getByRole("button", { name: "Switch workspace" }));
-    fireEvent.click(screen.getByRole("button", { name: "Switch workspace" }));
-    expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveValue("Prioritize customer introductions");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Answer question" })).not.toBeDisabled());
-    fireEvent.click(screen.getByRole("button", { name: "Answer question" }));
-    await screen.findByText("Demonstration report · Not researched");
-    expect(screen.queryByText("Answer needed")).not.toBeInTheDocument();
-    const report = screen.getByRole("region", { name: "Agent result" });
-    const original = within(report).getByText(/Fixture report\./).textContent;
-    fireEvent.change(screen.getByRole("textbox", { name: "Follow-up message" }), { target: { value: "Why is this only a demonstration?" } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await screen.findByText(/This is a demonstration response/);
-    expect(within(report).getByText(/Fixture report\./).textContent).toBe(original);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled());
-    fireEvent.change(screen.getByRole("textbox", { name: "Follow-up message" }), { target: { value: "Focus on sales <img src=x onerror=alert(1)>" } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Revise report" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Revise report" }));
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Report version" }).querySelectorAll("option")).toHaveLength(2));
-    expect(within(report).getByText(/Revision request:/)).toHaveTextContent("Focus on sales <img src=x onerror=alert(1)>");
-    expect(report.querySelector("img")).toBeNull();
-    const options = screen.getByRole("combobox", { name: "Report version" }).querySelectorAll("option");
-    fireEvent.change(screen.getByRole("combobox", { name: "Report version" }), { target: { value: options[0].value } });
-    expect(within(report).getByText(/Fixture report\./).textContent).toBe(original);
-  });
+describe("AgentsWorkspace", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-  it("explains unsupported research, keeps drafts after failure, and requires deliberate deletion", async () => {
-    render(<Harness />);
-    fireEvent.click(await screen.findByRole("button", { name: "New Delegated Task" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Work" }), { target: { value: "web" } });
-    expect(screen.getByRole("button", { name: "Start research" })).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent("Web research is not configured");
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" })); await start();
-    vi.mocked(mailClient.answerAgentQuestion).mockRejectedValueOnce(new Error("Offline test failure"));
-    fireEvent.change(screen.getByRole("textbox", { name: "Your answer" }), { target: { value: "Sales" } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Answer question" })).not.toBeDisabled());
-    fireEvent.click(screen.getByRole("button", { name: "Answer question" }));
-    await screen.findByRole("alert"); expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveValue("Sales");
-    fireEvent.click(screen.getByRole("button", { name: "Delete delegated task" }));
-    expect(mailClient.deleteAgentTask).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
-    await waitFor(() => expect(screen.queryByRole("article")).toBeNull());
+  it("renders assistants, validates configuration modal, and supports batch safe archive & keyboard shortcuts", async () => {
+    const controller = makeController(makeSnapshot());
+    const onArchiveProposal = vi.fn();
+    const onArchiveBatch = vi.fn();
+    const onSaveToNoteAndArchive = vi.fn();
+    const onOpenThread = vi.fn();
+
+    render(
+      <AgentsWorkspace
+        controller={controller}
+        accounts={ACCOUNTS}
+        accountId={null}
+        onOpenThread={onOpenThread}
+        onOpenTask={vi.fn()}
+        onArchiveProposal={onArchiveProposal}
+        onArchiveBatch={onArchiveBatch}
+        onSaveToNoteAndArchive={onSaveToNoteAndArchive}
+        onReviewDraft={vi.fn()}
+        onOpenAiSettings={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Inbox Assistants" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Archive All 2 Safe" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Archive All 2 Safe" }));
+    expect(onArchiveBatch).toHaveBeenCalledTimes(1);
+    expect(onArchiveBatch.mock.calls[0][0]).toHaveLength(2);
+
+    // Keyboard shortcuts on the first selected card (`p1`, Stale Read Summary)
+    const section = screen.getByRole("region", { name: "Inbox Assistants" });
+    fireEvent.keyDown(section, { key: "n" });
+    expect(onSaveToNoteAndArchive).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" }));
+
+    fireEvent.keyDown(section, { key: "j" });
+    fireEvent.keyDown(section, { key: "e" });
+    expect(onArchiveProposal).toHaveBeenCalledWith(expect.objectContaining({ id: "p2" }));
+
+    // Configure modal validation and save
+    fireEvent.click(screen.getByRole("button", { name: "Configure Stale Reads Summarizer" }));
+    const dialog = await screen.findByRole("dialog", { name: "Configure Stale Reads Summarizer" });
+    fireEvent.change(within(dialog).getByLabelText("Only review emails older than (days)"), { target: { value: "0" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("1 and 365");
+
+    fireEvent.change(within(dialog).getByLabelText("Only review emails older than (days)"), { target: { value: "10" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(controller.updateConfig).toHaveBeenCalledWith(expect.objectContaining({ agentId: "stale_reads", ageDays: 10 })));
   });
 
-  it("uses accessible tabs in a narrow view and retains unsent input", async () => {
-    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-    render(<Harness />); await start();
-    fireEvent.click(screen.getByRole("tab", { name: "Conversation" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Your answer" }), { target: { value: "Keep this draft" } });
-    fireEvent.click(screen.getByRole("tab", { name: "Result" }));
-    expect(screen.queryByRole("textbox", { name: "Your answer" })).toBeNull();
-    fireEvent.click(screen.getByRole("tab", { name: "Conversation" }));
-    expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveValue("Keep this draft");
-    vi.unstubAllGlobals();
-  });
-
-  it("renders detached sources, empty results, and recoverable failure without losing the previous report", async () => {
-    const d: AgentDetail = { task: { id: "failed", accountId: DEMO_ACCOUNT_ID, objective: "Failed revision", workflow: "fixture_research_v1", revision: 2, createdAt: 0, sourceThreadId: null, linkedTaskId: null, unread: false, archived: false }, run: { id: "r", taskId: "failed", state: "failed", reason: "retry_exhausted", generation: 2, checkpoint: 2, owner: null, leaseUntil: null, startedAt: null, notBefore: 0, dispatches: 3, attempts: 3, activeSeconds: 0, questionId: null }, turns: [], artifacts: [{ id: "a1", version: 1, kind: "fixture_report", body: "Previous completed result", notResearched: true, createdAt: 0 }] };
-    vi.mocked(mailClient.listAgentTasks).mockImplementation(async () => structuredClone([d])); vi.mocked(mailClient.agentRunnerEnabled).mockResolvedValue(true);
-    render(<Harness />);
-    fireEvent.click(await screen.findByRole("button", { name: /Failed revision/ }));
-    expect(screen.getByText("No linked conversation is available.")).toBeInTheDocument();
-    expect(screen.getByText("Previous completed result")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try Again" })).toBeEnabled();
-    d.run.state = "completed"; d.artifacts = [];
-    fireEvent.click(screen.getByRole("button", { name: "Refresh Agents" }));
-    await screen.findByText("This task finished without a report.");
-  });
-});
-
-describe("real research entry",()=> {
-  afterEach(()=>vi.restoreAllMocks());
-  it("requires reviewed public subjects and consent before sending an objective to native research",async()=> {
-    const client=createDemoClient(dataset);
-    await client.setAgentRunnerEnabled(true);
-    for(const key of ["agentRunnerEnabled","listAgentTasks","listTasks"] as const) vi.spyOn(mailClient,key).mockImplementation(client[key] as never);
-    vi.spyOn(mailClient,"agentResearchSettings").mockResolvedValue({config:{enabled:true,searchEnabled:true,verified:true},modelKeyConfigured:true,searchKeyConfigured:true});
-    const d=await client.createAgentTask({accountId:DEMO_ACCOUNT_ID,objective:"Check the show",workflow:"fixture_research_v1"});
-    const create=vi.spyOn(mailClient,"createAgentResearchTask").mockResolvedValue({...d,task:{...d.task,workflow:"web_research_v1"}});
-    render(<Harness />);
-    fireEvent.click(await screen.findByRole("button",{name:"New Delegated Task"}));
-    fireEvent.change(screen.getByRole("combobox",{name:"Work"}),{target:{value:"web"}});
-    fireEvent.change(screen.getByRole("textbox",{name:"What would you like to find out?"}),{target:{value:"Assess audience fit"}});
-    expect(screen.getByText(/Your objective, public subjects, follow-up messages, and retrieved evidence go to Anthropic/)).toBeVisible();
-    const start=screen.getByRole("button",{name:"Start research"});expect(start).toBeDisabled();
-    fireEvent.change(screen.getByRole("textbox",{name:"Public search subjects (one per line)"}),{target:{value:"Example Podcast\nExample Host"}});
-    expect(start).toBeDisabled();expect(create).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("checkbox",{name:/I reviewed these public subjects/}));
-    await waitFor(()=>expect(start).toBeEnabled());fireEvent.click(start);
-    await waitFor(()=>expect(create).toHaveBeenCalledWith({task:expect.objectContaining({workflow:"web_research_v1",objective:"Assess audience fit"}),subjects:["Example Podcast","Example Host"],consent:true}));
-  });
-  it("sends research setup to Settings and re-reads it when Settings closes",async()=> {
-    const client=createDemoClient(dataset);
-    for(const key of ["agentRunnerEnabled","listAgentTasks","listTasks"] as const) vi.spyOn(mailClient,key).mockImplementation(client[key] as never);
-    const read=vi.spyOn(mailClient,"agentResearchSettings").mockResolvedValue({config:{enabled:false,searchEnabled:true,verified:false},modelKeyConfigured:false,searchKeyConfigured:false});
-    function Workspace({settingsOpen}:{settingsOpen:boolean}) {const c=useAgentTasks();return <AgentsWorkspace controller={c} accounts={dataset.accounts} accountId={null} onOpenThread={openThread} onOpenTask={openTask} onOpenResearchSettings={openResearchSettings} settingsOpen={settingsOpen} />;}
-    openResearchSettings.mockReset();
-    const view=render(<Workspace settingsOpen={false} />);
-    fireEvent.click(await screen.findByRole("button",{name:"Research Settings"}));
-    expect(openResearchSettings).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    await waitFor(()=>expect(read).toHaveBeenCalledTimes(1));
-    view.rerender(<Workspace settingsOpen />);
-    view.rerender(<Workspace settingsOpen={false} />);
-    await waitFor(()=>expect(read).toHaveBeenCalledTimes(3));
-  });
-  it("keeps each report's retrieved sources separate and opens only native source IDs",async()=> {
-    const client=createDemoClient(dataset);await client.setAgentRunnerEnabled(true);
-    const d=await client.createAgentTask({accountId:DEMO_ACCOUNT_ID,objective:"Review sourced reports",workflow:"fixture_research_v1"});
-    d.task.workflow="web_research_v1";d.run.state="completed";d.run.questionId=null;
-    d.artifacts=[{id:"v1",version:1,kind:"research_report",body:"Old <img src=x onerror=alert(1)> report",notResearched:false,createdAt:1},{id:"v2",version:2,kind:"research_report",body:"Second report",notResearched:false,createdAt:2}];
-    d.research={subjects:["Public Show"],usage:{modelCalls:2,countCalls:2,searchCalls:1,pageCalls:1,reservedInput:100,reservedOutput:100,inputTokens:100,outputTokens:100,unknownUsage:0,unknownSearchCost:0,searchCostUsd:null},citations:{v1:["s1"],v2:["s2"]},sources:[{id:"s1",url:"https://example.com/first",title:"Old source",excerpt:"First evidence",kind:"search_snippet",retrievedAt:1},{id:"s2",url:"https://example.net/second",title:"New source",excerpt:"Second evidence",kind:"page",retrievedAt:2}]};
-    vi.spyOn(mailClient,"agentRunnerEnabled").mockResolvedValue(true);vi.spyOn(mailClient,"listAgentTasks").mockResolvedValue([d]);vi.spyOn(mailClient,"listTasks").mockResolvedValue([]);
-    const open=vi.spyOn(mailClient,"openAgentResearchSource").mockResolvedValue();
-    render(<Harness />);fireEvent.click(await screen.findByRole("button",{name:/Review sourced reports/}));
-    expect(screen.getByRole("button",{name:"New source"})).toBeVisible();expect(screen.queryByRole("button",{name:"Old source"})).toBeNull();expect(open).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByRole("combobox",{name:"Report version"}),{target:{value:"v1"}});
-    expect(screen.queryByRole("button",{name:"New source"})).toBeNull();expect(screen.getByText("Old <img src=x onerror=alert(1)> report")).toBeVisible();expect(document.querySelector(".agent-report-body img")).toBeNull();
-    fireEvent.click(screen.getByRole("button",{name:"Old source"}));expect(open).toHaveBeenCalledWith(d.task.id,"s1");
-  });
-
-});
-
-describe("pause all",()=> {
-  afterEach(()=>vi.restoreAllMocks());
-  async function tasks() {
-    const client=createDemoClient(dataset);await client.setAgentRunnerEnabled(true);
-    const running=await client.createAgentTask({accountId:DEMO_ACCOUNT_ID,objective:"Running work",workflow:"fixture_research_v1"});
-    const held=await client.createAgentTask({accountId:DEMO_ACCOUNT_ID,objective:"Held for review",workflow:"fixture_research_v1"});
-    running.run.state="running";running.run.reason=null;
-    held.run.state="paused";held.run.reason="user";
-    return {running,held};
-  }
-  it("pauses everything, says how many tasks wait, and resumes only what Pause All stopped",async()=> {
-    const {running,held}=await tasks();
-    let enabled=true;
-    let list=[running,held];
-    vi.spyOn(mailClient,"agentRunnerEnabled").mockImplementation(async()=>enabled);
-    vi.spyOn(mailClient,"listAgentTasks").mockImplementation(async()=>list);
-    vi.spyOn(mailClient,"listTasks").mockResolvedValue([]);
-    const toggle=vi.spyOn(mailClient,"setAgentRunnerEnabled").mockImplementation(async(value)=>{
-      enabled=value;
-      if(!value) list=[{...running,run:{...running.run,state:"paused",reason:"disabled"}},held];
-    });
-    const control=vi.spyOn(mailClient,"controlAgentTask").mockImplementation(async(id)=>{list=list.map(d=>d.task.id===id?{...d,run:{...d.run,state:"queued",reason:null}}:d);return list.find(d=>d.task.id===id)!;});
-    render(<Harness />);
-    expect(screen.queryByRole("checkbox",{name:/Delegated work/})).not.toBeInTheDocument();
-    const pause=await screen.findByRole("button",{name:"Pause All"});
-    expect(pause).toHaveAccessibleDescription();
-    fireEvent.click(pause);
-    await waitFor(()=>expect(toggle).toHaveBeenCalledWith(false));
-    expect(await screen.findByText("1 task is waiting to resume.")).toBeVisible();
-    expect(screen.queryByRole("button",{name:"Pause All"})).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button",{name:"Resume All"}));
-    await waitFor(()=>expect(screen.queryByRole("button",{name:"Resume All"})).not.toBeInTheDocument());
-    expect(toggle).toHaveBeenLastCalledWith(true);
-    expect(control).toHaveBeenCalledOnce();
-    expect(control).toHaveBeenCalledWith(running.task.id,"resume");
-    expect(screen.getByRole("button",{name:"Pause All"})).toBeEnabled();
-  });
-  it("keeps delegated work on and reports tasks that could not resume",async()=> {
-    const {running}=await tasks();
-    const stopped={...running,run:{...running.run,state:"paused" as const,reason:"disabled"}};
-    vi.spyOn(mailClient,"agentRunnerEnabled").mockResolvedValue(false);
-    vi.spyOn(mailClient,"listAgentTasks").mockResolvedValue([stopped]);
-    vi.spyOn(mailClient,"listTasks").mockResolvedValue([]);
-    vi.spyOn(mailClient,"setAgentRunnerEnabled").mockResolvedValue();
-    vi.spyOn(mailClient,"controlAgentTask").mockRejectedValue(new Error("Agent allowance exhausted"));
-    render(<Harness />);
-    fireEvent.click(await screen.findByRole("button",{name:"Resume All"}));
-    expect(await screen.findByRole("alert")).toHaveTextContent("1 task could not resume.");
-    expect(screen.getByRole("button",{name:"Pause All"})).toBeInTheDocument();
-  });
-  it("shows no paused state before any delegated work exists",async()=> {
-    vi.spyOn(mailClient,"agentRunnerEnabled").mockResolvedValue(false);
-    vi.spyOn(mailClient,"listAgentTasks").mockResolvedValue([]);
-    render(<Harness />);
-    await screen.findByText("No delegated tasks in this view.");
-    expect(screen.queryByRole("button",{name:"Resume All"})).not.toBeInTheDocument();
-    expect(screen.queryByRole("button",{name:"Pause All"})).not.toBeInTheDocument();
+  it("shows paused banner when runner is paused", () => {
+    const controller = makeController(makeSnapshot({ runnerEnabled: false, proposals: [] }));
+    render(
+      <AgentsWorkspace
+        controller={controller}
+        accounts={ACCOUNTS}
+        accountId={null}
+        onOpenThread={vi.fn()}
+        onOpenTask={vi.fn()}
+        onArchiveProposal={vi.fn()}
+        onArchiveBatch={vi.fn()}
+        onSaveToNoteAndArchive={vi.fn()}
+        onReviewDraft={vi.fn()}
+        onOpenAiSettings={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Inbox assistants are paused/)).toBeInTheDocument();
   });
 });

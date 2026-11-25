@@ -192,7 +192,7 @@ pub(super) fn store_message_metadata(
 /// Prefers the compressed column when present (every row written after the
 /// body-compression migration); falls back to the legacy plaintext column
 /// for rows synced before it.
-pub(super) fn resolve_body(
+pub(crate) fn resolve_body(
     column_index: usize,
     legacy: String,
     compressed: Option<Vec<u8>>,

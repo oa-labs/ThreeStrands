@@ -42,7 +42,7 @@ mod maintenance;
 pub(crate) mod meeting_agenda;
 pub(crate) mod meeting_follow_through;
 pub(crate) mod meetings;
-mod messages;
+pub(crate) mod messages;
 #[cfg(any(test, target_os = "android"))]
 pub(crate) mod mobile_drafts;
 mod mutations;
@@ -192,7 +192,7 @@ impl Database {
     }
 }
 
-fn normalize_sender(value: &str) -> (String, String) {
+pub(crate) fn normalize_sender(value: &str) -> (String, String) {
     let trimmed = value.trim();
     let candidate = match (trimmed.rfind('<'), trimmed.rfind('>')) {
         (Some(open), Some(close)) if close > open => &trimmed[open + 1..close],
@@ -252,7 +252,7 @@ pub(crate) fn sending_addresses_for_account(
         .collect()
 }
 
-fn decode_json(value: String) -> rusqlite::Result<Vec<String>> {
+pub(crate) fn decode_json(value: String) -> rusqlite::Result<Vec<String>> {
     serde_json::from_str(&value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
             value.len(),

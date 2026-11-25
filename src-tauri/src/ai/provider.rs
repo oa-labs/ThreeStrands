@@ -39,7 +39,7 @@ pub(super) struct ProviderDescriptor {
 /// Whether a request asks the model to skip reasoning. The webview sends
 /// `Off` only for work routed to the user's fast model; everything else keeps
 /// the model's own default.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Reasoning {
     #[default]
@@ -210,16 +210,16 @@ pub(super) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::fro
 /// headroom over thrift. Structured calls (contact enrichment, thread
 /// analysis, briefs, chat) get the larger budget; plain-text summaries and
 /// reply drafts get the smaller one.
-pub(super) const STRUCTURED_OUTPUT_TOKENS: usize = 16_000;
-pub(super) const TEXT_OUTPUT_TOKENS: usize = 8_000;
+pub(crate) const STRUCTURED_OUTPUT_TOKENS: usize = 16_000;
+pub(crate) const TEXT_OUTPUT_TOKENS: usize = 8_000;
 
 /// A JSON Schema the provider should constrain its reply to. Every provider
 /// requires an object at the root, so array results are wrapped in a single
 /// named property that the tolerant parsers also accept.
-pub(super) struct OutputSchema {
-    pub(super) name: &'static str,
-    pub(super) description: &'static str,
-    pub(super) schema: serde_json::Value,
+pub(crate) struct OutputSchema {
+    pub(crate) name: &'static str,
+    pub(crate) description: &'static str,
+    pub(crate) schema: serde_json::Value,
 }
 
 /// A failed provider call. `rejected_request` marks the statuses a provider
@@ -244,17 +244,17 @@ impl From<String> for ProviderError {
 
 /// One request to a model: where it goes and what it asks. Named fields keep
 /// the two prompts, and the endpoint and key, from trading places unnoticed.
-pub(super) struct AiCall<'a> {
-    pub(super) feature: crate::ai::manifest::Feature,
-    pub(super) provider: AiProvider,
-    pub(super) model: &'a str,
-    pub(super) endpoint: Option<&'a str>,
-    pub(super) system_prompt: &'a str,
-    pub(super) prompt: &'a str,
-    pub(super) max_tokens: usize,
-    pub(super) temperature: f64,
-    pub(super) schema: Option<&'a OutputSchema>,
-    pub(super) api_key: &'a str,
+pub(crate) struct AiCall<'a> {
+    pub(crate) feature: crate::ai::manifest::Feature,
+    pub(crate) provider: AiProvider,
+    pub(crate) model: &'a str,
+    pub(crate) endpoint: Option<&'a str>,
+    pub(crate) system_prompt: &'a str,
+    pub(crate) prompt: &'a str,
+    pub(crate) max_tokens: usize,
+    pub(crate) temperature: f64,
+    pub(crate) schema: Option<&'a OutputSchema>,
+    pub(crate) api_key: &'a str,
 }
 
 /// Requests structured output when a schema is supplied. Support varies by
@@ -270,14 +270,14 @@ pub(super) async fn call_provider(call: AiCall<'_>) -> Result<String, String> {
 /// A provider's reply text together with the reason it reported for stopping
 /// (`finish_reason` or `stop_reason`), which distinguishes a reply cut off at
 /// the token limit from one the model chose to end.
-pub(super) struct ProviderReply {
-    pub(super) content: String,
-    pub(super) stop_reason: Option<String>,
+pub(crate) struct ProviderReply {
+    pub(crate) content: String,
+    pub(crate) stop_reason: Option<String>,
 }
 
 /// Like `call_provider`, but keeps the reported stop reason for diagnostics
 /// and can ask the model to skip reasoning.
-pub(super) async fn call_provider_reply(
+pub(crate) async fn call_provider_reply(
     call: AiCall<'_>,
     reasoning: Reasoning,
 ) -> Result<ProviderReply, String> {

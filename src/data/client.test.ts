@@ -190,48 +190,35 @@ describe("native account requests", () => {
 });
 
 
-describe("native delegated-work contract", () => {
-  it("routes local reads, explicit controls, and clarification to registered native commands", async () => {
+describe("native inbox-assistants contract", () => {
+  it("routes inbox assistant reads, configuration, runs, and proposal resolutions to registered native commands", async () => {
     vi.mocked(invoke).mockReset();
     vi.mocked(invoke).mockResolvedValue({});
-    const request = { accountId: "you@example.com", objective: "Fixture", workflow: "fixture_research_v1" as const };
-    await client.agentRunnerEnabled();
-    await client.setAgentRunnerEnabled(true);
-    await client.createAgentTask(request);
-    await client.getAgentTask("agent-1");
-    await client.listAgentTasks("you@example.com");
-    await client.controlAgentTask("agent-1", "pause");
-    await client.answerAgentQuestion("agent-1", "question-1", "Sales");
-    await client.deleteAgentTask("agent-1");
-    await client.interactAgentTask("agent-1", "Focus on sales", "revise");
-    await client.linkAgentTask("agent-1", null);
-    await client.markAgentTaskRead("agent-1", 2, 4, 1);
-    const config = { enabled:true, searchEnabled:true, verified:false };
-    const research = { task: {...request, workflow:"web_research_v1" as const}, subjects:["Example Show"], consent:true };
-    await client.agentResearchSettings();
-    await client.setAgentResearchSettings(config);
-    await client.setAgentResearchKey("search", "test-secret");
-    await client.checkAgentResearchConnection();
-    await client.createAgentResearchTask(research);
-    await client.openAgentResearchSource("agent-1", "source-1");
+    const config = {
+      agentId: "stale_reads" as const,
+      enabled: true,
+      ageDays: 7,
+      maxThreadsPerRun: 15,
+      includeStarred: false,
+      accountId: null,
+      scheduleHours: 24,
+    };
+    const aiConfig = { provider: "openai" as const, model: "gpt-4o", fastModel: "gpt-4o-mini", endpoint: null, reasoning: "default" as const };
+    await client.getInboxAgentsSnapshot("you@example.com");
+    await client.setInboxAgentRunnerEnabled(false);
+    await client.updateInboxAgentConfig(config);
+    await client.runInboxAgent("stale_reads", aiConfig, "you@example.com");
+    await client.runEnabledInboxAgents(aiConfig, "you@example.com");
+    await client.resolveInboxAgentProposal("prop-1", "accepted");
+    await client.syncInboxAgentAiConfig(aiConfig);
     expect(vi.mocked(invoke).mock.calls).toEqual([
-      ["agent_runner_enabled", undefined],
-      ["set_agent_runner_enabled", { enabled: true }],
-      ["create_agent_task", { request }],
-      ["get_agent_task", { id: "agent-1" }],
-      ["list_agent_tasks", { accountId: "you@example.com", includeArchived: false }],
-      ["control_agent_task", { id: "agent-1", action: "pause" }],
-      ["answer_agent_question", { id: "agent-1", questionId: "question-1", answer: "Sales" }],
-      ["delete_agent_task", { id: "agent-1" }],
-      ["interact_agent_task", { id: "agent-1", message: "Focus on sales", mode: "revise" }],
-      ["link_agent_task", { id: "agent-1", linkedTaskId: null }],
-      ["mark_agent_task_read", { id: "agent-1", generation: 2, turnCount: 4, artifactCount: 1 }],
-      ["agent_research_settings", undefined],
-      ["set_agent_research_settings", { config }],
-      ["set_agent_research_key", { provider:"search", key:"test-secret" }],
-      ["check_agent_research_connection", undefined],
-      ["create_agent_research_task", { request:research }],
-      ["open_agent_research_source", { id:"agent-1", sourceId:"source-1" }],
+      ["get_inbox_agents_snapshot", { accountId: "you@example.com" }],
+      ["set_inbox_agent_runner_enabled", { enabled: false }],
+      ["update_inbox_agent_config", { config }],
+      ["run_inbox_agent", { agentId: "stale_reads", aiConfig, accountId: "you@example.com" }],
+      ["run_enabled_inbox_agents", { aiConfig, accountId: "you@example.com" }],
+      ["resolve_inbox_agent_proposal", { id: "prop-1", stateValue: "accepted" }],
+      ["sync_inbox_agent_ai_config", { aiConfig }],
     ]);
   });
 });

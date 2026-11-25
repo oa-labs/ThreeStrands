@@ -79,11 +79,11 @@ describe("type roles", () => {
 describe("component typography", () => {
   it("gives Agents UI-sized body text, readable form values, and quieter context", () => {
     expect(sizeOf(".agents-workspace")).toBe("--text-body");
-    for (const selector of [".agent-new select", ".agent-new textarea", ".agent-list-row"]) expect(sizeOf(selector), selector).toBe("--text-body");
-    for (const selector of [".agent-hint", ".agent-list-row span"]) expect(sizeOf(selector), selector).toBe("--text-secondary");
-    for (const selector of [".agent-disclosure", ".agent-list-row small", ".agent-detail > header > .agent-disclosure"]) expect(sizeOf(selector), selector).toBe("--text-meta");
+    for (const selector of [".assistant-filter-btn", ".assistant-config-head strong", ".assistant-card-headline"]) expect(sizeOf(selector), selector).toBe("--text-body");
+    for (const selector of [".agent-hint", ".assistant-proposal-sender", ".assistant-card-reason", ".assistant-card-preview"]) expect(sizeOf(selector), selector).toBe("--text-secondary");
+    for (const selector of [".assistant-count-badge", ".assistant-status-pill", ".assistant-config-meta", ".assistant-kind-badge"]) expect(sizeOf(selector), selector).toBe("--text-meta");
     expect(sizeOf(".agent-field-label")).toBe("--text-label");
-    expect(sizeOf(".agents-workspace .agent-toggle")).toBe("--text-control");
+    expect(sizeOf(".agent-toggle")).toBe("--text-control");
   });
 
   it("sizes text only by role, never by a raw value or size step", () => {

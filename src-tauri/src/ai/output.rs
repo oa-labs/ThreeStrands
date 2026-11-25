@@ -1,10 +1,10 @@
 //! Decodes model output shared by every structured feature.
 
-pub(super) const MAX_ACTION_OUTPUT_CHARS: usize = 32_000;
+pub(crate) const MAX_ACTION_OUTPUT_CHARS: usize = 32_000;
 
 /// Strips a single leading/trailing markdown code fence (```` ``` ```` or
 /// ```` ```json ````), which some models emit despite being told not to.
-pub(super) fn strip_markdown_fences(content: &str) -> &str {
+pub(crate) fn strip_markdown_fences(content: &str) -> &str {
     let trimmed = content.trim();
     let Some(rest) = trimmed.strip_prefix("```") else {
         return trimmed;

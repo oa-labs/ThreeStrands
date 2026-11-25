@@ -20,7 +20,6 @@ export const SETTINGS_HELP: Record<SettingsSection, { slug: string; section?: st
   writingProfile: { slug: "ai", section: "features" },
   notes: { slug: "notes", section: "markdown-syntax" },
   ai: { slug: "ai" },
-  research: { slug: "ai", section: "web-research" },
   privacy: { slug: "privacy" },
   diagnostics: { slug: "troubleshooting" },
   data: { slug: "settings-and-sync" },
