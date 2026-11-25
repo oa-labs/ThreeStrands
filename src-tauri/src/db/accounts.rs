@@ -352,6 +352,14 @@ impl Database {
                 "DELETE FROM sender_delivery_patterns WHERE lower(account_id) = lower(?1)",
                 [email],
             )?;
+            transaction.execute(
+                "DELETE FROM inbox_agent_runs WHERE account_id = ?1",
+                [email],
+            )?;
+            transaction.execute(
+                "UPDATE inbox_agent_configs SET account_id = NULL WHERE account_id = ?1",
+                [email],
+            )?;
             purge_imap_cache(transaction, email)?;
             transaction.execute(
                 "DELETE FROM imap_account_settings WHERE account_id = ?1",
@@ -366,7 +374,15 @@ impl Database {
     /// Three Strands-owned workflow records and the synchronized catalog row.
     pub fn disconnect_account_locally(&self, email: &str) -> DbResult<()> {
         self.with_transaction(|transaction| {
-            transaction.execute("DELETE FROM agent_tasks WHERE account_id=?1", [email])?;
+            transaction.execute(
+                "DELETE FROM inbox_agent_proposals WHERE account_id=?1",
+                [email],
+            )?;
+            transaction.execute("DELETE FROM inbox_agent_runs WHERE account_id=?1", [email])?;
+            transaction.execute(
+                "UPDATE inbox_agent_configs SET account_id = NULL WHERE account_id = ?1",
+                [email],
+            )?;
             transaction.execute(
                 "DELETE FROM thread_search WHERE thread_id IN (SELECT id FROM threads WHERE account_id=?1)",
                 [email],

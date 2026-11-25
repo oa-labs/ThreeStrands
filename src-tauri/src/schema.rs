@@ -68,6 +68,7 @@ const MIGRATIONS: &[Migration] = &[
     (121, to_v121),
     (122, to_v122),
     (123, to_v123),
+    (124, to_v124),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1602,6 +1603,71 @@ fn to_v120(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v124(tx: &rusqlite::Transaction) -> Result<(), String> {
+    tx.execute_batch(
+        "DROP TABLE IF EXISTS agent_research;
+         DROP TABLE IF EXISTS agent_artifacts;
+         DROP TABLE IF EXISTS agent_steps;
+         DROP TABLE IF EXISTS agent_turns;
+         DROP TABLE IF EXISTS agent_runs;
+         DROP TABLE IF EXISTS agent_tasks;
+         DELETE FROM compose_settings WHERE key IN ('agent_research_config', 'agent_model_verified', 'agent_runner_enabled');
+         CREATE TABLE IF NOT EXISTS inbox_agent_configs (
+             agent_id TEXT PRIMARY KEY,
+             enabled INTEGER NOT NULL DEFAULT 0,
+             age_days INTEGER NOT NULL DEFAULT 7,
+             max_threads_per_run INTEGER NOT NULL DEFAULT 15,
+             include_starred INTEGER NOT NULL DEFAULT 0,
+             account_id TEXT,
+             schedule_hours INTEGER,
+             last_run_at INTEGER,
+             last_run_status TEXT,
+             last_run_error TEXT,
+             last_run_scanned INTEGER NOT NULL DEFAULT 0,
+             last_run_proposed INTEGER NOT NULL DEFAULT 0,
+             updated_at INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS inbox_agent_runs (
+             id TEXT PRIMARY KEY,
+             agent_id TEXT NOT NULL,
+             account_id TEXT,
+             state TEXT NOT NULL CHECK(state IN ('queued','running','paused','completed','failed','cancelled')),
+             reason TEXT,
+             ai_config_json TEXT,
+             scanned_count INTEGER NOT NULL DEFAULT 0,
+             proposed_count INTEGER NOT NULL DEFAULT 0,
+             lease_until INTEGER,
+             owner TEXT,
+             created_at INTEGER NOT NULL,
+             started_at INTEGER,
+             finished_at INTEGER
+         );
+         CREATE INDEX IF NOT EXISTS inbox_agent_runs_runnable ON inbox_agent_runs(state, lease_until);
+         CREATE TABLE IF NOT EXISTS inbox_agent_proposals (
+             id TEXT PRIMARY KEY,
+             agent_id TEXT NOT NULL,
+             account_id TEXT NOT NULL REFERENCES accounts(email) ON DELETE CASCADE,
+             thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+             thread_revision TEXT NOT NULL,
+             kind TEXT NOT NULL CHECK(kind IN ('archive_with_summary','archive_as_resolved','archive_as_expired','draft_reply')),
+             state TEXT NOT NULL CHECK(state IN ('pending','accepted','dismissed','superseded')),
+             headline TEXT NOT NULL,
+             reason TEXT NOT NULL,
+             payload_json TEXT NOT NULL,
+             evidence_json TEXT NOT NULL,
+             created_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS inbox_agent_proposals_state ON inbox_agent_proposals(state, agent_id, created_at DESC);
+         CREATE INDEX IF NOT EXISTS inbox_agent_proposals_thread ON inbox_agent_proposals(thread_id, state);
+         CREATE UNIQUE INDEX IF NOT EXISTS inbox_agent_proposals_unique_active
+             ON inbox_agent_proposals(agent_id, thread_id, thread_revision)
+             WHERE state IN ('pending', 'dismissed');",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
 fn to_v123(tx: &rusqlite::Transaction) -> Result<(), String> {
     // The message that finished a task, as JSON: set when sending a draft
     // linked to the task completes it. Tasks from before this version have
@@ -2154,15 +2220,13 @@ mod tests {
         "table:imap_server_capabilities",
         "table:imap_message_identities",
         "index:imap_message_identities_message",
-        "table:agent_research",
-        "index:agent_evidence_expiry",
-        "table:agent_tasks",
-        "table:agent_runs",
-        "table:agent_turns",
-        "table:agent_steps",
-        "table:agent_artifacts",
-        "index:agent_runnable",
-        "index:agent_one_active_run",
+        "table:inbox_agent_configs",
+        "table:inbox_agent_runs",
+        "index:inbox_agent_runs_runnable",
+        "table:inbox_agent_proposals",
+        "index:inbox_agent_proposals_state",
+        "index:inbox_agent_proposals_thread",
+        "index:inbox_agent_proposals_unique_active",
         "table:co_recipient_addresses",
         "index:co_recipient_seed",
         "index:co_recipient_shared_seed",

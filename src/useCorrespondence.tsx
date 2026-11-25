@@ -381,8 +381,8 @@ export function useCorrespondence(
       followUpTaskId: taskId,
     });
   }, [start]);
-  const replyFromOutside = useCallback((messageId: string, accountId: string, instruction?: string, followUpTaskId?: string, completesTaskId?: string) =>
-    start("reply", messageId, { sourceAccount: accountId, standaloneReply: true, replyAssistInstruction: instruction, followUpTaskId, completesTaskId }), [start]);
+  const replyFromOutside = useCallback((messageId: string, accountId: string, instruction?: string, followUpTaskId?: string, completesTaskId?: string, availabilityText?: string) =>
+    start("reply", messageId, { sourceAccount: accountId, standaloneReply: true, replyAssistInstruction: instruction, followUpTaskId, completesTaskId, availabilityText }), [start]);
   /** Opens a new message with `prefill` filled in, from `account` when given, queued behind any other link waiting to open. */
   const composeNew = useCallback((prefill: Partial<MailtoRequest>, options?: { account?: string; completesTaskId?: string }) => {
     const opened = mailtoQueue.current.then(async () => { await start("new", undefined, { prefill, ...options }); });

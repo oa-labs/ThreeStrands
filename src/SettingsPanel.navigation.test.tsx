@@ -2,7 +2,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsHarness } from "./test/settingsHarness";
-import { mailClient } from "./data/client";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
@@ -138,7 +137,7 @@ describe("settings section navigation", () => {
     const dialog = await openSettings();
     const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-section-id]"));
-    expect(sectionButtons).toHaveLength(20);
+    expect(sectionButtons).toHaveLength(19);
     for (const button of sectionButtons) {
       const icon = button.querySelector("svg");
       expect(icon).not.toBeNull();
@@ -203,20 +202,9 @@ describe("settings section navigation", () => {
       "Mail Accounts", "Calendar Accounts",
       "Reading & Triage", "Split Inboxes", "Muted Senders", "Signatures", "Snippets", "Writing Profile", "Notes",
       "Profiles", "Account Defaults", "Meeting Types",
-      "AI Provider", "Web Research", "Replicated Sync",
+      "AI Provider", "Replicated Sync",
       "Privacy", "Diagnostics", "Data Transfer",
     ]);
-  });
-
-  it("keeps web research setup in Settings under Integrations", async () => {
-    const research = vi.spyOn(mailClient, "agentResearchSettings").mockResolvedValue({ config: { enabled: false, searchEnabled: true, verified: false }, modelKeyConfigured: false, searchKeyConfigured: false });
-    const dialog = await openSettings();
-    fireEvent.change(within(dialog).getByRole("searchbox", { name: "Search Settings" }), { target: { value: "exa" } });
-    expect(within(dialog).getByRole("button", { name: "Web Research" })).toHaveAttribute("aria-current", "true");
-    expect(within(dialog).getByText("Integrations")).toBeInTheDocument();
-    expect(await within(dialog).findByRole("checkbox", { name: "Web Research" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("region", { name: "Web Research" })).toBeInTheDocument();
-    research.mockRestore();
   });
 
   it("puts both account removal scopes behind one confirmation", async () => {

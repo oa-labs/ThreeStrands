@@ -1,5 +1,5 @@
 import { collapseQuotedHistoryText } from "../quotedHistory";
-import { createDemoAgents } from "./demoAgents";
+import { createDemoInboxAgents } from "./demoInboxAgents";
 import { previewScheduleChoices } from "../scheduleTimes";
 import { isHolidayCalendar } from "../calendarAvailability";
 import type { FindAvailabilityRequest } from "../domain";
@@ -1863,7 +1863,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         errors: [],
       };
     },
-    ...createDemoAgents(() => ({ accounts, threads, tasks })),
+    ...createDemoInboxAgents(() => ({ accounts, threads, tasks })),
     async listTasks(accountId, status) {
       return structuredClone(tasks
         .filter((task) => !accountId || accountId === "all" || task.accountId === accountId)

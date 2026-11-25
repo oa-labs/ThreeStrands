@@ -11,9 +11,9 @@ pub mod evaluation;
 pub mod find_times;
 pub mod manifest;
 mod meeting;
-mod output;
+pub(crate) mod output;
 mod proposals;
-mod provider;
+pub(crate) mod provider;
 pub mod requests;
 #[cfg(test)]
 mod test_support;

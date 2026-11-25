@@ -4559,33 +4559,21 @@ mod tests {
     }
 
     #[test]
-    fn research_jobs_evidence_and_configuration_stay_out_of_settings_transfer() {
+    fn inbox_assistants_and_proposals_stay_out_of_settings_transfer() {
         let db = Database::open_memory();
         db.adopt_account("current@example.com").unwrap();
         let prefs = current_fixture_payload().preferences;
         let before = build_export_payload(&db, prefs.clone()).unwrap();
-        db.set_agent_runner_enabled(true, 0).unwrap();
-        db.set_research_config(
-            &crate::agents::research::ResearchConfig {
+        db.set_inbox_agent_runner_enabled(false, 0).unwrap();
+        db.update_inbox_agent_config(
+            &crate::agents::UpdateInboxAgentConfig {
+                agent_id: crate::agents::AgentId::StaleReads,
                 enabled: true,
-                search_enabled: true,
-                verified: false,
-            },
-            true,
-            0,
-        )
-        .unwrap();
-        db.create_research_task(
-            &crate::agents::research::ResearchRequest {
-                task: crate::agents::CreateAgentTask {
-                    account_id: "current@example.com".into(),
-                    objective: "Private research objective".into(),
-                    source_thread_id: None,
-                    linked_task_id: None,
-                    workflow: crate::agents::policy::RESEARCH_WORKFLOW.into(),
-                },
-                subjects: vec!["Public Show".into()],
-                consent: true,
+                age_days: 10,
+                max_threads_per_run: 5,
+                include_starred: true,
+                account_id: Some("current@example.com".into()),
+                schedule_hours: Some(24),
             },
             0,
         )

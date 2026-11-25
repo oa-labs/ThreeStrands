@@ -138,7 +138,6 @@ export type CommandContext = {
   /** Whether meeting preparation is open in the workspace in view. */
   meetingPrepOpen?: boolean;
   openAgentsView?(): void;
-  delegateSelected?(): void;
   openTodayView?(): void;
   openContactsView(): void;
   openKeepInTouchView(): void;
@@ -227,7 +226,7 @@ export const commands: Command[] = [
   workspaceCommand("contacts.new", "New Contact", ["Shift+n"], "contacts"),
   workspaceCommand("contacts.newGroup", "New Group", ["Shift+g"], "contacts"),
   workspaceCommand("contacts.save", "Save Contact", ["Mod+Enter"], "contacts", true),
-  workspaceCommand("agents.new", "New Delegated Task", ["Shift+n"], "agents"),
+  workspaceCommand("agents.runAll", "Run Enabled Inbox Assistants", [], "agents"),
   { ...workspaceCommand("today.nextView", "Next Today View", ["Tab"], "today"), group: "Navigation" },
   { ...workspaceCommand("today.previousView", "Previous Today View", ["Shift+Tab"], "today"), group: "Navigation" },
   { ...workspaceCommand("today.write", "Write Daily Note", ["Enter"], "today"), enabled: (c) => c.focusedPane === "today" && !c.composerActive && workspaceCommandAvailable("today.write") },
@@ -765,11 +764,6 @@ export const commands: Command[] = [
   {
     id: "view.agents", title: "Go to Agents View", keys: ["7"], group: "Navigation",
     enabled: (c) => !c.composerActive, run: (c) => complete(() => c.openAgentsView?.()),
-  },
-  {
-    id: "agents.delegate", title: "Delegate Work From Conversation", keywords: ["research", "invitation", "agent"], keys: [], group: "Application",
-    enabled: (c) => isThreadMailbox(c) && Boolean(c.selectedId && c.delegateSelected) && !c.composerActive,
-    run: (c) => complete(() => c.delegateSelected?.()),
   },
   {
     id: "view.keepInTouch",

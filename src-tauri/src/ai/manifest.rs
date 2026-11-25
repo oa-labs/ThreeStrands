@@ -21,6 +21,9 @@ pub enum Feature {
     FindTimes,
     MeetingPrep,
     Connection,
+    AgentStaleReads,
+    AgentResolvedSweeper,
+    AgentAgingReplies,
 }
 impl Feature {
     pub fn id(self) -> &'static str {
@@ -35,6 +38,9 @@ impl Feature {
             Self::FindTimes => "find_times",
             Self::MeetingPrep => "meeting_prep",
             Self::Connection => "connection",
+            Self::AgentStaleReads => "agent_stale_reads",
+            Self::AgentResolvedSweeper => "agent_resolved_sweeper",
+            Self::AgentAgingReplies => "agent_aging_replies",
         }
     }
     /// Bump when instructions/interpretation change; hashes also detect drift.
@@ -50,6 +56,7 @@ impl Feature {
             Self::FindTimes => 1,
             Self::MeetingPrep => 1,
             Self::Connection => 1,
+            Self::AgentStaleReads | Self::AgentResolvedSweeper | Self::AgentAgingReplies => 1,
         }
     }
     pub fn schema_version(self) -> u32 {

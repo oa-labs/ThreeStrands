@@ -348,7 +348,7 @@ fn has_ambiguous_work(
                          AND (source_message_id IS NULL OR source_message_id NOT IN (SELECT value FROM json_each(?5))))
          OR EXISTS(SELECT 1 FROM note_links WHERE target_key=?4)
          OR EXISTS(SELECT 1 FROM imap_thread_aliases WHERE account_id=?1 AND new_id=?3)
-         OR EXISTS(SELECT 1 FROM agent_tasks WHERE account_id=?1 AND source_thread_id=?2)
+         OR EXISTS(SELECT 1 FROM inbox_agent_proposals WHERE account_id=?1 AND thread_id=?2 AND state IN ('pending', 'accepted'))
          OR EXISTS(SELECT 1 FROM drafts WHERE json_extract(payload,'$.account')=?1
                          AND json_extract(payload,'$.threadId')=?3
                          AND COALESCE(json_extract(payload,'$.sourceId'),'') NOT IN (SELECT value FROM json_each(?5)))
@@ -421,8 +421,16 @@ impl ImapStateStore {
                     )?;
                     rebind_tasks(tx, account, &source, &target, None)?;
                     rebind_drafts(tx, account, &repair.source, survivor, None)?;
-                    tx.execute("UPDATE agent_tasks SET source_thread_id=?3 WHERE account_id=?1 AND source_thread_id=?2
-                        AND EXISTS(SELECT 1 FROM threads WHERE id=?3)", params![account, source, target])?;
+                    tx.execute(
+                        "UPDATE OR IGNORE inbox_agent_proposals SET thread_id=?3
+                         WHERE account_id=?1 AND thread_id=?2
+                           AND EXISTS(SELECT 1 FROM threads WHERE id=?3)",
+                        params![account, source, target],
+                    )?;
+                    tx.execute(
+                        "DELETE FROM inbox_agent_proposals WHERE account_id=?1 AND thread_id=?2",
+                        params![account, source],
+                    )?;
                 }
                 tx.execute("DELETE FROM imap_hot_threads WHERE account_id=?1 AND thread_id=?2", params![account, repair.source])?;
                 tx.execute("DELETE FROM thread_search WHERE thread_id=?1", [&source])?;

@@ -1,24 +1,162 @@
-#[cfg(test)]
-use super::fixture_step;
-use super::{policy::*, Lease, StepResult};
-use crate::db::Database;
+//! Durable background runner for standing Inbox Assistants.
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+
+use chrono::{DateTime, Utc};
 use tokio::sync::Notify;
+
+use super::analyzer::analyze_candidate;
+use super::policy::*;
+use super::{AiRunConfig, InboxAgentRun};
+use crate::ai::{get_key, AiProvider};
+use crate::db::Database;
+
+#[derive(Clone, Debug)]
+pub(crate) struct RunExecutionReport {
+    pub scanned: i64,
+    pub proposed: i64,
+}
 
 #[async_trait::async_trait]
 pub(crate) trait Executor: Send + Sync {
-    async fn execute(&self, lease: &Lease) -> Result<StepResult, ()>;
+    async fn execute(
+        &self,
+        db: &Database,
+        run: &InboxAgentRun,
+        ai: Option<&AiRunConfig>,
+        owner: &str,
+        now: i64,
+        stopped: &AtomicBool,
+    ) -> Result<RunExecutionReport, String>;
 }
-#[cfg(test)]
-struct Fixture;
-#[cfg(test)]
+
+pub(crate) struct ProductionExecutor;
+
 #[async_trait::async_trait]
-impl Executor for Fixture {
-    async fn execute(&self, lease: &Lease) -> Result<StepResult, ()> {
-        Ok(fixture_step(lease.run.checkpoint))
+impl Executor for ProductionExecutor {
+    async fn execute(
+        &self,
+        db: &Database,
+        run: &InboxAgentRun,
+        ai: Option<&AiRunConfig>,
+        owner: &str,
+        now: i64,
+        stopped: &AtomicBool,
+    ) -> Result<RunExecutionReport, String> {
+        let mut config = db
+            .get_inbox_agent_config(run.agent_id)
+            .map_err(|e| e.to_string())?;
+        if run.account_id.is_some() {
+            config.account_id = run.account_id.clone();
+        }
+        let batch = db
+            .with_inbox_agent_candidates(&config, now)
+            .map_err(|e| e.to_string())?;
+
+        let mut scanned = 0i64;
+        let mut proposed = 0i64;
+
+        for det in batch.deterministic {
+            if stopped.load(Ordering::SeqCst) {
+                return Err("Execution interrupted".into());
+            }
+            scanned += 1;
+            if db
+                .save_inbox_agent_proposal(
+                    run.agent_id,
+                    &det.account_id,
+                    &det.thread_id,
+                    &det.thread_revision,
+                    det.kind,
+                    &det.headline,
+                    &det.reason,
+                    &det.payload,
+                    &det.evidence,
+                    now,
+                )
+                .map_err(|e| e.to_string())?
+            {
+                proposed += 1;
+            }
+        }
+
+        if batch.ai_candidates.is_empty() {
+            return Ok(RunExecutionReport { scanned, proposed });
+        }
+
+        let Some(ai_cfg) = ai.filter(|cfg| {
+            !matches!(cfg.provider, AiProvider::None) && !cfg.model.trim().is_empty()
+        }) else {
+            return Err(
+                "Configure an AI provider and model in Settings → AI Provider to scan emails."
+                    .into(),
+            );
+        };
+        let api_key = get_key()
+            .map_err(|e| format!("Could not read AI API key: {e}"))?
+            .filter(|k| !k.trim().is_empty())
+            .ok_or_else(|| {
+                "Save an AI API key in Settings → AI Provider before running Inbox Assistants."
+                    .to_string()
+            })?;
+
+        let current_date = DateTime::<Utc>::from_timestamp(now, 0)
+            .unwrap_or_else(Utc::now)
+            .format("%Y-%m-%d")
+            .to_string();
+
+        for candidate in &batch.ai_candidates {
+            if stopped.load(Ordering::SeqCst) {
+                return Err("Execution interrupted".into());
+            }
+            let step_now = Utc::now().timestamp();
+            let still_active = db
+                .renew_inbox_agent_run_lease(&run.id, owner, step_now)
+                .map_err(|e| e.to_string())?;
+            if !still_active {
+                return Err("Run was paused or cancelled".into());
+            }
+            scanned += 1;
+            match analyze_candidate(run.agent_id, candidate, ai_cfg, &api_key, &current_date).await
+            {
+                Ok(Some(analyzed)) => {
+                    let saved = db
+                        .save_inbox_agent_proposal(
+                            run.agent_id,
+                            &candidate.account_id,
+                            &candidate.thread_id,
+                            &candidate.last_message_at,
+                            analyzed.kind,
+                            &analyzed.headline,
+                            &analyzed.reason,
+                            &analyzed.payload,
+                            &analyzed.evidence,
+                            step_now,
+                        )
+                        .map_err(|e| e.to_string())?;
+                    if saved {
+                        proposed += 1;
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    log::warn!(
+                        target: "inbox_assistants",
+                        "assistant {} failed on thread {}: {error}",
+                        run.agent_id.as_str(),
+                        candidate.thread_id
+                    );
+                    if proposed == 0 && scanned == 1 {
+                        return Err(error);
+                    }
+                }
+            }
+        }
+
+        Ok(RunExecutionReport { scanned, proposed })
     }
 }
 
@@ -29,6 +167,7 @@ pub(crate) struct Runner {
     stopped: Arc<AtomicBool>,
     wake: Arc<Notify>,
 }
+
 impl Runner {
     pub(crate) fn new(database: Arc<Database>) -> Self {
         Self {
@@ -38,46 +177,50 @@ impl Runner {
             wake: Arc::new(Notify::new()),
         }
     }
+
+    pub(crate) fn wake(&self) {
+        self.wake.notify_one();
+    }
+
     pub(crate) fn start(&self) {
         for _ in 0..CONCURRENT_JOBS {
             let worker = self.clone();
             tauri::async_runtime::spawn(async move {
                 while !worker.stopped.load(Ordering::SeqCst) {
                     match worker
-                        .tick(
-                            &super::service::Production {
-                                database: worker.database.clone(),
-                            },
-                            || chrono::Utc::now().timestamp(),
-                        )
+                        .tick(&ProductionExecutor, || Utc::now().timestamp())
                         .await
                     {
                         Ok(true) => continue,
-                        Err(error) => log::warn!("Delegated work stopped a step: {error}"),
                         Ok(false) => {}
+                        Err(error) => log::warn!("Inbox assistant runner step error: {error}"),
                     }
-                    tokio::select! { _=worker.wake.notified()=>{}, _=tokio::time::sleep(std::time::Duration::from_millis(POLL_MILLIS))=>{} }
+                    tokio::select! {
+                        _ = worker.wake.notified() => {},
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(POLL_MILLIS)) => {}
+                    }
                 }
             });
         }
     }
+
     pub(crate) fn request_stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
         self.wake.notify_waiters();
     }
+
     pub(crate) async fn shutdown(&self) -> Result<(), String> {
         self.request_stop();
         let db = self.database.clone();
         let owner = self.owner.clone();
         tokio::task::spawn_blocking(move || {
-            db.release_agent_owner(&owner, chrono::Utc::now().timestamp())
+            db.release_inbox_agent_owner(&owner, Utc::now().timestamp())
         })
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
     }
-    /// Injectable clock and executor keep recovery/cancellation tests independent
-    /// of wall time and paid services. No database lock crosses executor.await.
+
     pub(crate) async fn tick(
         &self,
         executor: &dyn Executor,
@@ -86,159 +229,127 @@ impl Runner {
         if self.stopped.load(Ordering::SeqCst) {
             return Ok(false);
         }
-        let db = self.database.clone();
-        let owner = self.owner.clone();
         let now = clock();
-        let cleanup = db.clone();
-        tokio::task::spawn_blocking(move || cleanup.expire_research_evidence(now))
-            .await
-            .map_err(|_| "Research cleanup interrupted".to_string())?
-            .map_err(|e| e.to_string())?;
-        let lease = tokio::task::spawn_blocking(move || db.claim_agent_run(&owner, now))
+        let db = self.database.clone();
+        tokio::task::spawn_blocking(move || db.enqueue_due_scheduled_inbox_agents(now))
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
-        let Some(lease) = lease else {
-            return Ok(false);
-        };
-        // Recheck after the blocking claim so shutdown cannot start a new tool.
-        if self.stopped.load(Ordering::SeqCst) {
-            self.shutdown().await?;
-            return Ok(false);
-        }
-        let interrupted = self.wake.notified();
-        tokio::pin!(interrupted);
-        interrupted.as_mut().enable();
-        if self.stopped.load(Ordering::SeqCst) {
-            self.shutdown().await?;
-            return Ok(false);
-        }
-        let db_check = self.database.clone();
-        let lease_check = lease.clone();
-        let wait_started = tokio::time::Instant::now();
-        let remaining = (lease.run.lease_until.unwrap_or(now) - now).max(0) as u64;
-        let check_current = async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_millis(CANCELLATION_MILLIS)).await;
-                let db = db_check.clone();
-                let l = lease_check.clone();
-                let elapsed = wait_started.elapsed().as_secs();
-                let valid = tokio::task::spawn_blocking(move || {
-                    db.agent_lease_current(&l, now).unwrap_or(false) && elapsed < remaining
-                })
-                .await
-                .unwrap_or(false);
-                if !valid {
-                    break;
-                }
-            }
-        };
-        let result = tokio::select! {
-            _=check_current=>return Ok(false),
-            result=executor.execute(&lease)=>result,
-            _=interrupted=> { self.shutdown().await?;return Ok(false); }
-        };
-        if self.stopped.load(Ordering::SeqCst) {
-            self.shutdown().await?;
-            return Ok(false);
-        }
-        let result = result.unwrap_or(StepResult::TransientFailure);
+
         let db = self.database.clone();
-        let now = clock();
+        let owner = self.owner.clone();
+        let claimed = tokio::task::spawn_blocking(move || db.claim_inbox_agent_run(&owner, now))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+
+        let Some((run, ai)) = claimed else {
+            return Ok(false);
+        };
+
+        if self.stopped.load(Ordering::SeqCst) {
+            self.shutdown().await?;
+            return Ok(false);
+        }
+
+        let exec_result = executor
+            .execute(
+                &self.database,
+                &run,
+                ai.as_ref(),
+                &self.owner,
+                now,
+                &self.stopped,
+            )
+            .await;
+
+        let db = self.database.clone();
+        let owner = self.owner.clone();
+        let finish_now = clock();
+        let run_id = run.id.clone();
         tokio::task::spawn_blocking(move || {
-            let finished = db.finish_agent_step(&lease, result, now);
-            if finished.is_err()
-                && db
-                    .agent_workflow(&lease.run.task_id)
-                    .is_ok_and(|w| w == RESEARCH_WORKFLOW)
-            {
-                return db.finish_agent_step(
-                    &lease,
-                    StepResult::Fail("response_invalid".into()),
-                    now,
-                );
-            }
-            finished
+            db.finish_inbox_agent_run(&run_id, &owner, exec_result, finish_now)
         })
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+        Ok(true)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::RunState;
-    use crate::{agents::CreateAgentTask, models::MailProviderKind};
-    struct Blocked(Arc<Notify>, Arc<Notify>);
+    use crate::agents::{AgentId, ProposalKind, ProposalPayload};
+    use crate::models::MailProviderKind;
+
+    struct MockExecutor;
+
     #[async_trait::async_trait]
-    impl Executor for Blocked {
-        async fn execute(&self, _: &Lease) -> Result<StepResult, ()> {
-            self.0.notify_one();
-            self.1.notified().await;
-            Ok(StepResult::Prepared)
+    impl Executor for MockExecutor {
+        async fn execute(
+            &self,
+            db: &Database,
+            run: &InboxAgentRun,
+            _ai: Option<&AiRunConfig>,
+            _owner: &str,
+            now: i64,
+            _stopped: &AtomicBool,
+        ) -> Result<RunExecutionReport, String> {
+            db.save_inbox_agent_proposal(
+                run.agent_id,
+                "me@example.com",
+                "t1",
+                "2026-11-01T00:00:00Z",
+                ProposalKind::ArchiveAsExpired,
+                "Expired offer",
+                "Expired Nov 5",
+                &ProposalPayload {
+                    expired_date: Some("2026-11-05".into()),
+                    ..Default::default()
+                },
+                &[],
+                now,
+            )
+            .unwrap();
+            Ok(RunExecutionReport {
+                scanned: 1,
+                proposed: 1,
+            })
         }
     }
+
     #[tokio::test]
-    async fn cancellation_during_executor_await_cannot_publish_and_does_not_lock_database() {
+    async fn runner_claims_executes_and_completes_queued_runs() {
         let db = Arc::new(Database::open_memory());
-        db.adopt_mail_account("you@example.com", MailProviderKind::Gmail)
+        db.adopt_mail_account("me@example.com", MailProviderKind::Gmail)
             .unwrap();
-        db.set_agent_runner_enabled(true, 0).unwrap();
-        let d = db
-            .create_agent_task(
-                &CreateAgentTask {
-                    account_id: "you@example.com".into(),
-                    objective: "Fixture".into(),
-                    workflow: WORKFLOW.into(),
-                    source_thread_id: None,
-                    linked_task_id: None,
-                },
-                0,
+        db.test_connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json, last_message_at, labels_json, account_id, last_received_at)
+                 VALUES ('t1', 'pt1', 'Promo', 'Ends Nov 5', '[\"news@shop.example\"]', '2026-11-01T00:00:00Z', '[]', 'me@example.com', '2026-11-01T00:00:00Z')",
+                [],
             )
             .unwrap();
-        let started = Arc::new(Notify::new());
-        let release = Arc::new(Notify::new());
-        let runner = Runner::new(db.clone());
-        let r = runner.clone();
-        let tool = Blocked(started.clone(), release.clone());
-        let task = tokio::spawn(async move { r.tick(&tool, || 1).await });
-        started.notified().await;
-        db.control_agent_task(&d.task.id, "cancel", 1).unwrap();
-        release.notify_one();
-        assert!(!task.await.unwrap().unwrap());
-        let d = db.get_agent_task(&d.task.id).unwrap();
-        assert_eq!(d.run.state, RunState::Cancelled);
-        assert!(d.artifacts.is_empty());
-        assert_eq!(d.turns.len(), 1);
-    }
-    #[tokio::test]
-    async fn shutdown_releases_work_and_invalidates_inflight_generation() {
-        let db = Arc::new(Database::open_memory());
-        db.adopt_mail_account("you@example.com", MailProviderKind::Gmail)
+        db.enqueue_inbox_agent_run(AgentId::ResolvedAndExpired, None, None, 1000)
             .unwrap();
-        db.set_agent_runner_enabled(true, 0).unwrap();
-        let d = db
-            .create_agent_task(
-                &CreateAgentTask {
-                    account_id: "you@example.com".into(),
-                    objective: "Fixture".into(),
-                    workflow: WORKFLOW.into(),
-                    source_thread_id: None,
-                    linked_task_id: None,
-                },
-                0,
-            )
-            .unwrap();
+
         let runner = Runner::new(db.clone());
-        let old = db.claim_agent_run(&runner.owner, 0).unwrap().unwrap();
-        runner.shutdown().await.unwrap();
-        assert!(!db.finish_agent_step(&old, StepResult::Prepared, 1).unwrap());
-        assert_eq!(
-            db.get_agent_task(&d.task.id).unwrap().run.state,
-            RunState::Queued
-        );
-        assert!(!runner.tick(&Fixture, || 1).await.unwrap());
+        let worked = runner.tick(&MockExecutor, || 1001).await.unwrap();
+        assert!(worked);
+
+        let snapshot = db.inbox_agents_snapshot(None).unwrap();
+        assert!(snapshot.active_runs.is_empty());
+        assert_eq!(snapshot.proposals.len(), 1);
+        assert_eq!(snapshot.proposals[0].headline, "Expired offer");
+        let cfg = snapshot
+            .agents
+            .iter()
+            .find(|a| a.agent_id == AgentId::ResolvedAndExpired)
+            .unwrap();
+        assert_eq!(cfg.last_run_status.as_deref(), Some("completed"));
+        assert_eq!(cfg.last_run_proposed, 1);
     }
 }

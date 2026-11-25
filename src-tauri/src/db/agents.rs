@@ -1,560 +1,1101 @@
-//! Atomic local agent state. No provider calls or personal-task mutations.
-use super::{Database, DatabaseError, DbResult};
-use crate::agents::{policy::*, *};
+//! SQLite persistence for standing Inbox Assistants, runs, and proposals.
+
+use std::collections::HashMap;
+
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{de::DeserializeOwned, Serialize};
 use uuid::Uuid;
-mod research;
 
-fn encode<T: Serialize>(v: &T) -> DbResult<String> {
-    serde_json::to_string(v).map_err(|e| DatabaseError::Serialization(e.to_string()))
+use super::{decode_json, Database, DatabaseError, DbResult};
+use crate::agents::candidates::CandidateBatch;
+use crate::agents::policy::*;
+use crate::agents::runner::RunExecutionReport;
+use crate::agents::{
+    AgentId, AiRunConfig, InboxAgentConfig, InboxAgentProposal, InboxAgentRun, InboxAgentsSnapshot,
+    ProposalEvidence, ProposalKind, ProposalPayload, ProposalState, RunState,
+    UpdateInboxAgentConfig,
+};
+
+#[path = "agents/candidates.rs"]
+mod candidates;
+use candidates::select_candidates;
+
+const RUNNER_ENABLED_KEY: &str = "inbox_agent_runner_enabled";
+const AI_CONFIG_KEY: &str = "inbox_agent_ai_config";
+
+fn encode<T: Serialize>(value: &T) -> DbResult<String> {
+    serde_json::to_string(value).map_err(|e| DatabaseError::Serialization(e.to_string()))
 }
-fn decode<T: DeserializeOwned>(v: String) -> DbResult<T> {
-    serde_json::from_str(&v).map_err(|e| DatabaseError::corrupt(e.to_string()))
+
+fn decode<T: DeserializeOwned>(raw: &str) -> DbResult<T> {
+    serde_json::from_str(raw).map_err(|e| DatabaseError::corrupt(e.to_string()))
 }
-fn bounded(value: &str, max: usize) -> DbResult<()> {
-    if value.trim().is_empty() || value.chars().count() > max {
-        return Err(DatabaseError::invalid("Agent text is empty or too long"));
-    }
-    Ok(())
-}
-fn enabled(c: &Connection) -> DbResult<bool> {
-    Ok(c.query_row(
-        "SELECT value='true' FROM compose_settings WHERE key='agent_runner_enabled'",
-        [],
-        |r| r.get(0),
-    )
-    .optional()?
-    .unwrap_or(false))
-}
-fn run(c: &Connection, task_id: &str) -> DbResult<AgentRun> {
-    let value: String = c
+
+fn runner_enabled_conn(conn: &Connection) -> DbResult<bool> {
+    Ok(conn
         .query_row(
-            "SELECT record_json FROM agent_runs WHERE task_id=?1 ORDER BY rowid DESC LIMIT 1",
-            [task_id],
+            "SELECT value != 'false' FROM compose_settings WHERE key = ?1",
+            [RUNNER_ENABLED_KEY],
             |r| r.get(0),
         )
         .optional()?
-        .ok_or(DatabaseError::NotFound("Delegated task"))?;
-    decode(value)
+        .unwrap_or(true))
 }
-fn save_run(c: &Connection, r: &AgentRun) -> DbResult<()> {
-    c.execute("UPDATE agent_runs SET state=?2,generation=?3,lease_until=?4,not_before=?5,record_json=?6 WHERE id=?1",
-        params![r.id,r.state.key(),r.generation,r.lease_until,r.not_before,encode(r)?])?;
-    Ok(())
-}
-fn task(c: &Connection, id: &str) -> DbResult<AgentTask> {
-    let (json, source, linked): (String, Option<String>, Option<String>) = c
+
+fn saved_ai_config_conn(conn: &Connection) -> DbResult<Option<AiRunConfig>> {
+    let raw: Option<String> = conn
         .query_row(
-            "SELECT record_json,source_thread_id,linked_task_id FROM agent_tasks WHERE id=?1",
-            [id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            "SELECT value FROM compose_settings WHERE key = ?1",
+            [AI_CONFIG_KEY],
+            |r| r.get(0),
         )
-        .optional()?
-        .ok_or(DatabaseError::NotFound("Delegated task"))?;
-    let mut value: AgentTask = decode(json)?;
-    value.source_thread_id = source;
-    value.linked_task_id = linked;
-    Ok(value)
+        .optional()?;
+    raw.as_deref().map(decode).transpose()
 }
-fn save_task(c: &Connection, t: &AgentTask) -> DbResult<()> {
-    c.execute(
-        "UPDATE agent_tasks SET record_json=?2 WHERE id=?1",
-        params![t.id, encode(t)?],
-    )?;
-    Ok(())
-}
-fn records<T: DeserializeOwned>(c: &Connection, sql: &str, id: &str) -> DbResult<Vec<T>> {
-    let mut s = c.prepare(sql)?;
-    let rows = s
-        .query_map([id], |r| r.get::<_, String>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-    rows.into_iter().map(decode).collect()
-}
-fn detail(c: &Connection, id: &str) -> DbResult<AgentDetail> {
-    Ok(AgentDetail {
-        research: research::summary(c, id)?,
-        task: task(c, id)?,
-        run: run(c, id)?,
-        turns: records(
-            c,
-            "SELECT record_json FROM agent_turns WHERE task_id=?1 ORDER BY id",
-            id,
-        )?,
-        artifacts: records(
-            c,
-            "SELECT record_json FROM agent_artifacts WHERE task_id=?1 ORDER BY version",
-            id,
-        )?,
-    })
-}
-fn turn(
-    c: &Connection,
-    task_id: &str,
-    role: &str,
-    text: &str,
-    question: Option<String>,
-    answer: Option<String>,
-    now: i64,
-) -> DbResult<()> {
-    let t = AgentTurn {
-        id: Uuid::new_v4().to_string(),
-        role: role.into(),
-        text: text.into(),
-        question_id: question,
-        answer_to: answer.clone(),
-        created_at: now,
-    };
-    c.execute(
-        "INSERT INTO agent_turns(task_id,answer_to,record_json) VALUES (?1,?2,?3)",
-        params![task_id, answer, encode(&t)?],
-    )?;
-    Ok(())
-}
-fn invalidate(r: &mut AgentRun, state: RunState, reason: Option<&str>) {
-    r.state = state;
-    r.reason = reason.map(str::to_string);
-    r.generation += 1;
-    r.owner = None;
-    r.lease_until = None;
-    r.started_at = None;
-}
-fn dispatch_limit(c: &Connection, id: &str) -> DbResult<i64> {
-    Ok(if task(c, id)?.workflow == RESEARCH_WORKFLOW {
-        MAX_RESEARCH_DISPATCHES
-    } else {
-        MAX_DISPATCHES
-    })
-}
-fn charge_time(r: &mut AgentRun, now: i64) {
-    if let Some(start) = r.started_at {
-        let reserved = (r.lease_until.unwrap_or(start + LEASE_SECONDS) - start).max(0);
-        r.active_seconds += (now - start).clamp(0, reserved);
+
+fn default_config(agent_id: AgentId) -> InboxAgentConfig {
+    let entry = agent_id.catalog();
+    InboxAgentConfig {
+        agent_id,
+        name: entry.name.into(),
+        description: entry.description.into(),
+        enabled: false,
+        age_days: entry.default_age_days,
+        max_threads_per_run: entry.default_max_threads,
+        include_starred: entry.default_include_starred,
+        account_id: None,
+        schedule_hours: None,
+        last_run_at: None,
+        last_run_status: None,
+        last_run_error: None,
+        last_run_scanned: 0,
+        last_run_proposed: 0,
+        updated_at: 0,
     }
 }
 
-fn create_task(c: &Connection, request: &CreateAgentTask, now: i64) -> DbResult<AgentDetail> {
-    if !enabled(c)? {
-        return Err(DatabaseError::invalid("Delegated work is disabled"));
-    }
-    let exists: bool = c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM accounts WHERE email=?1 AND on_this_device=1)",
-        [&request.account_id],
-        |r| r.get(0),
+fn load_configs_conn(conn: &Connection) -> DbResult<Vec<InboxAgentConfig>> {
+    let mut map: HashMap<AgentId, InboxAgentConfig> = AgentId::ALL
+        .into_iter()
+        .map(|id| (id, default_config(id)))
+        .collect();
+    let mut stmt = conn.prepare(
+        "SELECT agent_id, enabled, age_days, max_threads_per_run, include_starred,
+                account_id, schedule_hours, last_run_at, last_run_status, last_run_error,
+                last_run_scanned, last_run_proposed, updated_at
+         FROM inbox_agent_configs",
     )?;
-    if !exists {
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)? != 0,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, i64>(4)? != 0,
+            row.get::<_, Option<String>>(5)?,
+            row.get::<_, Option<i64>>(6)?,
+            row.get::<_, Option<i64>>(7)?,
+            row.get::<_, Option<String>>(8)?,
+            row.get::<_, Option<String>>(9)?,
+            row.get::<_, i64>(10)?,
+            row.get::<_, i64>(11)?,
+            row.get::<_, i64>(12)?,
+        ))
+    })?;
+    for row in rows {
+        let (
+            raw_id,
+            enabled,
+            age_days,
+            max_threads_per_run,
+            include_starred,
+            account_id,
+            schedule_hours,
+            last_run_at,
+            last_run_status,
+            last_run_error,
+            last_run_scanned,
+            last_run_proposed,
+            updated_at,
+        ) = row?;
+        let Some(agent_id) = AgentId::parse(&raw_id) else {
+            continue;
+        };
+        if let Some(cfg) = map.get_mut(&agent_id) {
+            cfg.enabled = enabled;
+            cfg.age_days = age_days;
+            cfg.max_threads_per_run = max_threads_per_run;
+            cfg.include_starred = include_starred;
+            cfg.account_id = account_id;
+            cfg.schedule_hours = schedule_hours;
+            cfg.last_run_at = last_run_at;
+            cfg.last_run_status = last_run_status;
+            cfg.last_run_error = last_run_error;
+            cfg.last_run_scanned = last_run_scanned;
+            cfg.last_run_proposed = last_run_proposed;
+            cfg.updated_at = updated_at;
+        }
+    }
+    Ok(AgentId::ALL
+        .into_iter()
+        .map(|id| map.remove(&id).unwrap())
+        .collect())
+}
+
+fn ensure_config_row(conn: &Connection, agent_id: AgentId, now: i64) -> DbResult<()> {
+    let def = default_config(agent_id);
+    conn.execute(
+        "INSERT OR IGNORE INTO inbox_agent_configs(
+            agent_id, enabled, age_days, max_threads_per_run, include_starred,
+            account_id, schedule_hours, last_run_scanned, last_run_proposed, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, ?8)",
+        params![
+            agent_id.as_str(),
+            i64::from(def.enabled),
+            def.age_days,
+            def.max_threads_per_run,
+            i64::from(def.include_starred),
+            def.account_id,
+            def.schedule_hours,
+            now
+        ],
+    )?;
+    Ok(())
+}
+
+fn parse_run_state(raw: &str) -> RunState {
+    match raw {
+        "queued" => RunState::Queued,
+        "running" => RunState::Running,
+        "paused" => RunState::Paused,
+        "completed" => RunState::Completed,
+        "failed" => RunState::Failed,
+        _ => RunState::Cancelled,
+    }
+}
+
+fn list_active_runs_conn(conn: &Connection) -> DbResult<Vec<InboxAgentRun>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, agent_id, account_id, state, reason, scanned_count, proposed_count,
+                created_at, started_at, finished_at
+         FROM inbox_agent_runs
+         WHERE state IN ('queued', 'running')
+         ORDER BY created_at ASC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, i64>(5)?,
+            row.get::<_, i64>(6)?,
+            row.get::<_, i64>(7)?,
+            row.get::<_, Option<i64>>(8)?,
+            row.get::<_, Option<i64>>(9)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (
+            id,
+            raw_agent,
+            account_id,
+            state_raw,
+            reason,
+            scanned_count,
+            proposed_count,
+            created_at,
+            started_at,
+            finished_at,
+        ) = row?;
+        let Some(agent_id) = AgentId::parse(&raw_agent) else {
+            continue;
+        };
+        out.push(InboxAgentRun {
+            id,
+            agent_id,
+            account_id,
+            state: parse_run_state(&state_raw),
+            reason,
+            scanned_count,
+            proposed_count,
+            created_at,
+            started_at,
+            finished_at,
+        });
+    }
+    Ok(out)
+}
+
+fn enqueue_run_conn(
+    conn: &Connection,
+    agent_id: AgentId,
+    ai_config: Option<&AiRunConfig>,
+    account_id: Option<&str>,
+    now: i64,
+) -> DbResult<bool> {
+    if !runner_enabled_conn(conn)? {
         return Err(DatabaseError::invalid(
-            "Account is not available on this device",
+            "Inbox assistants are paused. Resume them before running.",
         ));
     }
-    if let Some(id) = &request.source_thread_id {
-        let account: Option<String> = c
-            .query_row("SELECT account_id FROM threads WHERE id=?1", [id], |r| {
-                r.get(0)
-            })
-            .optional()?;
-        if account.as_deref() != Some(&request.account_id) {
-            return Err(DatabaseError::invalid(
-                "Source conversation must belong to the account",
-            ));
-        }
+    let already_active: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM inbox_agent_runs
+             WHERE agent_id = ?1 AND state IN ('queued', 'running')
+         )",
+        [agent_id.as_str()],
+        |r| r.get(0),
+    )?;
+    if already_active {
+        return Ok(false);
     }
-    if let Some(id) = &request.linked_task_id {
-        let account: Option<String> = c
-            .query_row("SELECT account_id FROM tasks WHERE id=?1", [id], |r| {
-                r.get(0)
-            })
-            .optional()?;
-        if account.as_deref() != Some(&request.account_id) {
-            return Err(DatabaseError::invalid(
-                "Linked task must belong to the account",
-            ));
-        }
+    let effective_ai = match ai_config {
+        Some(cfg) => Some(encode(cfg)?),
+        None => saved_ai_config_conn(conn)?
+            .map(|cfg| encode(&cfg))
+            .transpose()?,
+    };
+    let id = Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO inbox_agent_runs(
+            id, agent_id, account_id, state, ai_config_json,
+            scanned_count, proposed_count, created_at
+         ) VALUES (?1, ?2, ?3, 'queued', ?4, 0, 0, ?5)",
+        params![id, agent_id.as_str(), account_id, effective_ai, now],
+    )?;
+    Ok(true)
+}
+
+fn list_proposals_conn(
+    conn: &Connection,
+    account_id: Option<&str>,
+    now: i64,
+) -> DbResult<Vec<InboxAgentProposal>> {
+    // Supersede proposals whose underlying thread moved out of Inbox, received a new
+    // message, or is currently snoozed.
+    conn.execute(
+        "UPDATE inbox_agent_proposals
+         SET state = 'superseded', updated_at = ?1
+         WHERE state = 'pending'
+           AND NOT EXISTS (
+               SELECT 1 FROM threads t
+               WHERE t.id = inbox_agent_proposals.thread_id
+                 AND t.archived = 0
+                 AND t.trashed = 0
+                 AND t.last_message_at = inbox_agent_proposals.thread_revision
+                 AND NOT EXISTS (
+                     SELECT 1 FROM conversation_snoozes s
+                     WHERE s.id = t.id AND json_extract(s.record_json, '$.state') = 'active'
+                 )
+           )",
+        [now],
+    )?;
+
+    let mut sql = String::from(
+        "SELECT p.id, p.agent_id, p.account_id, p.thread_id, p.thread_revision,
+                t.subject, t.participants_json,
+                COALESCE(NULLIF(t.last_received_at, ''), t.last_message_at),
+                t.snippet, t.unread, t.starred,
+                p.kind, p.state, p.headline, p.reason,
+                p.payload_json, p.evidence_json, p.created_at, p.updated_at,
+                (SELECT m.sender FROM messages m
+                 WHERE m.thread_id = t.id
+                 ORDER BY m.sent_at DESC LIMIT 1) AS latest_sender
+         FROM inbox_agent_proposals p
+         JOIN threads t ON t.id = p.thread_id
+         WHERE p.state = 'pending'",
+    );
+    if account_id.is_some() {
+        sql.push_str(" AND p.account_id = ?1");
     }
-    let t = AgentTask {
-        id: Uuid::new_v4().to_string(),
-        account_id: request.account_id.clone(),
-        objective: request.objective.trim().into(),
-        source_thread_id: request.source_thread_id.clone(),
-        linked_task_id: request.linked_task_id.clone(),
-        workflow: request.workflow.clone(),
-        revision: 1,
-        created_at: now,
-        archived: false,
-        unread: false,
+    sql.push_str(" ORDER BY p.created_at DESC, t.last_message_at DESC");
+
+    let mut stmt = conn.prepare(&sql)?;
+    let map_row = |row: &rusqlite::Row<'_>| {
+        let participants = decode_json(row.get::<_, String>(6)?)?;
+        let latest_sender: Option<String> = row.get(19)?;
+        let sender = latest_sender
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| participants.first().cloned())
+            .unwrap_or_default();
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+            sender,
+            row.get::<_, String>(7)?,
+            row.get::<_, String>(8)?,
+            row.get::<_, i64>(9)? != 0,
+            row.get::<_, i64>(10)? != 0,
+            row.get::<_, String>(11)?,
+            row.get::<_, String>(12)?,
+            row.get::<_, String>(13)?,
+            row.get::<_, String>(14)?,
+            row.get::<_, String>(15)?,
+            row.get::<_, String>(16)?,
+            row.get::<_, i64>(17)?,
+            row.get::<_, i64>(18)?,
+        ))
     };
-    c.execute("INSERT INTO agent_tasks(id,account_id,source_thread_id,linked_task_id,record_json) VALUES (?1,?2,?3,?4,?5)",params![t.id,t.account_id,t.source_thread_id,t.linked_task_id,encode(&t)?])?;
-    let r = AgentRun {
-        id: Uuid::new_v4().to_string(),
-        task_id: t.id.clone(),
-        state: RunState::Queued,
-        reason: None,
-        generation: 0,
-        checkpoint: 0,
-        owner: None,
-        lease_until: None,
-        started_at: None,
-        not_before: now,
-        dispatches: 0,
-        attempts: 0,
-        active_seconds: 0,
-        question_id: None,
+
+    let rows = if let Some(account) = account_id {
+        stmt.query_map([account], map_row)?
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        stmt.query_map([], map_row)?
+            .collect::<Result<Vec<_>, _>>()?
     };
-    c.execute("INSERT INTO agent_runs(id,task_id,state,generation,not_before,record_json) VALUES (?1,?2,'queued',0,?3,?4)",params![r.id,t.id,now,encode(&r)?])?;
-    turn(c, &t.id, "user", &t.objective, None, None, now)?;
-    detail(c, &t.id)
+
+    let mut proposals = Vec::with_capacity(rows.len());
+    for (
+        id,
+        raw_agent,
+        account_id,
+        thread_id,
+        thread_revision,
+        thread_subject,
+        thread_sender,
+        thread_last_received_at,
+        thread_snippet,
+        thread_unread,
+        thread_starred,
+        raw_kind,
+        raw_state,
+        headline,
+        reason,
+        payload_json,
+        evidence_json,
+        created_at,
+        updated_at,
+    ) in rows
+    {
+        let Some(agent_id) = AgentId::parse(&raw_agent) else {
+            continue;
+        };
+        let Some(kind) = ProposalKind::parse(&raw_kind) else {
+            continue;
+        };
+        let Some(state) = ProposalState::parse(&raw_state) else {
+            continue;
+        };
+        proposals.push(InboxAgentProposal {
+            id,
+            agent_id,
+            account_id,
+            thread_id,
+            thread_revision,
+            thread_subject,
+            thread_sender,
+            thread_last_received_at,
+            thread_snippet,
+            thread_unread,
+            thread_starred,
+            kind,
+            state,
+            headline,
+            reason,
+            payload: decode(&payload_json)?,
+            evidence: decode(&evidence_json)?,
+            created_at,
+            updated_at,
+        });
+    }
+    Ok(proposals)
 }
 
 impl Database {
-    pub(crate) fn agent_workflow(&self, id: &str) -> DbResult<String> {
-        self.with_connection(|c| Ok(task(c, id)?.workflow))
-    }
-    pub(crate) fn agent_lease_current(&self, l: &Lease, now: i64) -> DbResult<bool> {
-        self.with_connection(|c| {
-            Ok(run(c, &l.run.task_id).is_ok_and(|r| {
-                r.state == RunState::Running
-                    && r.generation == l.run.generation
-                    && r.owner == l.run.owner
-                    && r.lease_until.is_some_and(|end| end > now)
-            }))
-        })
-    }
-    pub(crate) fn agent_runner_enabled(&self) -> DbResult<bool> {
-        self.with_connection(enabled)
-    }
-    pub(crate) fn set_agent_runner_enabled(&self, value: bool, now: i64) -> DbResult<()> {
-        self.with_transaction(|c| {
-            c.execute("INSERT INTO compose_settings(key,value) VALUES ('agent_runner_enabled',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[if value {"true"} else {"false"}])?;
+    pub(crate) fn set_inbox_agent_runner_enabled(&self, value: bool, now: i64) -> DbResult<()> {
+        self.with_transaction(|conn| {
+            conn.execute(
+                "INSERT INTO compose_settings(key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![RUNNER_ENABLED_KEY, if value { "true" } else { "false" }],
+            )?;
             if !value {
-                let runs: Vec<AgentRun>=records(c,"SELECT record_json FROM agent_runs WHERE state IN ('queued','running') AND ?1 IS NOT NULL", "all")?;
-                for mut r in runs { charge_time(&mut r,now); invalidate(&mut r,RunState::Paused,Some("disabled"));save_run(c,&r)?; }
+                conn.execute(
+                    "UPDATE inbox_agent_runs
+                     SET state = 'paused', reason = 'disabled', owner = NULL, lease_until = NULL, finished_at = ?1
+                     WHERE state IN ('queued', 'running')",
+                    [now],
+                )?;
             }
             Ok(())
         })
     }
-    pub(crate) fn create_agent_task(
-        &self,
-        request: &CreateAgentTask,
-        now: i64,
-    ) -> DbResult<AgentDetail> {
-        bounded(&request.objective, MAX_OBJECTIVE)?;
-        if request.workflow != WORKFLOW {
-            return Err(DatabaseError::invalid(
-                "Only the fixture workflow is available",
-            ));
-        }
-        self.with_transaction(|c| create_task(c, request, now))
-    }
-    pub(crate) fn get_agent_task(&self, id: &str) -> DbResult<AgentDetail> {
-        self.with_connection(|c| detail(c, id))
-    }
-    pub(crate) fn list_agent_tasks(
-        &self,
-        account: Option<&str>,
-        include_archived: bool,
-    ) -> DbResult<Vec<AgentDetail>> {
-        self.with_connection(|c| {
-            let mut s=c.prepare("SELECT id FROM agent_tasks WHERE (?1 IS NULL OR account_id=?1) AND (?2 OR json_extract(record_json,'$.archived')=0) ORDER BY rowid DESC LIMIT ?3")?;
-            let ids=s.query_map(params![account,include_archived,MAX_LIST],|r|r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
-            let mut out=Vec::new();
-            for id in ids { let d=detail(c,&id)?;if include_archived || !d.task.archived { out.push(d); } if out.len()>=MAX_LIST as usize { break; } }
-            Ok(out)
-        })
-    }
-    /// Claims one step, recovering expired leases first. Every dispatch has a
-    /// durable intent and consumes allowance, even if the process crashes.
-    pub(crate) fn claim_agent_run(&self, owner: &str, now: i64) -> DbResult<Option<Lease>> {
-        self.with_transaction(|c| {
-            if !enabled(c)? { return Ok(None); }
-            let expired:Vec<AgentRun>=records(c,"SELECT record_json FROM agent_runs WHERE state='running' AND lease_until<=CAST(?1 AS INTEGER)",&now.to_string())?;
-            for mut r in expired {
-                charge_time(&mut r,now);
-                c.execute("UPDATE agent_steps SET status='ambiguous' WHERE run_id=?1 AND generation=?2 AND status='started'",params![r.id,r.generation])?;
-                invalidate(&mut r,RunState::Queued,Some("interrupted")); save_run(c,&r)?;
-            }
-            let active:i64=c.query_row("SELECT COUNT(*) FROM agent_runs WHERE state='running'",[],|r|r.get(0))?;
-            if active>=CONCURRENT_JOBS { return Ok(None); }
-            loop {
-                let id:Option<String>=c.query_row("SELECT task_id FROM agent_runs WHERE state='queued' AND not_before<=?1 ORDER BY not_before,rowid LIMIT 1",[now],|r|r.get(0)).optional()?;
-                let Some(id)=id else { return Ok(None); };
-                let mut r=run(c,&id)?;
-                if r.dispatches>=dispatch_limit(c,&r.task_id)? || r.active_seconds>=MAX_ACTIVE_SECONDS {
-                    invalidate(&mut r,RunState::Paused,Some("budget_exhausted"));save_run(c,&r)?;continue;
-                }
-                if r.attempts>MAX_RETRIES { invalidate(&mut r,RunState::Failed,Some("retry_exhausted"));save_run(c,&r)?;continue; }
-                r.state=RunState::Running;r.reason=None;r.generation+=1;r.owner=Some(owner.into());r.lease_until=Some(now+LEASE_SECONDS.min(MAX_ACTIVE_SECONDS-r.active_seconds));r.started_at=Some(now);r.dispatches+=1;r.attempts+=1;
-                save_run(c,&r)?;
-                c.execute("INSERT INTO agent_steps(id,run_id,checkpoint,generation,status) VALUES (?1,?2,?3,?4,'started')",params![format!("{}:{}",r.id,r.generation),r.id,r.checkpoint,r.generation])?;
-                return Ok(Some(Lease { run:r }));
-            }
-        })
-    }
-    pub(crate) fn finish_agent_step(
-        &self,
-        lease: &Lease,
-        result: StepResult,
-        now: i64,
-    ) -> DbResult<bool> {
-        self.with_transaction(|c| {
-            let mut r=match run(c,&lease.run.task_id) { Ok(r)=>r, Err(DatabaseError::NotFound(_))=>return Ok(false), Err(e)=>return Err(e) };
-            if r.id!=lease.run.id || r.checkpoint!=lease.run.checkpoint || r.state!=RunState::Running || r.generation!=lease.run.generation || r.owner!=lease.run.owner || r.lease_until.is_none_or(|end|end<=now) || !enabled(c)? { return Ok(false); }
-            charge_time(&mut r,now);
-            if task(c,&r.task_id)?.workflow==RESEARCH_WORKFLOW {return research::finish(c,&mut r,result,now);}
-            if r.active_seconds>=MAX_ACTIVE_SECONDS { invalidate(&mut r,RunState::Paused,Some("budget_exhausted"));save_run(c,&r)?;return Ok(false); }
-            let expected=match r.checkpoint { 0=>matches!(result,StepResult::Prepared),1=>matches!(result,StepResult::EvidenceCollected),2=>matches!(result,StepResult::Publish) && r.question_id.is_none(),_=>false };
-            if !expected && !matches!(result,StepResult::TransientFailure) { return Err(DatabaseError::invalid("Unexpected agent checkpoint result")); }
-            c.execute("UPDATE agent_steps SET status='committed',result_json=?3 WHERE run_id=?1 AND generation=?2",params![r.id,r.generation,encode(&result)?])?;
-            if matches!(result,StepResult::TransientFailure) {
-                let exhausted=r.attempts>MAX_RETRIES;
-                r.not_before=now+RETRY_BASE_SECONDS*2_i64.pow((r.attempts-1) as u32);
-                invalidate(&mut r,if exhausted {RunState::Failed} else {RunState::Queued},Some(if exhausted {"retry_exhausted"} else {"transient_failure"}));
+
+    pub(crate) fn save_inbox_agent_ai_config(&self, ai: Option<&AiRunConfig>) -> DbResult<()> {
+        self.with_transaction(|conn| {
+            if let Some(cfg) = ai {
+                conn.execute(
+                    "INSERT INTO compose_settings(key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![AI_CONFIG_KEY, encode(cfg)?],
+                )?;
             } else {
-                let mut t=task(c,&r.task_id)?;
-                match result {
-                    StepResult::Prepared=> {
-                        let q=Uuid::new_v4().to_string();
-                        turn(c,&t.id,"assistant","Fixture question: what outcome matters most?",Some(q.clone()),None,now)?;
-                        r.question_id=Some(q);r.state=RunState::Queued;t.unread=true;
-                    },
-                    StepResult::EvidenceCollected=> {
-                        turn(c,&t.id,"assistant","Fixture evidence step completed. No external research was performed.",None,None,now)?;
-                        r.state=if r.question_id.is_some() {RunState::WaitingForInput} else {RunState::Queued};
-                    },
-                    StepResult::Publish=> {
-                        let version:i64=c.query_row("SELECT COALESCE(MAX(version),0)+1 FROM agent_artifacts WHERE task_id=?1",[&t.id],|row|row.get(0))?;
-                        let artifact=AgentArtifact { id:Uuid::new_v4().to_string(),version,kind:"fixture_report".into(),body:"Fixture report. No external research was performed. Use this result only to verify delegated-work execution.".into(),not_researched:true,created_at:now };
-                        let mut artifact=artifact;
-                        if version>1 {
-                            let turns:Vec<AgentTurn>=records(c,"SELECT record_json FROM agent_turns WHERE task_id=?1 ORDER BY id DESC LIMIT 1",&t.id)?;
-                            if let Some(request)=turns.first() { artifact.body.push_str("\n\nRevision request: ");artifact.body.push_str(&request.text); }
-                        }
-                        c.execute("INSERT INTO agent_artifacts(id,task_id,version,record_json) VALUES (?1,?2,?3,?4)",params![artifact.id,t.id,version,encode(&artifact)?])?;
-                        r.state=RunState::Completed;t.unread=true;
-                    },
-                    _=>unreachable!(),
-                }
-                save_task(c,&t)?;
-                r.checkpoint+=1;r.attempts=0;r.not_before=now;r.reason=None;r.owner=None;r.lease_until=None;r.started_at=None;
+                conn.execute(
+                    "DELETE FROM compose_settings WHERE key = ?1",
+                    [AI_CONFIG_KEY],
+                )?;
             }
-            save_run(c,&r)?; Ok(true)
+            Ok(())
         })
     }
-    pub(crate) fn answer_agent_question(
+
+    pub(crate) fn get_inbox_agent_config(&self, agent_id: AgentId) -> DbResult<InboxAgentConfig> {
+        self.with_connection(|conn| {
+            Ok(load_configs_conn(conn)?
+                .into_iter()
+                .find(|c| c.agent_id == agent_id)
+                .unwrap_or_else(|| default_config(agent_id)))
+        })
+    }
+
+    pub(crate) fn update_inbox_agent_config(
         &self,
-        id: &str,
-        question_id: &str,
-        answer: &str,
+        update: &UpdateInboxAgentConfig,
         now: i64,
-    ) -> DbResult<AgentDetail> {
-        bounded(answer, MAX_ANSWER)?;
-        self.with_transaction(|c| {
-            let mut r = run(c, id)?;
-            let previous: Option<String> = c
-                .query_row(
-                    "SELECT record_json FROM agent_turns WHERE task_id=?1 AND answer_to=?2",
-                    params![id, question_id],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if let Some(previous) = previous {
-                let t: AgentTurn = decode(previous)?;
-                if t.text == answer.trim() {
-                    return detail(c, id);
-                }
-                return Err(DatabaseError::invalid("Question already answered"));
-            }
-            if r.question_id.as_deref() != Some(question_id)
-                || matches!(
-                    r.state,
-                    RunState::Completed | RunState::Cancelled | RunState::Failed
-                )
-            {
-                return Err(DatabaseError::invalid("Question is not pending"));
-            }
-            turn(
-                c,
-                id,
-                "user",
-                answer.trim(),
-                None,
-                Some(question_id.into()),
-                now,
-            )?;
-            research::answer(c, id, answer)?;
-            r.question_id = None;
-            // A user may answer during the independent evidence step. Leave its
-            // lease intact; its commit checks whether more input is still needed.
-            if r.state == RunState::WaitingForInput {
-                invalidate(
-                    &mut r,
-                    if enabled(c)? {
-                        RunState::Queued
-                    } else {
-                        RunState::Paused
-                    },
-                    if enabled(c)? { None } else { Some("disabled") },
-                );
-                r.not_before = now;
-            }
-            save_run(c, &r)?;
-            detail(c, id)
-        })
-    }
-    pub(crate) fn control_agent_task(
-        &self,
-        id: &str,
-        action: &str,
-        now: i64,
-    ) -> DbResult<AgentDetail> {
-        self.with_transaction(|c| {
-            let mut t = task(c, id)?;
-            let mut r = run(c, id)?;
-            match action {
-                "archive" => t.archived = true,
-                "unarchive" => t.archived = false,
-                "mark_read" => t.unread = false,
-                "pause"
-                    if matches!(
-                        r.state,
-                        RunState::Queued | RunState::Running | RunState::WaitingForInput
-                    ) =>
-                {
-                    charge_time(&mut r, now);
-                    invalidate(&mut r, RunState::Paused, Some("user"));
-                }
-                "cancel" if !matches!(r.state, RunState::Completed | RunState::Cancelled) => {
-                    charge_time(&mut r, now);
-                    invalidate(&mut r, RunState::Cancelled, Some("user"));
-                }
-                "resume" | "retry"
-                    if (action == "resume" && r.state == RunState::Paused)
-                        || (action == "retry" && r.state == RunState::Failed) =>
-                {
-                    if !enabled(c)? {
-                        return Err(DatabaseError::invalid("Delegated work is disabled"));
-                    }
-                    if r.dispatches >= dispatch_limit(c, id)?
-                        || r.active_seconds >= MAX_ACTIVE_SECONDS
-                    {
-                        return Err(DatabaseError::invalid("Agent allowance exhausted"));
-                    }
-                    let next = if r.question_id.is_some()
-                        && (r.checkpoint == 2 || t.workflow == RESEARCH_WORKFLOW)
-                    {
-                        RunState::WaitingForInput
-                    } else {
-                        RunState::Queued
-                    };
-                    invalidate(&mut r, next, None);
-                    r.not_before = now;
-                    if action == "retry" {
-                        r.attempts = 0;
-                    }
-                }
-                _ => return Err(DatabaseError::invalid("Invalid delegated-task transition")),
-            }
-            save_task(c, &t)?;
-            save_run(c, &r)?;
-            detail(c, id)
-        })
-    }
-    pub(crate) fn mark_agent_task_read(
-        &self,
-        id: &str,
-        generation: i64,
-        turn_count: usize,
-        artifact_count: usize,
-    ) -> DbResult<AgentDetail> {
-        self.with_transaction(|c| {
-            let mut d = detail(c, id)?;
-            if d.run.generation == generation
-                && d.turns.len() == turn_count
-                && d.artifacts.len() == artifact_count
-            {
-                d.task.unread = false;
-                save_task(c, &d.task)?;
-            }
-            detail(c, id)
-        })
-    }
-    pub(crate) fn interact_agent_task(
-        &self,
-        id: &str,
-        message: &str,
-        mode: &str,
-        now: i64,
-    ) -> DbResult<AgentDetail> {
-        bounded(message, MAX_ANSWER)?;
-        if !matches!(mode, "discuss" | "revise") {
-            return Err(DatabaseError::invalid("Unknown interaction"));
+    ) -> DbResult<InboxAgentConfig> {
+        if !(MIN_AGE_DAYS..=MAX_AGE_DAYS).contains(&update.age_days) {
+            return Err(DatabaseError::invalid(format!(
+                "Age threshold must be between {MIN_AGE_DAYS} and {MAX_AGE_DAYS} days"
+            )));
         }
-        self.with_transaction(|c| {
-            let count:i64=c.query_row("SELECT COUNT(*) FROM agent_turns WHERE task_id=?1",[id],|r|r.get(0))?;
-            if count+2>MAX_TURNS {return Err(DatabaseError::invalid("Conversation limit reached"));}
-            let mut r=run(c,id)?;
-            if r.state!=RunState::Completed {return Err(DatabaseError::invalid("Wait for the current work to finish"));}
-            let mut t=task(c,id)?;
-            if t.workflow==RESEARCH_WORKFLOW {return research::interact(c,&mut t,&mut r,message,mode,now);}
-            if mode=="revise" {
-                if !enabled(c)? {return Err(DatabaseError::invalid("Delegated work is disabled"));}
-                if r.dispatches>=MAX_DISPATCHES || r.active_seconds>=MAX_ACTIVE_SECONDS {return Err(DatabaseError::invalid("Agent allowance exhausted"));}
-                t.revision+=1;r.checkpoint=2;r.attempts=0;r.question_id=None;r.not_before=now;
-                invalidate(&mut r,RunState::Queued,None);
-            }
-            turn(c,id,"user",message.trim(),None,None,now)?;
-            if mode=="discuss" {turn(c,id,"assistant","This is a demonstration response based on the saved fixture report. No external research was performed. Request a report revision to save your new criteria in a separate version.",None,None,now)?;t.unread=true;}
-            save_task(c,&t)?;save_run(c,&r)?;detail(c,id)
-        })
-    }
-    pub(crate) fn link_agent_task(&self, id: &str, linked: Option<&str>) -> DbResult<AgentDetail> {
-        self.with_transaction(|c| {
-            let mut t = task(c, id)?;
-            if let Some(link) = linked {
-                let account: Option<String> = c
-                    .query_row("SELECT account_id FROM tasks WHERE id=?1", [link], |r| {
-                        r.get(0)
-                    })
-                    .optional()?;
-                if account.as_deref() != Some(t.account_id.as_str()) {
+        if !(MIN_THREADS_PER_RUN..=MAX_THREADS_PER_RUN).contains(&update.max_threads_per_run) {
+            return Err(DatabaseError::invalid(format!(
+                "Max threads per run must be between {MIN_THREADS_PER_RUN} and {MAX_THREADS_PER_RUN}"
+            )));
+        }
+        if !valid_schedule_hours(update.schedule_hours) {
+            return Err(DatabaseError::invalid("Unsupported schedule cadence"));
+        }
+        self.with_transaction(|conn| {
+            if let Some(account_id) = update.account_id.as_deref() {
+                let exists: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM accounts WHERE email = ?1 AND on_this_device = 1)",
+                    [account_id],
+                    |r| r.get(0),
+                )?;
+                if !exists {
                     return Err(DatabaseError::invalid(
-                        "Linked task must belong to the account",
+                        "Selected account is not available on this device",
                     ));
                 }
             }
-            t.linked_task_id = linked.map(str::to_owned);
-            c.execute(
-                "UPDATE agent_tasks SET linked_task_id=?2,record_json=?3 WHERE id=?1",
-                params![id, linked, encode(&t)?],
+            ensure_config_row(conn, update.agent_id, now)?;
+            conn.execute(
+                "UPDATE inbox_agent_configs
+                 SET enabled = ?2, age_days = ?3, max_threads_per_run = ?4,
+                     include_starred = ?5, account_id = ?6, schedule_hours = ?7, updated_at = ?8
+                 WHERE agent_id = ?1",
+                params![
+                    update.agent_id.as_str(),
+                    i64::from(update.enabled),
+                    update.age_days,
+                    update.max_threads_per_run,
+                    i64::from(update.include_starred),
+                    update.account_id,
+                    update.schedule_hours,
+                    now
+                ],
             )?;
-            detail(c, id)
+            Ok(load_configs_conn(conn)?
+                .into_iter()
+                .find(|c| c.agent_id == update.agent_id)
+                .unwrap())
         })
     }
-    pub(crate) fn delete_agent_task(&self, id: &str) -> DbResult<()> {
-        self.with_transaction(|c| {
-            c.execute("DELETE FROM agent_tasks WHERE id=?1", [id])?;
-            Ok(())
+
+    pub(crate) fn enqueue_inbox_agent_run(
+        &self,
+        agent_id: AgentId,
+        ai_config: Option<&AiRunConfig>,
+        account_id: Option<&str>,
+        now: i64,
+    ) -> DbResult<bool> {
+        self.with_transaction(|conn| {
+            if let Some(cfg) = ai_config {
+                conn.execute(
+                    "INSERT INTO compose_settings(key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![AI_CONFIG_KEY, encode(cfg)?],
+                )?;
+            }
+            enqueue_run_conn(conn, agent_id, ai_config, account_id, now)
         })
     }
-    pub(crate) fn release_agent_owner(&self, owner: &str, now: i64) -> DbResult<()> {
-        self.with_transaction(|c| {
-            let runs: Vec<AgentRun> = records(
-                c,
-                "SELECT record_json FROM agent_runs WHERE state='running' AND ?1 IS NOT NULL",
-                owner,
-            )?;
-            for mut r in runs {
-                if r.owner.as_deref() == Some(owner) {
-                    charge_time(&mut r, now);
-                    c.execute("UPDATE agent_steps SET status='ambiguous' WHERE run_id=?1 AND generation=?2 AND status='started'", params![r.id,r.generation])?;
-                    invalidate(&mut r, RunState::Queued, Some("interrupted"));
-                    r.not_before = now;
-                    save_run(c, &r)?;
+
+    pub(crate) fn enqueue_enabled_inbox_agent_runs(
+        &self,
+        ai_config: Option<&AiRunConfig>,
+        account_id: Option<&str>,
+        now: i64,
+    ) -> DbResult<usize> {
+        self.with_transaction(|conn| {
+            if let Some(cfg) = ai_config {
+                conn.execute(
+                    "INSERT INTO compose_settings(key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![AI_CONFIG_KEY, encode(cfg)?],
+                )?;
+            }
+            let configs = load_configs_conn(conn)?;
+            let mut count = 0usize;
+            for cfg in configs {
+                if cfg.enabled && enqueue_run_conn(conn, cfg.agent_id, ai_config, account_id, now)?
+                {
+                    count += 1;
+                }
+            }
+            Ok(count)
+        })
+    }
+
+    pub(crate) fn enqueue_due_scheduled_inbox_agents(&self, now: i64) -> DbResult<()> {
+        self.with_transaction(|conn| {
+            if !runner_enabled_conn(conn)? {
+                return Ok(());
+            }
+            let configs = load_configs_conn(conn)?;
+            for cfg in configs {
+                let Some(hours) = cfg.schedule_hours else {
+                    continue;
+                };
+                if !cfg.enabled {
+                    continue;
+                }
+                let due = cfg
+                    .last_run_at
+                    .is_none_or(|last| last.saturating_add(hours.saturating_mul(3600)) <= now);
+                if due {
+                    let _ =
+                        enqueue_run_conn(conn, cfg.agent_id, None, cfg.account_id.as_deref(), now)?;
                 }
             }
             Ok(())
+        })
+    }
+
+    pub(crate) fn claim_inbox_agent_run(
+        &self,
+        owner: &str,
+        now: i64,
+    ) -> DbResult<Option<(InboxAgentRun, Option<AiRunConfig>)>> {
+        self.with_transaction(|conn| {
+            if !runner_enabled_conn(conn)? {
+                return Ok(None);
+            }
+            let row = conn
+                .query_row(
+                    "SELECT id, agent_id, account_id, state, reason, ai_config_json,
+                            scanned_count, proposed_count, created_at, started_at, finished_at
+                     FROM inbox_agent_runs
+                     WHERE state = 'queued'
+                        OR (state = 'running' AND lease_until IS NOT NULL AND lease_until <= ?1)
+                     ORDER BY created_at ASC
+                     LIMIT 1",
+                    [now],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(4)?,
+                            row.get::<_, Option<String>>(5)?,
+                            row.get::<_, i64>(6)?,
+                            row.get::<_, i64>(7)?,
+                            row.get::<_, i64>(8)?,
+                            row.get::<_, Option<i64>>(9)?,
+                            row.get::<_, Option<i64>>(10)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let Some((
+                id,
+                raw_agent,
+                account_id,
+                reason,
+                ai_json,
+                scanned_count,
+                proposed_count,
+                created_at,
+                started_at,
+                finished_at,
+            )) = row
+            else {
+                return Ok(None);
+            };
+            let Some(agent_id) = AgentId::parse(&raw_agent) else {
+                conn.execute(
+                    "UPDATE inbox_agent_runs SET state = 'failed', reason = 'Unknown assistant', finished_at = ?2 WHERE id = ?1",
+                    params![id, now],
+                )?;
+                return Ok(None);
+            };
+            let lease_until = now.saturating_add(LEASE_SECONDS);
+            let actual_start = started_at.unwrap_or(now);
+            conn.execute(
+                "UPDATE inbox_agent_runs
+                 SET state = 'running', owner = ?2, lease_until = ?3, started_at = ?4
+                 WHERE id = ?1",
+                params![id, owner, lease_until, actual_start],
+            )?;
+            let ai_cfg = ai_json.as_deref().map(decode).transpose()?;
+            Ok(Some((
+                InboxAgentRun {
+                    id,
+                    agent_id,
+                    account_id,
+                    state: RunState::Running,
+                    reason,
+                    scanned_count,
+                    proposed_count,
+                    created_at,
+                    started_at: Some(actual_start),
+                    finished_at,
+                },
+                ai_cfg,
+            )))
+        })
+    }
+
+    pub(crate) fn renew_inbox_agent_run_lease(
+        &self,
+        run_id: &str,
+        owner: &str,
+        now: i64,
+    ) -> DbResult<bool> {
+        self.with_transaction(|conn| {
+            if !runner_enabled_conn(conn)? {
+                return Ok(false);
+            }
+            let updated = conn.execute(
+                "UPDATE inbox_agent_runs
+                 SET lease_until = ?3
+                 WHERE id = ?1 AND owner = ?2 AND state = 'running'",
+                params![run_id, owner, now.saturating_add(LEASE_SECONDS)],
+            )?;
+            Ok(updated > 0)
+        })
+    }
+
+    pub(crate) fn finish_inbox_agent_run(
+        &self,
+        run_id: &str,
+        owner: &str,
+        result: Result<RunExecutionReport, String>,
+        now: i64,
+    ) -> DbResult<()> {
+        self.with_transaction(|conn| {
+            let row: Option<(String, String)> = conn
+                .query_row(
+                    "SELECT agent_id, state FROM inbox_agent_runs WHERE id = ?1 AND owner = ?2",
+                    params![run_id, owner],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let Some((raw_agent, state_str)) = row else {
+                return Ok(());
+            };
+            if state_str != "running" {
+                return Ok(());
+            }
+            let Some(agent_id) = AgentId::parse(&raw_agent) else {
+                return Ok(());
+            };
+            ensure_config_row(conn, agent_id, now)?;
+            match result {
+                Ok(report) => {
+                    conn.execute(
+                        "UPDATE inbox_agent_runs
+                         SET state = 'completed', reason = NULL, scanned_count = ?2, proposed_count = ?3,
+                             owner = NULL, lease_until = NULL, finished_at = ?4
+                         WHERE id = ?1",
+                        params![run_id, report.scanned, report.proposed, now],
+                    )?;
+                    conn.execute(
+                        "UPDATE inbox_agent_configs
+                         SET last_run_at = ?2, last_run_status = 'completed', last_run_error = NULL,
+                             last_run_scanned = ?3, last_run_proposed = ?4, updated_at = ?2
+                         WHERE agent_id = ?1",
+                        params![agent_id.as_str(), now, report.scanned, report.proposed],
+                    )?;
+                }
+                Err(error) => {
+                    conn.execute(
+                        "UPDATE inbox_agent_runs
+                         SET state = 'failed', reason = ?2, owner = NULL, lease_until = NULL, finished_at = ?3
+                         WHERE id = ?1",
+                        params![run_id, error, now],
+                    )?;
+                    conn.execute(
+                        "UPDATE inbox_agent_configs
+                         SET last_run_at = ?2, last_run_status = 'failed', last_run_error = ?3, updated_at = ?2
+                         WHERE agent_id = ?1",
+                        params![agent_id.as_str(), now, error],
+                    )?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn release_inbox_agent_owner(&self, owner: &str, _now: i64) -> DbResult<()> {
+        self.with_transaction(|conn| {
+            conn.execute(
+                "UPDATE inbox_agent_runs
+                 SET state = 'queued', owner = NULL, lease_until = NULL
+                 WHERE owner = ?1 AND state = 'running'",
+                [owner],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn with_inbox_agent_candidates(
+        &self,
+        config: &InboxAgentConfig,
+        now: i64,
+    ) -> DbResult<CandidateBatch> {
+        self.with_connection(|conn| select_candidates(conn, config, now))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn save_inbox_agent_proposal(
+        &self,
+        agent_id: AgentId,
+        account_id: &str,
+        thread_id: &str,
+        thread_revision: &str,
+        kind: ProposalKind,
+        headline: &str,
+        reason: &str,
+        payload: &ProposalPayload,
+        evidence: &[ProposalEvidence],
+        now: i64,
+    ) -> DbResult<bool> {
+        self.with_transaction(|conn| {
+            let id = Uuid::new_v4().to_string();
+            let inserted = conn.execute(
+                "INSERT OR IGNORE INTO inbox_agent_proposals(
+                    id, agent_id, account_id, thread_id, thread_revision, kind, state,
+                    headline, reason, payload_json, evidence_json, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9, ?10, ?11, ?11)",
+                params![
+                    id,
+                    agent_id.as_str(),
+                    account_id,
+                    thread_id,
+                    thread_revision,
+                    kind.as_str(),
+                    headline,
+                    reason,
+                    encode(payload)?,
+                    encode(&evidence)?,
+                    now
+                ],
+            )?;
+            Ok(inserted > 0)
+        })
+    }
+
+    pub(crate) fn resolve_inbox_agent_proposal(
+        &self,
+        id: &str,
+        state: ProposalState,
+        now: i64,
+    ) -> DbResult<()> {
+        if !matches!(state, ProposalState::Accepted | ProposalState::Dismissed) {
+            return Err(DatabaseError::invalid(
+                "Proposal resolution must be accepted or dismissed",
+            ));
+        }
+        self.with_transaction(|conn| {
+            let changed = conn.execute(
+                "UPDATE inbox_agent_proposals SET state = ?2, updated_at = ?3 WHERE id = ?1",
+                params![id, state.as_str(), now],
+            )?;
+            if changed == 0 {
+                return Err(DatabaseError::NotFound("Assistant proposal"));
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn inbox_agents_snapshot(
+        &self,
+        account_id: Option<&str>,
+    ) -> DbResult<InboxAgentsSnapshot> {
+        let now = chrono::Utc::now().timestamp();
+        self.with_transaction(|conn| {
+            Ok(InboxAgentsSnapshot {
+                runner_enabled: runner_enabled_conn(conn)?,
+                agents: load_configs_conn(conn)?,
+                active_runs: list_active_runs_conn(conn)?,
+                proposals: list_proposals_conn(conn, account_id, now)?,
+            })
         })
     }
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::models::MailProviderKind;
+
+    fn seed_thread(
+        db: &Database,
+        thread_id: &str,
+        subject: &str,
+        sender: &str,
+        sent_at: &str,
+        body: &str,
+        labels: &str,
+        unsubscribe_json: Option<&str>,
+    ) {
+        let conn = db.connection().unwrap();
+        conn.execute(
+            "INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json, last_message_at, labels_json, account_id, last_received_at)
+             VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, 'me@example.com', ?5)",
+            params![
+                thread_id,
+                subject,
+                body.chars().take(60).collect::<String>(),
+                serde_json::to_string(&vec![sender, "me@example.com"]).unwrap(),
+                sent_at,
+                labels
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages(id, thread_id, sender, recipients_json, sent_at, body_html, body_text, unsubscribe_json, unread)
+             VALUES (?1, ?2, ?3, '[\"me@example.com\"]', ?4, '', ?5, ?6, 1)",
+            params![
+                format!("msg-{thread_id}"),
+                thread_id,
+                sender,
+                sent_at,
+                body,
+                unsubscribe_json
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn default_configs_and_bounds_validation() {
+        let db = Database::open_memory();
+        let snapshot = db.inbox_agents_snapshot(None).unwrap();
+        assert!(snapshot.runner_enabled);
+        assert_eq!(snapshot.agents.len(), 3);
+        assert!(snapshot.agents.iter().all(|a| !a.enabled));
+
+        assert!(db
+            .update_inbox_agent_config(
+                &UpdateInboxAgentConfig {
+                    agent_id: AgentId::StaleReads,
+                    enabled: true,
+                    age_days: 0,
+                    max_threads_per_run: 10,
+                    include_starred: false,
+                    account_id: None,
+                    schedule_hours: None,
+                },
+                100
+            )
+            .is_err());
+
+        let updated = db
+            .update_inbox_agent_config(
+                &UpdateInboxAgentConfig {
+                    agent_id: AgentId::StaleReads,
+                    enabled: true,
+                    age_days: 14,
+                    max_threads_per_run: 5,
+                    include_starred: true,
+                    account_id: None,
+                    schedule_hours: Some(24),
+                },
+                100,
+            )
+            .unwrap();
+        assert!(updated.enabled);
+        assert_eq!(updated.age_days, 14);
+        assert_eq!(updated.schedule_hours, Some(24));
+    }
+
+    #[test]
+    fn candidates_and_deterministic_completed_task_detection() {
+        let db = Database::open_memory();
+        db.adopt_mail_account("me@example.com", MailProviderKind::Gmail)
+            .unwrap();
+        db.connection()
+            .unwrap()
+            .execute("DELETE FROM threads WHERE id = 'welcome'", [])
+            .unwrap();
+
+        // 15-day-old newsletter (stale_reads), 15-day-old thread with completed task, 10-day-old human question
+        seed_thread(
+            &db,
+            "t-news",
+            "Weekly Tech Digest",
+            "digest@news.example",
+            "2026-11-01T10:00:00Z",
+            &"Long article content. ".repeat(80),
+            "[\"CATEGORY_UPDATES\"]",
+            Some("{\"webUrl\":\"https://news.example/unsub\"}"),
+        );
+        seed_thread(
+            &db,
+            "t-task",
+            "Send tax receipt",
+            "acct@partner.example",
+            "2026-11-01T10:00:00Z",
+            "Please submit your receipt.",
+            "[]",
+            None,
+        );
+        db.connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO tasks(id, account_id, thread_id, title, kind, due_kind, status, created_at, updated_at)
+                 VALUES ('task-1', 'me@example.com', 't-task', 'Submit tax receipt', 'action', 'none', 'completed', '2026-11-02T10:00:00Z', '2026-11-03T10:00:00Z')",
+                [],
+            )
+            .unwrap();
+        seed_thread(
+            &db,
+            "t-human",
+            "Coffee next week?",
+            "Alex <alex@friend.example>",
+            "2026-11-10T10:00:00Z",
+            "Are you free Tuesday for coffee?",
+            "[\"INBOX\"]",
+            None,
+        );
+
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-25T10:00:00Z")
+            .unwrap()
+            .timestamp();
+
+        let mut stale_cfg = db.get_inbox_agent_config(AgentId::StaleReads).unwrap();
+        stale_cfg.account_id = Some("me@example.com".into());
+        let stale_batch = db.with_inbox_agent_candidates(&stale_cfg, now).unwrap();
+        assert_eq!(stale_batch.ai_candidates.len(), 1);
+        assert_eq!(stale_batch.ai_candidates[0].thread_id, "t-news");
+
+        let mut resolved_cfg = db
+            .get_inbox_agent_config(AgentId::ResolvedAndExpired)
+            .unwrap();
+        resolved_cfg.account_id = Some("me@example.com".into());
+        let resolved_batch = db.with_inbox_agent_candidates(&resolved_cfg, now).unwrap();
+        assert_eq!(resolved_batch.deterministic.len(), 1);
+        assert_eq!(resolved_batch.deterministic[0].thread_id, "t-task");
+        assert_eq!(
+            resolved_batch.deterministic[0].kind,
+            ProposalKind::ArchiveAsResolved
+        );
+
+        let mut reply_cfg = db.get_inbox_agent_config(AgentId::AgingReplies).unwrap();
+        reply_cfg.account_id = Some("me@example.com".into());
+        let reply_batch = db.with_inbox_agent_candidates(&reply_cfg, now).unwrap();
+        let reply_ids: Vec<_> = reply_batch
+            .ai_candidates
+            .iter()
+            .map(|c| c.thread_id.as_str())
+            .collect();
+        assert_eq!(reply_ids, vec!["t-human"]);
+    }
+
+    #[test]
+    fn dismissed_proposals_do_not_reappear_for_same_revision_and_archive_supersedes() {
+        let db = Database::open_memory();
+        db.adopt_mail_account("me@example.com", MailProviderKind::Gmail)
+            .unwrap();
+        seed_thread(
+            &db,
+            "t1",
+            "Newsletter",
+            "news@example.com",
+            "2026-11-01T10:00:00Z",
+            "Body",
+            "[\"CATEGORY_UPDATES\"]",
+            Some("{}"),
+        );
+
+        assert!(db
+            .save_inbox_agent_proposal(
+                AgentId::StaleReads,
+                "me@example.com",
+                "t1",
+                "2026-11-01T10:00:00Z",
+                ProposalKind::ArchiveWithSummary,
+                "Summary",
+                "Old newsletter",
+                &ProposalPayload::default(),
+                &[],
+                100
+            )
+            .unwrap());
+
+        let snap = db.inbox_agents_snapshot(None).unwrap();
+        assert_eq!(snap.proposals.len(), 1);
+        let id = snap.proposals[0].id.clone();
+
+        db.resolve_inbox_agent_proposal(&id, ProposalState::Dismissed, 110)
+            .unwrap();
+        assert!(db.inbox_agents_snapshot(None).unwrap().proposals.is_empty());
+
+        // Re-inserting for same revision is ignored.
+        assert!(!db
+            .save_inbox_agent_proposal(
+                AgentId::StaleReads,
+                "me@example.com",
+                "t1",
+                "2026-11-01T10:00:00Z",
+                ProposalKind::ArchiveWithSummary,
+                "Summary",
+                "Old newsletter",
+                &ProposalPayload::default(),
+                &[],
+                120
+            )
+            .unwrap());
+
+        // A fresh proposal on another thread supersedes automatically once archived.
+        seed_thread(
+            &db,
+            "t2",
+            "Newsletter 2",
+            "news@example.com",
+            "2026-11-01T10:00:00Z",
+            "Body 2",
+            "[]",
+            Some("{}"),
+        );
+        db.save_inbox_agent_proposal(
+            AgentId::StaleReads,
+            "me@example.com",
+            "t2",
+            "2026-11-01T10:00:00Z",
+            ProposalKind::ArchiveWithSummary,
+            "Summary 2",
+            "Old",
+            &ProposalPayload::default(),
+            &[],
+            130,
+        )
+        .unwrap();
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET archived = 1 WHERE id = 't2'", [])
+            .unwrap();
+        assert!(db.inbox_agents_snapshot(None).unwrap().proposals.is_empty());
+    }
+}

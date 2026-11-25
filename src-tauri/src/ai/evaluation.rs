@@ -388,6 +388,9 @@ async fn execute(case: &Case, provider: AiProvider, options: &Options) -> Result
         Feature::MeetingPrep => {
             Err("Meeting preparation does not use quality evaluations yet".into())
         }
+        Feature::AgentStaleReads | Feature::AgentResolvedSweeper | Feature::AgentAgingReplies => {
+            Err("Inbox assistants do not use offline replay evaluations".into())
+        }
     }
 }
 pub fn suite_revision(filter: Option<&str>) -> Result<String, String> {

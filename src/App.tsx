@@ -4,12 +4,12 @@ import { AddToNoteDialog } from "./AddToNoteDialog";
 import { conversationParticipants } from "./conversationParticipants";
 import { snapshotMessageSelection } from "./messageSelection";
 import type { MessageQuote } from "./selectedMessageQuote";
-import { prepareNoteMutation } from "./noteMutations";
+import { notesChanged, prepareNoteMutation } from "./noteMutations";
 import { MeetingNoteDialog } from "./MeetingNoteDialog";
 import { meetingDate, meetingEventReference, primaryMeetingNote } from "./meetingNoteEntry";
 import { preparationKey } from "./meetingPrep";
 import { MeetingPrepActions } from "./meetingPrepActions";
-import type { MeetingCommitment } from "./domain";
+import type { InboxAgentProposal, MeetingCommitment } from "./domain";
 import { parseAddress } from "./emailAddress";
 import type { MeetingEntry } from "./noteMeetings";
 import { dailyNoteName } from "./noteDates";
@@ -17,7 +17,8 @@ import type { ScheduleEvent, ThreadTask } from "./domain";
 import { markdownEntityLink, parseNoteReference, noteReferenceHref } from "./noteEntities";
 import { NoteBacklinks } from "./NoteEntityContext";
 import { MoreActionsMenu } from "./MoreActionsMenu";
-import { useAgentTasks, type AgentStart } from "./useAgentTasks";
+import { useInboxAgents } from "./useInboxAgents";
+import { InboxAssistantBanner } from "./InboxAssistantBanner";
 import type { Message, Thread } from "./domain";
 import { useSignatures } from "./useSignatures";
 import type { FilesWorkspaceSnapshot } from "./FilesWorkspace";
@@ -357,13 +358,8 @@ export function App() {
     scheduleShown, setSideColumn, showMailContext, narrowLayout, sideDrawerOpen, setSideDrawerOpen, mailPanel,
     contextPersonEmail, openCalendarView, notesRequest, consumeNotesRequest, openNote,
   } = workspaces;
-  const agents = useAgentTasks();
-  const openAgent = (id: string) => { agents.select(id); setRightWorkspace("agents"); };
-  const beginAgent = (seed: AgentStart) => { agents.begin(seed); setRightWorkspace("agents"); };
-  const delegateSelected = () => {
-    if (visibleDetail) beginAgent({ accountId: visibleDetail.thread.accountId, sourceThreadId: visibleDetail.thread.id, objective: "Evaluate whether this invitation is worth my time." });
-  };
-  const openAgentPersonalTask = (id: string) => {
+  const inboxAgents = useInboxAgents(activeAccountId, settingsOpen);
+  const openAssistantTask = (id: string) => {
     void mailClient.listTasks().then(list => {
       const task = list.find(t => t.id === id);
       if (!task) { setNotice({ message: "The personal task is no longer available" }); return; }
@@ -871,7 +867,6 @@ export function App() {
   /></Suspense>;
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
-    delegateSelected,
     createCalendarEvent: () => { openCalendarView(); setCreateCalendarEventRequested(true); },
     addToNote: () => openAddToNote(),
     addMeetingNote: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent) ? () => { void openMeetingNote(calendarSelectedEvent); } : undefined,
@@ -919,6 +914,75 @@ export function App() {
         .catch((reason: unknown) => setNotice({ message: `Unmute failed: ${errorMessage(reason)}` }));
     },
   }), [splitInboxCatalog.splitInboxes, senderRuleCatalog, canUnsubscribe, executeById, executeCommand, mutateIds, setNotice]);
+
+  const archiveAssistantProposals = useCallback(async (proposals: InboxAgentProposal[]) => {
+    if (proposals.length === 0) return;
+    try {
+      const threadIds = [...new Set(proposals.map((p) => p.threadId))];
+      await executeCommand({
+        id: "agents.archiveProposals",
+        title: "Archive",
+        keys: [],
+        group: "Triage",
+        enabled: () => true,
+        run: () => mutateIds(threadIds, { kind: "archive", value: true }, { includeUnloaded: true }),
+        undo: undoResult,
+      });
+      await Promise.all(proposals.map((p) => inboxAgents.resolveProposal(p.id, "accepted")));
+    } catch (reason) {
+      setNotice({ message: errorMessage(reason) });
+    }
+  }, [executeCommand, inboxAgents, mutateIds, setNotice]);
+
+  const saveProposalToNoteAndArchive = useCallback(async (proposal: InboxAgentProposal) => {
+    try {
+      let base = (proposal.payload.noteTitle || proposal.threadSubject || "Email summary")
+        .replace(/[[\]|]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 100);
+      if (!base || /^\d{4}-\d{2}-\d{2}$/.test(base)) base = `Summary - ${base || "Email"}`;
+      let title = base;
+      let copy = 1;
+      while (await mailClient.findNoteByTitle(title)) title = `${base} (${++copy})`;
+      const link = markdownEntityLink(proposal.threadSubject || "Source conversation", {
+        version: 1,
+        kind: "conversation",
+        id: proposal.threadId,
+        account: proposal.accountId,
+      });
+      const summary = proposal.payload.summary?.trim() || proposal.reason;
+      const note = await mailClient.createNote(title, `${summary}\n\nSource: ${link}\n`);
+      await notesChanged(note.id);
+      await archiveAssistantProposals([proposal]);
+      setNotice({
+        message: "Saved summary to note and archived",
+        action: { label: "Open Note", run: () => openNote(note.id) },
+      });
+    } catch (reason) {
+      setNotice({ message: errorMessage(reason) });
+    }
+  }, [archiveAssistantProposals, openNote, setNotice]);
+
+  const reviewProposalDraft = useCallback(async (proposal: InboxAgentProposal, draftText: string) => {
+    try {
+      let messageId = proposal.payload.messageId;
+      if (!messageId) {
+        const detail = await mailClient.getThread(proposal.threadId);
+        messageId = detail.messages.at(-1)?.id;
+      }
+      if (!messageId) {
+        setNotice({ message: "That conversation is no longer available" });
+        return;
+      }
+      if (await correspondence.replyFromOutside(messageId, proposal.accountId, undefined, undefined, undefined, draftText)) {
+        setRightWorkspace(null);
+        await inboxAgents.resolveProposal(proposal.id, "accepted");
+      }
+    } catch (reason) {
+      setNotice({ message: errorMessage(reason) });
+    }
+  }, [correspondence, inboxAgents, setNotice, setRightWorkspace]);
 
   // Files lists nothing from spam, so the list re-reads after the change and after Undo.
   const markFileSourceSpam = useCallback((threadId: string) => executeCommand({
@@ -1137,7 +1201,7 @@ export function App() {
           </HoverTooltip>
           <div className="sidebar-secondary">
             <HoverTooltip label="Files" shortcut="6"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (6)" onClick={() => navigateFromSidebar(context.openFilesView)}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
-            <HoverTooltip label="Agents" shortcut="7"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label="Agents (7)" onClick={() => navigateFromSidebar(context.openAgentsView)}><Bot size={ICON_SIZE.lg} />{agents.items.some(d => d.task.unread && !d.task.archived) ? <span className="nav-button-badge" aria-label="Unread agent activity">{agents.items.filter(d => d.task.unread && !d.task.archived).length}</span> : null}</button></HoverTooltip>
+            <HoverTooltip label="Agents" shortcut="7"><button className={`nav-button ${rightWorkspace === "agents" ? "active" : ""}`} aria-label={inboxAgents.pendingCount ? `Agents (7), ${inboxAgents.pendingCount} Pending` : "Agents (7)"} onClick={() => navigateFromSidebar(context.openAgentsView)}><Bot size={ICON_SIZE.lg} />{inboxAgents.pendingCount > 0 ? <span className="nav-button-badge" aria-hidden="true">{inboxAgents.pendingCount > 99 ? "99+" : inboxAgents.pendingCount}</span> : null}</button></HoverTooltip>
           </div>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
           <HoverTooltip title={checkingMail ? "Checking for mail…" : `Refresh mail (${formatShortcut("Mod+r")})`}><button className="nav-button" aria-label="Refresh Mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
@@ -1887,8 +1951,17 @@ export function App() {
               onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
             />
           ) : null}
-          actions={visibleDetail ? (
-            <div className="context-ai-launcher agent-context-links"><button type="button" className="btn btn-sm" onClick={delegateSelected}><Bot size={ICON_SIZE.sm} />Delegate Work…</button>{agents.items.filter(d => d.task.sourceThreadId === visibleDetail.thread.id && !d.task.archived).map(d => <button className="btn-link" key={d.task.id} onClick={() => openAgent(d.task.id)}>{d.task.objective}{d.task.unread ? " · New activity" : ""}</button>)}</div>
+          actions={visibleDetail && inboxAgents.proposalsForThread(visibleDetail.thread.id).length > 0 ? (
+            <InboxAssistantBanner
+              proposals={inboxAgents.proposalsForThread(visibleDetail.thread.id)}
+              busy={inboxAgents.busy}
+              onArchive={(p) => { void archiveAssistantProposals([p]); }}
+              onSaveToNoteAndArchive={(p) => { void saveProposalToNoteAndArchive(p); }}
+              onReviewDraft={(p, text) => { void reviewProposalDraft(p, text); }}
+              onOpenEvidenceThread={jumpToThread}
+              onOpenEvidenceTask={openAssistantTask}
+              onDismiss={(p) => { void inboxAgents.resolveProposal(p.id, "dismissed"); }}
+            />
           ) : null}
           assist={visibleDetail ? (
             <ThreadAssist
@@ -2068,8 +2141,7 @@ export function App() {
         onEventCreated={() => void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"))}
         onOpenContact={contactCardActions.onOpenContact}
       /></Suspense></ErrorBoundary> : null}
-      {agents.activity ? <aside className="agent-activity" role="status"><button className="btn-link agent-activity-action" onClick={() => { const id = agents.activity!.id; agents.patchView(id, { version: null, tab: agents.activity!.label.startsWith("Answer needed") ? "conversation" : "result" }); openAgent(id); }}>{agents.activity.label}</button><button className="btn-icon btn-icon-sm" aria-label="Dismiss Agent Notification" onClick={agents.dismissActivity}><X size={ICON_SIZE.sm} /></button></aside> : null}
-      {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Agents…</p>}><AgentsWorkspace controller={agents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAgentPersonalTask} onOpenResearchSettings={() => openSettingsAt("research")} settingsOpen={settingsOpen} /></Suspense></ErrorBoundary> : null}
+      {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Inbox Assistants…</p>}><AgentsWorkspace controller={inboxAgents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAssistantTask} onArchiveProposal={(p) => { void archiveAssistantProposals([p]); }} onArchiveBatch={(ps) => { void archiveAssistantProposals(ps); }} onSaveToNoteAndArchive={(p) => { void saveProposalToNoteAndArchive(p); }} onReviewDraft={(p, text) => { void reviewProposalDraft(p, text); }} onOpenAiSettings={() => openSettingsAt("ai")} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "notes" ? <ErrorBoundary area="Notes" variant="side"><Suspense fallback={null}><NotesWorkspace request={notesRequest} onRequestConsumed={consumeNotesRequest} refreshKey={syncStatus?.lastSuccessfulSync ?? ""} onOpenContact={contactCardActions.onOpenContact} onOpenEntity={openEntityReference} onReturn={notesReturnMail ? () => { setRightWorkspace(null); setNotesReturnMail(false); } : undefined}
         meetingPreparation={notePreparation} onMeetingPreparationChange={setNotePreparation} onPreparationVisibilityChange={setNotePreparationVisible}
         renderMeetingPreparation={(event, close, noteId) => renderPreparation("notes", noteId)(event, close)}
@@ -2081,10 +2153,7 @@ export function App() {
         <TaskSidebar
           key={activeAccountId ?? "all"}
           sessions={taskSessions}
-          agentTasks={agents.items}
-          onOpenAgent={openAgent}
           onAddNote={(task) => { void addTaskNote(task); }}
-          onDelegate={(task) => beginAgent({ accountId: task.accountId, sourceThreadId: task.threadId, linkedTaskId: task.id, objective: task.title })}
           ref={taskWorkspaceRef}
           onOpenNote={openNote}
           accountId={activeAccountId}

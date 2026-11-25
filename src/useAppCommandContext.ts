@@ -44,7 +44,6 @@ type Options = {
   addMeetingNote?: () => void;
   prepareMeeting?: () => void;
   meetingPrepOpen?: boolean;
-  delegateSelected?: () => void;
   snoozeSelected?: (ids: string[]) => void;
   returnSnoozedSelected?: (ids: string[]) => Promise<CommandResult>;
   mutateIds: (ids: string[], template: MutationTemplate, options?: { includeUnloaded?: boolean }) => Promise<CommandResult>;
@@ -88,7 +87,7 @@ type Options = {
 
 /** Binds global commands to the current domain controllers and interaction scope. */
 export function useAppCommandContext({
-  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, addToNote, addMeetingNote, prepareMeeting, meetingPrepOpen, delegateSelected, snoozeSelected, returnSnoozedSelected,
+  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, addToNote, addMeetingNote, prepareMeeting, meetingPrepOpen, snoozeSelected, returnSnoozedSelected,
   recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox, mutateIds, view, ui,
 }: Options) {
   const outboxEditSource = useMemo(() => outboxEditAsNewSource(outboxSelection.selectedEntry), [outboxSelection.selectedEntry]);
@@ -199,7 +198,6 @@ export function useAppCommandContext({
     addMeetingNote,
     prepareMeeting,
     meetingPrepOpen,
-    delegateSelected,
     openAgentsView: workspaces.openAgentsView,
     snoozeSelected: () => snoozeSelected?.(targetIds),
     returnSnoozedSelected: () => returnSnoozedSelected?.(targetIds) ?? Promise.resolve({}),
@@ -300,7 +298,6 @@ export function useAppCommandContext({
       return {};
     },
     focusSearch: () => {
-      if (rightWorkspace === "agents") { runWorkspaceCommand("agents.search"); return; }
       if (rightWorkspace === "files") { runWorkspaceCommand("files.search"); return; }
       if (rightWorkspace === "notes") { runWorkspaceCommand("notes.search"); return; }
       if (rightWorkspace === "contacts") { runWorkspaceCommand("contacts.search"); return; }
@@ -360,7 +357,7 @@ export function useAppCommandContext({
     recordTriageEvent, includeArchived, toggleChecked, setMessageExpansionOverrides,
     messageStackRef, activeMessageIdRef, runBrief, isTabbedMailbox, searchOpen, setSearchOpen, closeSearch, setMailbox, activeAccountId,
     setActiveSplitInboxId, setLabelTargetIds, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt,
-    adjustFontScale, toggleTheme, undoLastAction, delegateSelected, workspaces.openAgentsView,
+    adjustFontScale, toggleTheme, undoLastAction, workspaces.openAgentsView,
   ]);
 
   return context;

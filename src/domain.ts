@@ -1732,20 +1732,105 @@ export type SystemContactsStatus = {
   contactCount: number;
 };
 
-/** Device-local delegated work; real research requires separate setup and consent.
- * Times are UTC epoch seconds, matching native leases and the injected clock. */
-export type AgentRunState = "queued" | "running" | "waiting_for_input" | "paused" | "completed" | "failed" | "cancelled";
-export type AgentTaskControl = "pause" | "resume" | "retry" | "cancel" | "archive" | "unarchive" | "mark_read";
-export type CreateAgentTaskRequest = { accountId: string; objective: string; sourceThreadId?: string | null; linkedTaskId?: string | null; workflow: "fixture_research_v1" | "web_research_v1" };
-export type AgentTask = { id: string; accountId: string; objective: string; sourceThreadId: string | null; linkedTaskId: string | null; workflow: "fixture_research_v1" | "web_research_v1"; revision: number; createdAt: number; archived: boolean; unread: boolean };
-export type AgentRun = { id: string; taskId: string; state: AgentRunState; reason: string | null; generation: number; checkpoint: number; owner: string | null; leaseUntil: number | null; startedAt: number | null; notBefore: number; dispatches: number; attempts: number; activeSeconds: number; questionId: string | null };
-export type AgentTurn = { id: string; role: "user" | "assistant"; text: string; questionId: string | null; answerTo: string | null; createdAt: number };
-export type AgentArtifact = { id: string; version: number; kind: "fixture_report" | "research_report"; body: string; notResearched: boolean; createdAt: number };
-export type AgentDetail = { task: AgentTask; run: AgentRun; turns: AgentTurn[]; artifacts: AgentArtifact[]; research?: AgentResearchSummary | null };
+/** Standing, configurable Inbox Assistants backed by local SQLite state. */
+export type InboxAgentId = "stale_reads" | "resolved_and_expired" | "aging_replies";
+export type InboxAgentRunState = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
+export type ProposalKind = "archive_with_summary" | "archive_as_resolved" | "archive_as_expired" | "draft_reply";
+export type ProposalState = "pending" | "accepted" | "dismissed" | "superseded";
 
-export type AgentResearchConfig = { enabled: boolean; searchEnabled: boolean; verified: boolean };
-export type AgentResearchSettings = { policy?: typeof import("../docs/agent-integrations/contract-v1.json"); config: AgentResearchConfig; modelKeyConfigured: boolean; searchKeyConfigured: boolean };
-export type AgentResearchRequest = { task: CreateAgentTaskRequest; subjects: string[]; consent: boolean };
-export type AgentResearchSource = { id: string; url: string; title: string; excerpt: string; kind: "page" | "search_snippet"; retrievedAt: number };
-export type AgentResearchUsage = { modelCalls: number; countCalls: number; searchCalls: number; pageCalls: number; reservedInput: number; reservedOutput: number; inputTokens: number; outputTokens: number; unknownUsage: number; unknownSearchCost: number; searchCostUsd: number | null };
-export type AgentResearchSummary = { citations: Record<string, string[]>; sources: AgentResearchSource[]; usage: AgentResearchUsage; subjects: string[] };
+export type InboxAgentConfig = {
+  agentId: InboxAgentId;
+  name: string;
+  description: string;
+  enabled: boolean;
+  ageDays: number;
+  maxThreadsPerRun: number;
+  includeStarred: boolean;
+  accountId: string | null;
+  scheduleHours: number | null;
+  lastRunAt: number | null;
+  lastRunStatus: string | null;
+  lastRunError: string | null;
+  lastRunScanned: number;
+  lastRunProposed: number;
+  updatedAt: number;
+};
+
+export type UpdateInboxAgentConfig = {
+  agentId: InboxAgentId;
+  enabled: boolean;
+  ageDays: number;
+  maxThreadsPerRun: number;
+  includeStarred: boolean;
+  accountId: string | null;
+  scheduleHours: number | null;
+};
+
+export type AiRunConfig = {
+  provider: "none" | "openai" | "anthropic" | "openrouter" | "fireworks" | "straitly" | "custom";
+  model: string;
+  fastModel: string | null;
+  endpoint: string | null;
+  reasoning: "default" | "off";
+};
+
+export type InboxAgentRun = {
+  id: string;
+  agentId: InboxAgentId;
+  accountId: string | null;
+  state: InboxAgentRunState;
+  reason: string | null;
+  scannedCount: number;
+  proposedCount: number;
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+};
+
+export type AssistantProposalEvidence = {
+  kind: string;
+  id: string;
+  label: string;
+  excerpt: string | null;
+};
+
+export type ProposalPayload = {
+  summary?: string;
+  noteTitle?: string;
+  suggestSaveToNote?: boolean;
+  resolvedByKind?: string;
+  resolvedById?: string;
+  expiredDate?: string;
+  messageId?: string;
+  replyDraft?: string;
+  gentleOutDraft?: string;
+};
+
+export type InboxAgentProposal = {
+  id: string;
+  agentId: InboxAgentId;
+  accountId: string;
+  threadId: string;
+  threadRevision: string;
+  threadSubject: string;
+  threadSender: string;
+  threadLastReceivedAt: string;
+  threadSnippet: string;
+  threadUnread: boolean;
+  threadStarred: boolean;
+  kind: ProposalKind;
+  state: ProposalState;
+  headline: string;
+  reason: string;
+  payload: ProposalPayload;
+  evidence: AssistantProposalEvidence[];
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type InboxAgentsSnapshot = {
+  runnerEnabled: boolean;
+  agents: InboxAgentConfig[];
+  activeRuns: InboxAgentRun[];
+  proposals: InboxAgentProposal[];
+};

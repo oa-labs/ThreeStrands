@@ -650,7 +650,6 @@ fn every_table_keyed_by_account_is_purged_on_removal_or_deliberately_kept() {
     // Deleted by `remove_account`, directly or by a cascading foreign key.
     const PURGED: &[&str] = &[
         "account_labels",
-        "agent_tasks",
         "co_recipient_addresses",
         "contact_interactions",
         "conversation_snoozes",
@@ -680,6 +679,8 @@ fn every_table_keyed_by_account_is_purged_on_removal_or_deliberately_kept() {
         "imap_gmail_threads",
         "imap_gmail_message_threads",
         "imap_threads",
+        "inbox_agent_proposals",
+        "inbox_agent_runs",
         "mutations",
         "outbox_messages",
         "pinned_contacts",
@@ -700,6 +701,10 @@ fn every_table_keyed_by_account_is_purged_on_removal_or_deliberately_kept() {
         (
             "calendar_selections",
             "a calendar connection, removed when that calendar is disconnected",
+        ),
+        (
+            "inbox_agent_configs",
+            "standing assistant preferences stay; optional account_id scope is cleared on removal",
         ),
         (
             "note_event_cache",

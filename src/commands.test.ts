@@ -283,7 +283,7 @@ describe("command registry", () => {
       p: ["message.previous", "meetings.prepare"],
       s: ["today.scheduleSelected", "notes.star", "files.star", "thread.star"],
       a: ["today.addToPlan", "draft.replyAll"],
-      "shift+n": ["calendar.new", "contacts.new", "agents.new", "notes.new"],
+      "shift+n": ["calendar.new", "contacts.new", "notes.new"],
       "shift+g": ["contacts.newGroup", "tasks.linkGoal"],
       "mod+enter": ["contacts.save", "draft.send"],
       enter: ["today.write", "today.openSelected", "notes.write", "tasks.openDetails"],
