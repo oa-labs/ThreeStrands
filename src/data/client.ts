@@ -4,12 +4,12 @@ import type { NoteDocument, NoteTaskRecord, NoteReference, NoteBacklink, AddToNo
 import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
 import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
-import type { SentInRange, DoneNote, CompletedByEmail, MessageLocation } from "../domain";
+import type { SentInRange, DoneNote, CompletedByEmail, MessageLocation, TaskSuggestion, LinkedSend } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingAgendaSave, MeetingAgendaUndo, MeetingContext, MeetingPrepBrief, MeetingPrepSelection, MeetingReadiness, MeetingSourcePreview, PlanChanges, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
 import type { PlanAddition } from "../dailyPlan";
-import { localDayStart } from "../calendarTime";
+import { dateInputValue, localDayStart } from "../calendarTime";
 import {
   BOUNDED_LOCAL_READ,
   invokeWithPolicy,
@@ -577,6 +577,10 @@ export interface MailClient extends CorrespondenceClient {
   updateTask(request: UpdateTaskRequest): Promise<ThreadTask>;
   setTaskStatus(id: string, status: ThreadTask["status"], source?: "user" | "reply" | "external"): Promise<ThreadTask>;
   recordFollowUp(id: string): Promise<ThreadTask>;
+  /** The one open task a message just queued probably finishes, or null for none or several. Never rejects for a missing match. */
+  suggestTaskForOutbox(outboxId: string): Promise<TaskSuggestion | null>;
+  /** Links a queued or sent message to a task so the task finishes with it: `sent` when it was already done with the message's record, `queued` when it finishes when the message leaves. Rejects when the message wasn't sent. */
+  linkTaskToOutbox(outboxId: string, taskId: string): Promise<LinkedSend>;
   /** Where the message a task's record names is on this device, by its id or else by its sender, subject, recipients and time; null when it hasn't synced here or is ambiguous. */
   findCompletedMessage(record: CompletedByEmail): Promise<MessageLocation | null>;
   reconcileTasks(): Promise<number>;
@@ -880,6 +884,11 @@ const tauriClient: MailClient = {
   updateTask: (request) => complete("update_task", { request }),
   setTaskStatus: (id, status, source = "user") => complete("set_task_status", { id, status, source }),
   recordFollowUp: (id) => complete("record_follow_up", { id }),
+  suggestTaskForOutbox: (outboxId) => {
+    const date = dateInputValue(new Date());
+    return read("suggest_task_for_outbox", { outboxId, date, dayStart: localDayStart(date) });
+  },
+  linkTaskToOutbox: (outboxId, taskId) => complete("link_task_to_outbox", { outboxId, taskId }),
   findCompletedMessage: (record) => complete("find_completed_message", { record }),
   reconcileTasks: () => complete("reconcile_tasks"),
   listGoals: (accountId) => read("list_goals", { accountId }),

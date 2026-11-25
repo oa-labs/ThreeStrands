@@ -118,6 +118,13 @@ describe("native account requests", () => {
     await client.dailyPlan("2026-11-16");
     // The plan's day starts at local midnight, so check-ins count from then.
     expect(invoke).toHaveBeenLastCalledWith("daily_plan", { date: "2026-11-16", dayStart: new Date(2026, 10, 16).toISOString() });
+    // A suggestion after sending reads the user's local day the same way.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 16, 15, 30));
+    try { await client.suggestTaskForOutbox("send-1"); } finally { vi.useRealTimers(); }
+    expect(invoke).toHaveBeenLastCalledWith("suggest_task_for_outbox", { outboxId: "send-1", date: "2026-11-16", dayStart: new Date(2026, 10, 16).toISOString() });
+    await client.linkTaskToOutbox("send-1", "t1");
+    expect(invoke).toHaveBeenLastCalledWith("link_task_to_outbox", { outboxId: "send-1", taskId: "t1" });
     const additions = [{ kind: "newTask" as const, title: "Draft memo" }];
     await client.addToDailyPlan("2026-11-16", null, additions);
     expect(invoke).toHaveBeenLastCalledWith("add_to_daily_plan", { date: "2026-11-16", expected: null, additions });

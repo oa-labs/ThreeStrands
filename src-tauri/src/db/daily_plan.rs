@@ -121,7 +121,7 @@ fn contact_for(c: &Connection, reference: &NoteReference) -> DbResult<Option<Str
 /// The instant a plan's day begins: `day_start`, local midnight as the app
 /// computed it, or UTC midnight without one. Offsets run from UTC−12 to
 /// UTC+14, so any other start is no time zone's midnight and is refused.
-fn plan_day_start(date: &str, day_start: Option<&str>) -> DbResult<DateTime<Utc>> {
+pub(super) fn plan_day_start(date: &str, day_start: Option<&str>) -> DbResult<DateTime<Utc>> {
     let midnight = NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .map_err(|_| DatabaseError::invalid("Invalid date"))?
         .and_hms_opt(0, 0, 0)

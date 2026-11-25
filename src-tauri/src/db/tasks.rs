@@ -70,7 +70,7 @@ fn validate_task_fields(
     Ok(())
 }
 
-fn is_active_status(status: &str) -> bool {
+pub(super) fn is_active_status(status: &str) -> bool {
     matches!(status, "open" | "in_progress")
 }
 

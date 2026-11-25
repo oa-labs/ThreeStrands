@@ -123,6 +123,8 @@ export function useCorrespondence(
   messageAppearance?: MessageAppearance,
   signatures?: SignatureState,
   activeAccountId?: string | null,
+  /** Called once for each message the composer queues (Send, Schedule, Send & Archive). */
+  onQueuedSend?: (item: OutboxItem) => void,
 ) {
   const [active, setActive] = useState<Draft | null>(null);
   const activeRef = useRef(active);
@@ -520,6 +522,7 @@ export function useCorrespondence(
         outboxBodies.prime(item);
         setOutbox((current) => [summarizeOutbox(item), ...current.filter((entry) => entry.id !== item.id)]);
         void refresh();
+        onQueuedSend?.(item);
       }}
     />
   ) : null;

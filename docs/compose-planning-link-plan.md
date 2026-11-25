@@ -1,6 +1,6 @@
 # Finishing planning items by email
 
-**Status:** Phases 1 and 2 implemented; Phase 3 proposed. **Planned:** 2026-11-25
+**Status:** Phases 1, 2 and 3 implemented. **Planned:** 2026-11-25
 against 0.211.0. Revised the same day to a smaller scope.
 
 ## Outcome
@@ -120,19 +120,53 @@ Changelog: **New**, plus **Fixed** for undo-send no longer advancing a follow-up
 
 ## Phase 3: suggest after sending
 
-For when the user didn't start from Today. After **Send** (or **Schedule**) on a
-draft with no link, show one notice: "Mark '*task title*' done?" with **Mark
-Done**. Show it only for one strong match, and nothing otherwise:
+For when the user didn't start from Today. After **Send**, **Schedule** or
+**Send & Archive** queues a draft that has neither `completesTaskId` nor
+`followUpTaskId`, one notice reads "Mark “*task title*” done?" with **Mark
+Done**. It shows only for one strong match, and nothing otherwise. The match is
+`suggest_task_for_outbox(outboxId, date, dayStart)` (`db/task_suggestions.rs`),
+which reads the queued row's draft. Candidates are open or in-progress mail and
+standalone tasks (note tasks are not in the table, so a planned note task never
+matches):
 
-- an open task linked to the draft's conversation; or
-- an open task on today's plan, or due today or overdue, that is linked to a
-  recipient, or whose title names a recipient (display name or address).
+- a task linked to the draft's conversation (the draft's provider thread id,
+  mapped to the local thread of that account); or
+- a task that is on the day's plan (`daily_plan_from`), or due that day or
+  overdue (a date on or before the day; a datetime before the end of the local
+  day, taken as 24 hours after `dayStart`), **and** that relates to a
+  recipient: its conversation includes the recipient (the `list_contact_tasks`
+  rule), or its title names one.
 
-With two or more candidates, show nothing. **Mark Done** completes the task now
-for a sent message, or sets the Phase 2 link for a scheduled one, so it finishes
-when the message leaves. The record is the same as Phase 2. Never complete a task
-without the click: a wrong completion quietly hides a task, which is worse than
-the extra step.
+A title names a recipient with a case-insensitive whole-word match of the
+address, the full display name, or the first name (at least
+`MIN_NAME_MATCH_CHARS` = 3 letters). Names come from the draft's To and Cc and
+the saved contact. Recipients are To and Cc without the account's own
+addresses; Bcc is ignored. Two or more candidates, or an error (logged, never a
+failed send), show nothing.
+
+**Mark Done links; it doesn't complete in place.** `link_task_to_outbox(outboxId,
+taskId)` runs in one transaction on the one connection:
+
+- the row is queued (`undo_pending`, `ready`, `scheduled`, `sending`,
+  `uncertain`) and the payload has no link: it sets `completesTaskId` in the
+  payload, and the Phase 2 hook finishes the task when the row becomes `sent`;
+- the row is already `sent`: it sets the link and calls
+  `finish_linked_tasks_on` in the same transaction, so the task completes with
+  its record;
+- a failed, canceled or missing row, a finished task, or a draft that already
+  has a link is refused ("That message wasn't sent", and so on).
+
+`change_outbox` takes the same connection lock, so a send becomes `sent` wholly
+before or wholly after a link: the hook either reads the link or the link call
+finishes the task itself. Only the stored `payload` changes; the raw message was
+built at queue time and isn't touched. The notice then says "Marked “*title*”
+done" or "“*title*” will be marked done when it’s sent". Undoing the send later
+finishes nothing (Phase 2), and the restored draft keeps its **Completes** link.
+
+The notice is set from `onQueued`. It is skipped when the send's own notice
+carries Undo or a newer notice has appeared meanwhile (`useSendTaskSuggestion`).
+A completion refreshes the task lists through `linkedSendRevision`, or directly
+when the task finished at once.
 
 **AI later, only if matching misses too often.** Conversation analysis already
 produces task proposals with confidence and evidence (`ActionProposal`); "this
@@ -140,7 +174,7 @@ sent email finishes task X" has the same shape. It would only run with AI on, it
 sends the message body and open task titles to the provider, and it adds a delay
 before the notice. Start without it.
 
-Changelog: added to the Phase 2 entry if unreleased, else **Improved**.
+Changelog: added to the Phase 2 entry (unreleased).
 
 ## Not doing
 
@@ -164,5 +198,11 @@ Changelog: added to the Phase 2 entry if unreleased, else **Improved**.
   already done task changes nothing. Render the compose header line directly.
   Test the record's lookup when the message is and isn't on this device. Compose
   changes also need `pnpm test:e2e`.
-- Phase 3: unit tests for the matcher: one strong match, none, two, a scheduled
-  send. One test that the notice's **Mark Done** completes the task.
+- Phase 3 (`db/tests/task_suggestions.rs`): the matcher for a reply, a planned
+  task naming a first name, a due task in a conversation with the recipient,
+  two candidates, a task that is neither planned nor due, finished and note
+  tasks, own addresses, Bcc, the minimum name length, whole words, and the local
+  day east of UTC; the link for each send state, an already-sent message, a
+  refused second link, and an undone send. `useSendTaskSuggestion.test.ts` covers
+  the notices (match, none, already linked, **Mark Done** both ways, an Undo
+  notice, a stale answer).

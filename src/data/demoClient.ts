@@ -1941,6 +1941,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const thread = message ? threads.find((candidate) => candidate.id === message.threadId) : undefined;
       return message && thread && thread.accountId === record.accountId ? { threadId: thread.id, messageId: message.id } : null;
     },
+    async suggestTaskForOutbox() { return null; },
+    async linkTaskToOutbox() { throw new Error("That message wasn't sent"); },
     async recordFollowUp(id) {
       const current = tasks.find((task) => task.id === id);
       if (!current) throw new Error("Task not found");

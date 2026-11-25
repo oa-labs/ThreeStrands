@@ -437,6 +437,35 @@ describe("useCorrespondence", () => {
     }
   });
 
+  it("hands each message the composer queues to the send suggestion", async () => {
+    const written = { ...draft, to: "ann@example.org", subject: "Plans", body: "Hello" };
+    const queued = { ...outbox, draft: written };
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([written]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([]);
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (value) => ({ ...value, revision: value.revision + 1 }));
+    vi.spyOn(mailClient, "queueDraft").mockResolvedValue(queued);
+    const onQueuedSend = vi.fn();
+    let state: ReturnType<typeof useCorrespondence>;
+    function Harness() {
+      state = useCorrespondence([], undefined, undefined, ...snippetArgs, null, undefined, undefined, undefined, onQueuedSend);
+      return <>
+        <button onClick={() => state.openDraft(written)}>Open</button>
+        {state.renderComposer()}
+      </>;
+    }
+    try {
+      render(<Harness />);
+      await waitFor(() => expect(state.drafts).toHaveLength(1));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open" })); });
+      await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "Send" })); });
+      await waitFor(() => expect(onQueuedSend).toHaveBeenCalledExactlyOnceWith(queued));
+    } finally {
+      cleanup();
+    }
+  });
+
   it("reports a linked send leaving once, only after it was seen waiting", async () => {
     vi.spyOn(mailClient, "listDraftSummaries").mockResolvedValue([]);
     vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);

@@ -162,6 +162,43 @@ pub(crate) fn record_follow_up(id: String, state: State<'_, AppState>) -> AppRes
     Ok(task)
 }
 
+/// The one open task the message just queued probably finishes. A suggestion
+/// is a convenience: any failure is logged and reads as no suggestion, and
+/// never reaches the send.
+#[tauri::command]
+pub(crate) async fn suggest_task_for_outbox(
+    outbox_id: String,
+    date: String,
+    day_start: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Option<crate::db::task_suggestions::TaskSuggestion>> {
+    let database = state.database.clone();
+    Ok(run_database_task(move || {
+        database.suggest_task_for_outbox(&outbox_id, &date, day_start.as_deref())
+    })
+    .await
+    .unwrap_or_else(|error| {
+        log::warn!(target: "tasks", "could not suggest a task for a sent message: {error}");
+        None
+    }))
+}
+
+/// Links a queued or sent message to a task the user chose to finish with it.
+#[tauri::command(async)]
+pub(crate) fn link_task_to_outbox(
+    outbox_id: String,
+    task_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<crate::db::task_suggestions::LinkedSend> {
+    let linked = state
+        .database
+        .link_task_to_outbox_now(&outbox_id, &task_id)?;
+    if linked == crate::db::task_suggestions::LinkedSend::Sent {
+        kick_replicated_sync(&state);
+    }
+    Ok(linked)
+}
+
 #[tauri::command(async)]
 pub(crate) fn reconcile_tasks(state: State<'_, AppState>) -> AppResult<usize> {
     let count = state.database.reconcile_waiting_tasks()?;

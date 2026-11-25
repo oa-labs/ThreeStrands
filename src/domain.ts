@@ -345,6 +345,10 @@ export type ThreadTask = {
 export type CompletedByEmail = { accountId: string; subject: string; sentAt: number; messageId?: string | null; threadId?: string | null; recipients?: string[] };
 /** Where a completed task's message is on this device. `messageId` can differ from the record's when the synced copy has another id. */
 export type MessageLocation = { threadId: string; messageId: string };
+/** The one open task a message just queued probably finishes. */
+export type TaskSuggestion = { taskId: string; title: string };
+/** Whether a message had already left when it was linked to a task. */
+export type LinkedSend = "sent" | "queued";
 
 export type CreateTaskRequest = {
   accountId: string;

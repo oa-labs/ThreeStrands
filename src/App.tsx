@@ -159,7 +159,9 @@ import { useMailRefresh, useUnreadCounts } from "./useMailRefresh";
 import { useMailStateActions } from "./useMailStateActions";
 import { useMeetingActions } from "./useMeetingActions";
 import { useNativeMailLinks } from "./useNativeMailLinks";
+import type { OutboxItem } from "./correspondence";
 import { useNotice } from "./useNotice";
+import { useSendTaskSuggestion } from "./useSendTaskSuggestion";
 import { useReaderActions } from "./useReaderActions";
 import { useReaderState } from "./useReaderState";
 import { useSettingsIntegration } from "./useSettingsIntegration";
@@ -279,6 +281,7 @@ export function App() {
   const { applyThreadSummary } = useMailStateActions({ mailboxThreads, threadDetail });
   const snippetLibrary = useSnippets();
   const signatureLibrary = useSignatures();
+  const suggestAfterSend = useRef<(item: OutboxItem) => void>(() => {});
   const correspondence = useCorrespondence(
     accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId,
     snippetLibrary.snippets, snippetLibrary.create, snippetLibrary.update, snippetLibrary.remove,
@@ -286,6 +289,7 @@ export function App() {
     { theme: effectiveThemeValue, fontScale: fontScale / 100, fontFamily, emailZoom, emailMinimumFontSize, emailTextColors, loadImages: loadRemoteImages },
     signatureLibrary,
     activeAccountId,
+    (item) => suggestAfterSend.current(item),
   );
   const draftSelection = useDraftSelection(correspondence.drafts, correspondence.activeDraft?.id ?? null);
   const composerBelongsToVisibleThread = Boolean(
@@ -379,6 +383,16 @@ export function App() {
     setTaskRevision((current) => current + 1);
     void refreshTaskIndicators();
   }, [linkedSendRevision, refreshTaskIndicators, setTaskRevision]);
+  // After a send with no task link, offers to mark the one matching task done.
+  const refreshOutbox = correspondence.refresh;
+  suggestAfterSend.current = useSendTaskSuggestion(notice, setNotice, (result) => {
+    // A queued message's link is read back so the send is watched, and a sent
+    // one's task is already finished.
+    void refreshOutbox().catch(logBackgroundFailure("Outbox refresh after linking a task"));
+    if (result !== "sent") return;
+    setTaskRevision((current) => current + 1);
+    void refreshTaskIndicators();
+  });
   const { refresh: refreshSplitInboxes } = splitInboxCatalog;
   const isThreadMailbox = mailbox === "snoozed" || mailbox === "inbox" || mailbox === "allMail" || mailbox === "sent" || mailbox === "trash" || mailbox === "split";
   const isTabbedMailbox = mailbox === "inbox" || mailbox === "split";
