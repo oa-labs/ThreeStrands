@@ -688,8 +688,33 @@ export function isAllowedCssProperty(property: string): boolean {
 export const safeStyles = validators;
 export const safeStyleProperties = Object.keys(validators);
 export const backgroundImageUrl = /^url\((?:"([^"]*)"|'([^']*)'|([^'")]*))\)$/i;
+export const remoteOrCidImageSrc = /^(https?:|cid:)/i;
 export const safeImageSrc = /^(https?:|cid:|data:image\/)/i;
 export const blockedSrcAttr = "data-blocked-src";
+
+const INLINE_RASTER_DATA_URI_PREFIX = /^data:image\/(avif|gif|jpeg|jpg|png|webp);base64,/i;
+const BASE64_BODY = /^[a-z0-9+/]+={0,2}$/i;
+
+/**
+ * Validates and normalizes an inline raster `data:` image URI for direct
+ * message rendering (`img-src data:`), enforcing the shared per-message data
+ * URI budget without admitting SVG or non-base64 payloads.
+ */
+export function parseInlineRasterDataUri(
+  value: string,
+  maxBytes: number = EMAIL_IMAGE_LIMITS.maxDataUriBytesPerMessage,
+): string | null {
+  const trimmed = value.trim();
+  const prefixMatch = trimmed.match(INLINE_RASTER_DATA_URI_PREFIX);
+  if (!prefixMatch) return null;
+  const rawSubtype = prefixMatch[1].toLowerCase();
+  const subtype = rawSubtype === "jpg" ? "jpeg" : rawSubtype;
+  const payload = trimmed.slice(prefixMatch[0].length).replace(/\s+/g, "");
+  if (!payload || !BASE64_BODY.test(payload)) return null;
+  const normalized = `data:image/${subtype};base64,${payload}`;
+  if (normalized.length > maxBytes) return null;
+  return normalized;
+}
 
 /** Local raster-only signature images; no SVG, external URL or executable data. */
 export const embeddedRasterImageSrc = /^data:image\/(?:avif|gif|jpeg|png|webp);base64,[a-z0-9+/]+=*$/i;

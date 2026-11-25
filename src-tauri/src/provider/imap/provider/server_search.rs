@@ -230,7 +230,8 @@ impl ImapProvider {
             // 2. EXAMINE (read-only) + UID SEARCH, under the deadline.
             let examined = tokio::time::timeout_at(deadline, async {
                 let status = session.examine(wire).await?;
-                let uidvalidity = status.uid_validity.unwrap_or(0) as i64;
+                let uidvalidity =
+                    crate::provider::imap::session::require_uidvalidity(&status, wire)?;
                 let hits = session.uid_search(&search_plan.criteria).await?;
                 Ok::<(i64, Vec<u32>), ProviderError>((uidvalidity, hits))
             })

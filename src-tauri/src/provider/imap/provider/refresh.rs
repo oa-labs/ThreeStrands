@@ -695,7 +695,8 @@ impl ImapProvider {
 
         // 1. EXAMINE (read-only) — never SELECT, so sync never sets \Seen.
         let status = session.examine(mailbox).await?;
-        let server_uidvalidity = status.uid_validity.unwrap_or(0) as i64;
+        let server_uidvalidity =
+            crate::provider::imap::session::require_uidvalidity(&status, mailbox)?;
         let server_exists = status.exists as i64;
         let server_uidnext = status.uid_next.unwrap_or(0) as i64;
 
@@ -1420,7 +1421,9 @@ impl ImapProvider {
             .examine(mailbox)
             .await
             .map_err(AcquireError::Provider)?;
-        let server_uidvalidity = status.uid_validity.unwrap_or(0) as i64;
+        let server_uidvalidity =
+            crate::provider::imap::session::require_uidvalidity(&status, mailbox)
+                .map_err(AcquireError::Provider)?;
 
         // 2. UIDVALIDITY guard: refuse rather than ingest under the wrong
         // incarnation. The caller's UID list is meaningful only under the

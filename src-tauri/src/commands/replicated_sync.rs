@@ -240,17 +240,34 @@ pub(crate) fn replicated_sync_dismiss_join_code_notice(
     Ok(state.database.dismiss_join_code_notice(&redemption_cid)?)
 }
 
+async fn probe_ipfs_rpc_if_active(
+    database: &crate::db::Database,
+    service: &replicated_sync::ReplicatedSync,
+    base_url: &str,
+    token: Option<&str>,
+) -> AppResult<ipfs_transport::ProbeReport> {
+    if !database.replicated_sync_active()? {
+        return Err("Replicated sync is not enabled in this build".into());
+    }
+    service
+        .probe_ipfs_rpc_endpoint(base_url, token)
+        .await
+        .map_err(AppError::from)
+}
+
 #[tauri::command]
 pub(crate) async fn replicated_sync_probe_ipfs_rpc(
     base_url: String,
     token: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<ipfs_transport::ProbeReport> {
-    state
-        .replicated_sync
-        .probe_ipfs_rpc_endpoint(&base_url, token.as_deref())
-        .await
-        .map_err(AppError::from)
+    probe_ipfs_rpc_if_active(
+        &state.database,
+        &state.replicated_sync,
+        &base_url,
+        token.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -467,4 +484,29 @@ pub(crate) fn replicated_sync_resolve_conflict(
         .resolve_frontier_conflict(entity_type, &entity_id, &field, &operation_id)?;
     kick_replicated_sync(&state);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn probe_ipfs_rpc_requires_replicated_sync_to_be_active() {
+        let database = Arc::new(crate::db::Database::open_memory());
+        let service = replicated_sync::ReplicatedSync::new(database.clone());
+        assert!(
+            !database.replicated_sync_active().unwrap(),
+            "test expects replicated sync disabled by default"
+        );
+        let error = probe_ipfs_rpc_if_active(&database, &service, "http://127.0.0.1:1", None)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Replicated sync is not enabled in this build"),
+            "unexpected error: {error}"
+        );
+    }
 }

@@ -327,14 +327,16 @@ pub async fn discover_and_persist(
             Ok(status) => status,
             Err(_) => continue,
         };
+        let Some(uidvalidity) = status.uid_validity.filter(|&value| value > 0) else {
+            continue;
+        };
         let row = super::ImapMailbox {
             name: entry.name.clone(),
             delimiter: entry.delimiter.clone(),
             special_use: entry.special_use.clone(),
             // EXAMINE reports UID counters as unsigned; store as i64 (the
-            // table's type). A server that omits them yields 0, which the
-            // next real sync overwrites.
-            uidvalidity: status.uid_validity.unwrap_or(0) as i64,
+            // table's type).
+            uidvalidity: uidvalidity as i64,
             uidnext: status.uid_next.unwrap_or(0) as i64,
             highestmodseq: None, // CONDSTORE is a later slice.
             permanent_flags_json: None,
@@ -945,6 +947,47 @@ mod discovery_tests {
             1,
             "no retry on a hard failure"
         );
+    }
+
+    #[tokio::test]
+    async fn discovery_skips_mailboxes_without_uidvalidity_and_keeps_stored_value() {
+        let store = store();
+        store
+            .upsert_mailbox(&super::super::ImapMailbox {
+                name: "INBOX".into(),
+                delimiter: None,
+                special_use: None,
+                uidvalidity: 42,
+                uidnext: 10,
+                highestmodseq: None,
+                permanent_flags_json: None,
+                permanent_keywords: None,
+            })
+            .unwrap();
+        let list = vec![
+            entry("INBOX", None, false),
+            entry("Archive", Some("\\Archive"), false),
+        ];
+        let mut missing_status = status(0, 10, &[], false);
+        missing_status.uid_validity = None;
+        let mut zero_status = status(0, 10, &[], false);
+        zero_status.uid_validity = Some(0);
+        let mut examine = std::collections::BTreeMap::new();
+        examine.insert("INBOX".to_string(), Ok(missing_status));
+        examine.insert("Archive".to_string(), Ok(zero_status));
+        let mut session = FakeSession {
+            list,
+            examine,
+            creates: Default::default(),
+            create_calls: Default::default(),
+        };
+
+        let mapping = discover_and_persist(&mut session, &store).await.unwrap();
+        assert_eq!(mapping.mailbox_for(MailboxRole::Archive), Some("Archive"));
+        let rows = store.mailboxes().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "INBOX");
+        assert_eq!(rows[0].uidvalidity, 42);
     }
 
     // Optional live coverage of mailbox discovery against the Dovecot test

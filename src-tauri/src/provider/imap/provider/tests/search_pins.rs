@@ -391,6 +391,27 @@ async fn acquire_refuses_a_uidvalidity_mismatch() {
     assert!(store.pinned_uids("Archive", 50).unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn acquire_refuses_missing_uidvalidity() {
+    let mut mb = FakeMailbox::new(100);
+    mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Old", ""));
+    mb.folder("Archive", 50).omit_uidvalidity = true;
+    let mailbox = Arc::new(Mutex::new(mb));
+    let (provider, store) = provider_window(mailbox.clone(), 1);
+
+    let archive = entry_for(&provider, "Archive");
+    let mut session = session_for(&mailbox).await;
+    let result = provider
+        .acquire_uids(session.as_mut(), &archive, &[1], 50)
+        .await;
+    let _ = session.logout().await;
+    assert!(
+        matches!(result, Err(AcquireError::Provider(ProviderError::TransientTransport(ref msg))) if msg.contains("UIDVALIDITY")),
+        "expected missing UIDVALIDITY error, got {result:?}"
+    );
+    assert!(store.locations_in_mailbox("Archive").unwrap().is_empty());
+}
+
 /// Review fix: a mailbox outside the sync set would never refresh or
 /// release a pin, so acquiring into it is refused with no writes.
 #[tokio::test]

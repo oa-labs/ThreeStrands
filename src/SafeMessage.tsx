@@ -5,8 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   backgroundImageUrl,
   blockedSrcAttr,
+  parseInlineRasterDataUri,
+  remoteOrCidImageSrc,
   safeColor,
-  safeImageSrc,
   preservedImageMinWidth,
   declaredImageAspectRatio,
   safeStyleProperties,
@@ -349,6 +350,14 @@ function linkHrefAt(target: EventTarget | null): string | null {
 }
 
 export function sanitizeMessageHtml(html: string): string {
+  let inlineDataUriBytes = 0;
+  const admitInlineDataUri = (url: string): string | null => {
+    const remaining = EMAIL_IMAGE_LIMITS.maxDataUriBytesPerMessage - inlineDataUriBytes;
+    const normalized = parseInlineRasterDataUri(url, remaining);
+    if (!normalized) return null;
+    inlineDataUriBytes += normalized.length;
+    return normalized;
+  };
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
     // class/id are only useful now that <style> blocks are (narrowly)
@@ -386,14 +395,21 @@ export function sanitizeMessageHtml(html: string): string {
         declarations.push({ property, value: safeValue, important: original.getPropertyPriority(property) === "important" });
       }
     }
-    // Same URL scheme check as <img src>. Every remote background, like
-    // every remote <img>, is always parked behind the blocked-src marker
-    // here — resolving it to a real value is the caller's job (see
-    // fillResolvedImages), once the native proxy has fetched it.
+    // Same URL scheme check as <img src>. Safe inline raster data: URIs are
+    // admitted directly (allowed by `img-src data:` without any network fetch
+    // or blocked-images banner); remote and cid: backgrounds stay parked behind
+    // the blocked-src marker until fillResolvedImages supplies a data: URI.
     const backgroundImageMatch = original.getPropertyValue("background-image").trim().match(backgroundImageUrl);
     if (backgroundImageMatch) {
       const backgroundUrl = backgroundImageMatch[1] ?? backgroundImageMatch[2] ?? backgroundImageMatch[3] ?? "";
-      if (safeImageSrc.test(backgroundUrl) && !/["']/.test(backgroundUrl)) {
+      const inlineBackground = admitInlineDataUri(backgroundUrl);
+      if (inlineBackground) {
+        declarations.push({
+          property: "background-image",
+          value: `url("${inlineBackground}")`,
+          important: original.getPropertyPriority("background-image") === "important",
+        });
+      } else if (remoteOrCidImageSrc.test(backgroundUrl) && !/["']/.test(backgroundUrl)) {
         element.setAttribute(blockedSrcAttr, backgroundUrl);
       }
     }
@@ -406,7 +422,7 @@ export function sanitizeMessageHtml(html: string): string {
     element.removeAttribute("background");
     if (backgroundAttributeTags.has(tag)
       && !original.getPropertyValue("background-image").trim()
-      && safeImageSrc.test(backgroundAttribute)
+      && remoteOrCidImageSrc.test(backgroundAttribute)
       && !/["'()\\\s]/.test(backgroundAttribute)) {
       element.setAttribute(blockedSrcAttr, backgroundAttribute);
     }
@@ -504,8 +520,10 @@ export function sanitizeMessageHtml(html: string): string {
     if (tag === "img") {
       const src = element.getAttribute("src") ?? "";
       element.removeAttribute("src");
-      if (!safeImageSrc.test(src)) element.remove();
-      else element.setAttribute(blockedSrcAttr, src);
+      const inlineSrc = admitInlineDataUri(src);
+      if (inlineSrc) element.setAttribute("src", inlineSrc);
+      else if (remoteOrCidImageSrc.test(src)) element.setAttribute(blockedSrcAttr, src);
+      else element.remove();
     }
   });
 

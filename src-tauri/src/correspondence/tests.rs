@@ -1425,6 +1425,177 @@ mod prepare_failures {
         assert_eq!(state_of(&service, &sending_item.id), "sent");
     }
 
+    struct AccountFakeSender {
+        identity: String,
+        inner: FakeSender,
+    }
+
+    #[async_trait::async_trait]
+    impl MailSend for AccountFakeSender {
+        async fn validate_sending_identity(
+            &self,
+            account: &str,
+            sender: &str,
+        ) -> ProviderResult<()> {
+            self.inner.validate_sending_identity(account, sender).await
+        }
+        async fn sender_identity(&self) -> ProviderResult<String> {
+            Ok(self.identity.clone())
+        }
+        async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
+            self.inner.prepare_delivery().await
+        }
+        async fn find_sent_copy(
+            &self,
+            message_id: &str,
+            thread_id: &str,
+        ) -> ProviderResult<Option<DeliveryReceipt>> {
+            self.inner.find_sent_copy(message_id, thread_id).await
+        }
+    }
+
+    impl MailProvider for AccountFakeSender {
+        fn capabilities(&self) -> ProviderCapabilities {
+            self.inner.capabilities()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MailSync for AccountFakeSender {
+        async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+            self.inner.baseline_cursor().await
+        }
+        async fn poll(&self, cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
+            self.inner.poll(cursor).await
+        }
+        async fn list_inbox(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
+            self.inner.list_inbox(page).await
+        }
+        async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
+            self.inner.fetch_thread(id).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MailFetch for AccountFakeSender {
+        async fn fetch_message(&self, id: &str) -> ProviderResult<RawMessage> {
+            self.inner.fetch_message(id).await
+        }
+        async fn attachment_bytes(
+            &self,
+            message_id: &str,
+            attachment_id: &str,
+        ) -> ProviderResult<Vec<u8>> {
+            self.inner.attachment_bytes(message_id, attachment_id).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MailMutate for AccountFakeSender {
+        async fn modify_thread(
+            &self,
+            id: &str,
+            add: &[String],
+            remove: &[String],
+        ) -> ProviderResult<()> {
+            self.inner.modify_thread(id, add, remove).await
+        }
+        async fn modify_messages(
+            &self,
+            ids: &[String],
+            add: &[String],
+            remove: &[String],
+        ) -> ProviderResult<()> {
+            self.inner.modify_messages(ids, add, remove).await
+        }
+        async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
+            self.inner.list_labels().await
+        }
+        async fn create_label(&self, name: &str) -> ProviderResult<Label> {
+            self.inner.create_label(name).await
+        }
+        async fn update_label(&self, id: &str, name: &str) -> ProviderResult<Label> {
+            self.inner.update_label(id, name).await
+        }
+        async fn delete_label(&self, id: &str) -> ProviderResult<()> {
+            self.inner.delete_label(id).await
+        }
+    }
+
+    #[tokio::test]
+    async fn one_failed_outbox_item_does_not_stop_other_items_or_accounts_in_tick() {
+        let service = service();
+        let broken_item = ready_item(&service);
+        let same_account_healthy = ready_item(&service);
+
+        let mut other_draft = service
+            .database
+            .create_draft("new", None, "second@example.com", &[])
+            .unwrap();
+        other_draft.to = "Jane <jane@example.com>".into();
+        other_draft.subject = "Hello".into();
+        other_draft.body = "Other account".into();
+        other_draft.from = Some("second@example.com".into());
+        let saved_other = service.database.save_draft(other_draft).unwrap();
+        let other_item = service
+            .database
+            .queue(
+                &saved_other.id,
+                saved_other.revision,
+                false,
+                &[],
+                None,
+                &service.root,
+            )
+            .unwrap();
+        service
+            .database
+            .test_connection()
+            .unwrap()
+            .execute(
+                "UPDATE outbox_messages SET state='ready', deadline=?2 WHERE id=?1",
+                params![other_item.id, unix_millis() - 1],
+            )
+            .unwrap();
+        let other_item = service
+            .database
+            .outbox()
+            .unwrap()
+            .into_iter()
+            .find(|o| o.id == other_item.id)
+            .unwrap();
+
+        // Removing the broken row from the database forces `send_due_item` ->
+        // `outbox_raw` to return `Err`, reproducing a per-item tick error.
+        service
+            .database
+            .test_connection()
+            .unwrap()
+            .execute("DELETE FROM outbox_messages WHERE id=?1", [&broken_item.id])
+            .unwrap();
+
+        let mut by_account = std::collections::HashMap::new();
+        by_account.insert(
+            "you@example.com".to_string(),
+            vec![broken_item, same_account_healthy.clone()],
+        );
+        by_account.insert("second@example.com".to_string(), vec![other_item.clone()]);
+
+        service
+            .process_due_accounts(by_account, Some(""), |account| async move {
+                Ok(Arc::new(AccountFakeSender {
+                    identity: account,
+                    inner: FakeSender {
+                        behaviour: PrepareBehaviour::Succeed(SendResult::Accepted),
+                    },
+                }) as Arc<dyn MailProvider>)
+            })
+            .await;
+
+        assert_eq!(state_of(&service, &same_account_healthy.id), "sent");
+        assert_eq!(state_of(&service, &other_item.id), "sent");
+    }
+
     #[test]
     fn the_retry_gate_honours_the_interval_below_at_and_above() {
         use crate::provider::imap::policy::SMTP_PREPARE_RETRY_INTERVAL_MS as INTERVAL;

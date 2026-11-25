@@ -114,8 +114,20 @@ describe("join code readiness", () => {
 describe("joining with a pasted code", () => {
   function renderPanel() {
     render(<Harness>{(operation) => <JoinCodePanel operation={operation} refresh={refresh} />}</Harness>);
-    return screen.getByRole("textbox", { name: "Join Code" });
+    return screen.getByLabelText("Join Code") as HTMLInputElement;
   }
+
+  it("masks the join code like a password with a show/hide toggle and history warning", () => {
+    const input = renderPanel();
+    expect(input).toHaveAttribute("type", "password");
+    expect(input).toHaveAccessibleDescription("A join code works like a password for all your sync history.");
+    fireEvent.change(input, { target: { value: "TSJOIN1-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(input).toHaveAttribute("type", "text");
+    expect(input).toHaveValue("TSJOIN1-secret");
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(input).toHaveAttribute("type", "password");
+  });
 
   it("previews the code, collects what this device must supply, then joins", async () => {
     vi.mocked(sync.replicatedSyncPreviewJoinCode).mockResolvedValue(preview());
@@ -124,9 +136,9 @@ describe("joining with a pasted code", () => {
     const input = renderPanel();
     const join = screen.getByRole("button", { name: "Join sync group" });
 
-    fireEvent.change(input, { target: { value: "TSJOIN1-abc\n" } });
+    fireEvent.change(input, { target: { value: "TSJOIN1-abc" } });
     const connectors = await screen.findByRole("list", { name: "Connectors in this join code" });
-    expect(sync.replicatedSyncPreviewJoinCode).toHaveBeenCalledWith("TSJOIN1-abc\n");
+    expect(sync.replicatedSyncPreviewJoinCode).toHaveBeenCalledWith("TSJOIN1-abc");
     expect(screen.getByText(/^From Work laptop · expires in/)).toBeInTheDocument();
     const [folderRow, s3Row] = within(connectors).getAllByRole("listitem");
     expect(folderRow).toHaveTextContent("On Work laptop this folder is named “ThreeStrands”");
@@ -142,7 +154,7 @@ describe("joining with a pasted code", () => {
     expect(join).toBeEnabled();
 
     fireEvent.click(join);
-    await waitFor(() => expect(sync.replicatedSyncJoinWithCode).toHaveBeenCalledWith("TSJOIN1-abc\n", {
+    await waitFor(() => expect(sync.replicatedSyncJoinWithCode).toHaveBeenCalledWith("TSJOIN1-abc", {
       folders: [{ connectorIndex: 0, path: "/Users/me/Dropbox/ThreeStrands" }],
       credentials: [{ connectorIndex: 1, credentials: { kind: "s3", accessKeyId: "AKIA", secretAccessKey: "secret", sessionToken: null } }],
     }));
@@ -198,10 +210,10 @@ describe("joining with a pasted code", () => {
   it("forgets the pasted code when the panel closes", async () => {
     vi.mocked(sync.replicatedSyncPreviewJoinCode).mockResolvedValue(preview());
     const { rerender } = render(<Harness>{(operation) => <JoinCodePanel operation={operation} refresh={refresh} />}</Harness>);
-    fireEvent.change(screen.getByRole("textbox", { name: "Join Code" }), { target: { value: "TSJOIN1-secret" } });
+    fireEvent.change(screen.getByLabelText("Join Code"), { target: { value: "TSJOIN1-secret" } });
     rerender(<Harness>{() => null}</Harness>);
     rerender(<Harness>{(operation) => <JoinCodePanel operation={operation} refresh={refresh} />}</Harness>);
-    expect(screen.getByRole("textbox", { name: "Join Code" })).toHaveValue("");
+    expect(screen.getByLabelText("Join Code")).toHaveValue("");
   });
 });
 
@@ -224,24 +236,33 @@ describe("adding a device", () => {
       { instanceId: "folder-1", includeCredentials: false },
       { instanceId: "s3-1", includeCredentials: false },
     ]));
-    expect(await within(panel).findByRole("textbox", { name: "Join Code" })).toHaveValue("TSJOIN1-created");
-    expect(panel).toHaveTextContent("Anyone with this code can join your sync group.");
+    const createdInput = await within(panel).findByLabelText("Join Code");
+    expect(createdInput).toHaveAttribute("type", "password");
+    expect(createdInput).toHaveValue("TSJOIN1-created");
+    expect(panel).toHaveTextContent("Treat this code like a password for all your sync history — anyone with it can join your sync group and read everything synced so far.");
     expect(panel).not.toHaveTextContent("included storage credentials");
     expect(panel).toHaveTextContent("It works once and expires in 7 days");
   });
 
-  it("warns about included credentials, copies the code, and discards it when closed", async () => {
+  it("warns about included credentials, copies the code while hidden, toggles reveal, and discards it when closed", async () => {
     vi.mocked(sync.replicatedSyncCreateJoinCode).mockResolvedValue("TSJOIN1-with-keys");
     const onClose = vi.fn();
     const panel = renderPanel(onClose);
     fireEvent.click(within(panel).getByRole("button", { name: "Create join code" }));
-    await within(panel).findByRole("textbox", { name: "Join Code" });
+    const createdInput = await within(panel).findByLabelText("Join Code");
+    expect(createdInput).toHaveAttribute("type", "password");
     expect(panel).toHaveTextContent("use the included storage credentials");
     expect(panel).toHaveTextContent("a key limited to this bucket is safest");
 
     fireEvent.click(within(panel).getByRole("button", { name: "Copy" }));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("TSJOIN1-with-keys");
     expect(await within(panel).findByRole("button", { name: "Copied" })).toBeInTheDocument();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Show" }));
+    expect(createdInput).toHaveAttribute("type", "text");
+    fireEvent.click(within(panel).getByRole("button", { name: "Hide" }));
+    expect(createdInput).toHaveAttribute("type", "password");
+
     fireEvent.click(within(panel).getByRole("button", { name: "Done" }));
     expect(onClose).toHaveBeenCalled();
   });

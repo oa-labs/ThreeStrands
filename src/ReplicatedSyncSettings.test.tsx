@@ -105,7 +105,7 @@ describe("replicated sync setup choice", () => {
     render(<ReplicatedSyncSettings />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Paste a join code" }));
-    expect(screen.getByRole("textbox", { name: "Join Code" })).toHaveFocus();
+    expect(screen.getByLabelText("Join Code")).toHaveFocus();
   });
 
   it("creates a separate group over an existing one only after explicit confirmation", async () => {
@@ -220,7 +220,7 @@ describe("replicated sync setup steps", () => {
     setUp({ transports: [] });
     render(<ReplicatedSyncSettings />);
     const panel = await screen.findByRole("group", { name: "Join with a code from another device" });
-    expect(within(panel).getByRole("textbox", { name: "Join Code" })).toBeInTheDocument();
+    expect(within(panel).getByLabelText("Join Code")).toHaveAttribute("type", "password");
     expect(within(panel).getByRole("button", { name: "Join sync group" })).toBeDisabled();
     cleanup();
 

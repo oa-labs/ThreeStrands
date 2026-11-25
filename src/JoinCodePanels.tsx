@@ -1,5 +1,5 @@
 import { formatDateTime } from "./dateFormatting";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { errorMessage } from "./errors";
 import {
   JOIN_CODE_LIFETIME_HOURS,
@@ -61,7 +61,11 @@ export function joinCodeReadiness(
  * lives only in this component's state, so leaving the panel discards it. */
 export function JoinCodePanel({ operation, refresh, inputId }: { operation: Operation; refresh(): Promise<void>; inputId?: string }) {
   const { busy, pending, runFor } = operation;
+  const generatedId = useId();
+  const fieldId = inputId ?? generatedId;
+  const hintId = useId();
   const [code, setCode] = useState("");
+  const [revealed, setRevealed] = useState(false);
   const [preview, setPreview] = useState<JoinCodePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [folders, setFolders] = useState<Record<number, string>>({});
@@ -104,27 +108,37 @@ export function JoinCodePanel({ operation, refresh, inputId }: { operation: Oper
         .map(([index, draft]) => ({ connectorIndex: Number(index), credentials: { kind: "s3" as const, ...s3CredentialsFromDraft(draft) } })),
     });
     setCode("");
+    setRevealed(false);
     await refresh();
   });
 
   return (
     <>
-      <label className="settings-field">
-        <span>Join Code</span>
-        <textarea
-          id={inputId}
-          rows={3}
-          className="sync-join-code"
-          placeholder="TSJOIN1-…"
-          autoComplete="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          value={code}
-          disabled={busy}
-          aria-invalid={previewError ? true : undefined}
-          onChange={(event) => setCode(event.target.value)}
-        />
-      </label>
+      <div className="settings-field">
+        <label htmlFor={fieldId}>Join Code</label>
+        <div className="sync-join-code-row">
+          <input
+            id={fieldId}
+            type={revealed ? "text" : "password"}
+            className="sync-join-code"
+            placeholder="TSJOIN1-…"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            value={code}
+            disabled={busy}
+            aria-describedby={hintId}
+            aria-invalid={previewError ? true : undefined}
+            onChange={(event) => setCode(event.target.value)}
+          />
+          <button type="button" className="btn" onClick={() => setRevealed((current) => !current)}>
+            {revealed ? "Hide" : "Show"}
+          </button>
+        </div>
+        <span id={hintId} className="settings-hint">
+          A join code works like a password for all your sync history.
+        </span>
+      </div>
       {previewError ? <p role="status" className="settings-hint recovery-phrase-feedback-attention">{previewError}</p> : null}
       {preview ? (
         <>
@@ -201,6 +215,7 @@ export function AddDevicePanel({
   const [included, setIncluded] = useState<Record<string, boolean>>(() => Object.fromEntries(transports.map((transport) => [transport.instanceId, true])));
   const [withCredentials, setWithCredentials] = useState<Record<string, boolean>>(() => Object.fromEntries(transports.map((transport) => [transport.instanceId, true])));
   const [created, setCreated] = useState<{ code: string; expiresAt: string; credentials: boolean } | null>(null);
+  const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
   const chosen = transports.filter((transport) => included[transport.instanceId]);
 
@@ -210,6 +225,7 @@ export function AddDevicePanel({
       includeCredentials: transport.kind !== "folder" && Boolean(withCredentials[transport.instanceId]),
     }));
     const code = await replicatedSyncCreateJoinCode(hours, choices);
+    setRevealed(false);
     setCreated({
       code,
       expiresAt: new Date(Date.now() + hours * 3_600_000).toISOString(),
@@ -228,12 +244,25 @@ export function AddDevicePanel({
       <p>Paste this code on your new device. It sets up the same connectors and joins this sync group in one step.</p>
       {created ? (
         <>
-          <textarea className="sync-join-code" readOnly rows={4} aria-label="Join Code" value={created.code} onFocus={(event) => event.target.select()} />
+          <div className="sync-join-code-row">
+            <input
+              type={revealed ? "text" : "password"}
+              className="sync-join-code"
+              readOnly
+              aria-label="Join Code"
+              value={created.code}
+              onFocus={(event) => event.target.select()}
+            />
+            <button type="button" className="btn" onClick={() => setRevealed((current) => !current)}>
+              {revealed ? "Hide" : "Show"}
+            </button>
+          </div>
           <div className="settings-row">
             <button type="button" className="btn btn-primary" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
           </div>
           <p className="settings-hint sync-attention-text">
-            Anyone with this code can join your sync group{created.credentials ? " and use the included storage credentials" : ""}.
+            Treat this code like a password for all your sync history — anyone with it can join your sync group and read everything synced so far
+            {created.credentials ? ", and use the included storage credentials" : ""}.
             It works once and expires {formatTimeUntil(created.expiresAt)}. Send it only to yourself through a private channel.
             {created.credentials ? " The credentials don’t expire with the code, so a key limited to this bucket is safest." : ""}
           </p>

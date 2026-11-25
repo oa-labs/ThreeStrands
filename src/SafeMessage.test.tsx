@@ -2589,3 +2589,78 @@ describe("generated background fixtures", () => {
     expect(sanitizeMessageHtml(emailRenderingFixtures.gradientFlow)).toContain('<section class="gradient-panel">');
   });
 });
+
+describe("inline data: images", () => {
+  const pngUri = "data:image/png;base64,iVBORw0KGgo=";
+  const jpegUri = "data:image/jpeg;base64,AAAA";
+  const gifUri = "data:image/gif;base64,R0lGODlh";
+
+  it("renders inline raster data: <img> and background images directly without a blocked-images notice", () => {
+    const resolveImage = vi.fn();
+    render(
+      <SafeMessage
+        html={`<p>Logo:</p><img src="${pngUri}" alt="Logo">`}
+        resolveImage={resolveImage}
+      />,
+    );
+    expect(screen.queryByText("Images are blocked in this message.")).toBeNull();
+    expect(resolveImage).not.toHaveBeenCalled();
+    const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    const img = frameDoc.querySelector("img")!;
+    expect(img.getAttribute("src")).toBe(pngUri);
+    expect(img.hasAttribute("data-blocked-src")).toBe(false);
+
+    cleanup();
+    render(
+      <SafeMessage
+        html={`<table><tr><td style="background-image:url(${jpegUri})"><div style="background-image:url(${gifUri})">Hero</div></td></tr></table>`}
+        resolveImage={resolveImage}
+      />,
+    );
+    expect(screen.queryByText("Images are blocked in this message.")).toBeNull();
+    expect(resolveImage).not.toHaveBeenCalled();
+    const tableFrame = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    expect(tableFrame.querySelector("td")?.style.backgroundImage).toBe(`url("${jpegUri}")`);
+    expect(tableFrame.querySelector<HTMLElement>("[data-email-root] div")?.style.backgroundImage).toBe(`url("${gifUri}")`);
+    expect(tableFrame.querySelector("[data-blocked-src]")).toBeNull();
+  });
+
+  it("keeps remote images blocked in mixed messages while rendering inline data: images immediately", async () => {
+    const resolveImage = vi.fn(async (url: string) => `data:image/png;base64,RESOLVED(${url})`);
+    render(
+      <SafeMessage
+        html={`<img src="${pngUri}" alt="Inline"><img src="https://tracker.invalid/pixel.gif" alt="Remote">`}
+        resolveImage={resolveImage}
+      />,
+    );
+    expect(screen.getByText("Images are blocked in this message.")).toBeInTheDocument();
+    expect(resolveImage).not.toHaveBeenCalled();
+    const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    const imgs = frameDoc.querySelectorAll("img");
+    expect(imgs[0]?.getAttribute("src")).toBe(pngUri);
+    expect(imgs[1]?.hasAttribute("src")).toBe(false);
+    expect(imgs[1]?.getAttribute("data-blocked-src")).toBe("https://tracker.invalid/pixel.gif");
+
+    fireEvent.click(screen.getByRole("button", { name: "Load images" }));
+    await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(1));
+    expect(resolveImage).toHaveBeenCalledWith("https://tracker.invalid/pixel.gif");
+  });
+
+  it("rejects unsafe or oversized data: images without showing a blocked-images notice", () => {
+    const oversized = `data:image/png;base64,${"A".repeat(EMAIL_IMAGE_LIMITS.maxDataUriBytesPerMessage)}`;
+    const html = [
+      '<img src="data:image/svg+xml;base64,PHN2Zz4=" alt="bad-svg">',
+      '<img src="data:text/html;base64,PHNjcmlwdD4=" alt="bad-html">',
+      `<img src="${oversized}" alt="too-big">`,
+      '<div style="background-image:url(data:image/svg+xml;base64,PHN2Zz4=)">svg-bg</div>',
+      '<table><tr><td background="data:image/svg+xml;base64,PHN2Zz4=">attr-svg</td></tr></table>',
+    ].join("");
+    render(<SafeMessage html={html} />);
+    expect(screen.queryByText("Images are blocked in this message.")).toBeNull();
+    const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    expect(frameDoc.querySelectorAll("img")).toHaveLength(0);
+    expect(frameDoc.querySelector("[data-blocked-src]")).toBeNull();
+    expect(frameDoc.querySelector("div")?.style.backgroundImage).toBe("");
+    expect(frameDoc.querySelector("td")?.style.backgroundImage).toBe("");
+  });
+});

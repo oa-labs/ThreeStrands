@@ -91,7 +91,8 @@ impl ImapProvider {
                     ))
         }) {
             let status = session.examine(&entry.mailbox).await?;
-            let validity = status.uid_validity.unwrap_or(0) as i64;
+            let validity =
+                crate::provider::imap::session::require_uidvalidity(&status, &entry.mailbox)?;
             for query in &queries {
                 let mut uids = session.uid_search(query).await?;
                 if let Some(thread) = native_id {

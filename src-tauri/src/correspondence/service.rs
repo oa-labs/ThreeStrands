@@ -1106,16 +1106,39 @@ impl Correspondence {
                 .or_default()
                 .push(item);
         }
+        let service = self.clone();
+        self.process_due_accounts(by_account, owner.as_deref(), move |account| {
+            let service = service.clone();
+            async move { service.provider_for(&account).await }
+        })
+        .await;
+        Ok(())
+    }
+
+    pub(super) async fn process_due_accounts<F, Fut>(
+        &self,
+        by_account: HashMap<String, Vec<OutboxItem>>,
+        owner: Option<&str>,
+        mut provider_for: F,
+    ) where
+        F: FnMut(String) -> Fut,
+        Fut: std::future::Future<Output = Result<Arc<dyn MailProvider>, String>>,
+    {
         for (account, items) in by_account {
-            let Ok(provider) = self.provider_for(&account).await else {
+            let Ok(provider) = provider_for(account).await else {
                 for item in &items {
                     if item.schedule.is_some() {
-                        self.database.block_schedule(
+                        if let Err(error) = self.database.block_schedule(
                             &item.id,
-                            owner.as_deref().unwrap_or(""),
+                            owner.unwrap_or(""),
                             Some("account_disconnected"),
                             unix_millis(),
-                        )?;
+                        ) {
+                            log::warn!(
+                                "Outbox item {} failed to record disconnected schedule block: {error}",
+                                item.id
+                            );
+                        }
                     }
                 }
                 continue;
@@ -1123,30 +1146,50 @@ impl Correspondence {
             let Ok(identity) = provider.sender_identity().await else {
                 for item in &items {
                     if item.schedule.is_some() {
-                        self.database.block_schedule(
+                        if let Err(error) = self.database.block_schedule(
                             &item.id,
-                            owner.as_deref().unwrap_or(""),
+                            owner.unwrap_or(""),
                             Some("authorization"),
                             unix_millis(),
-                        )?;
+                        ) {
+                            log::warn!(
+                                "Outbox item {} failed to record authorization schedule block: {error}",
+                                item.id
+                            );
+                        }
                     }
                 }
                 continue;
             };
             for item in items {
-                if item.schedule.as_ref().is_some_and(|s| {
-                    Some(s.report.owner_installation_id.as_str()) != owner.as_deref()
-                }) {
+                if item
+                    .schedule
+                    .as_ref()
+                    .is_some_and(|s| Some(s.report.owner_installation_id.as_str()) != owner)
+                {
                     continue;
                 }
                 if item.draft.account != identity {
-                    self.database.pause_send_for_other_sender(&item.id)?;
+                    if let Err(error) = self.database.pause_send_for_other_sender(&item.id) {
+                        log::warn!(
+                            "Outbox item {} failed to pause for mismatched sender: {error}",
+                            item.id
+                        );
+                    }
                     continue;
                 }
                 if item.state == "uncertain" {
                     if item.deadline <= unix_millis() {
-                        self.database
-                            .defer_uncertain_send(&item.id, unix_millis() + 60_000)?;
+                        if let Err(error) = self
+                            .database
+                            .defer_uncertain_send(&item.id, unix_millis() + 60_000)
+                        {
+                            log::warn!(
+                                "Outbox item {} failed to defer uncertain send: {error}",
+                                item.id
+                            );
+                            continue;
+                        }
                         let _ = self.reconcile(&item.id).await;
                     }
                     continue;
@@ -1156,17 +1199,20 @@ impl Correspondence {
                 {
                     continue;
                 }
-                self.send_due_item(
-                    &item,
-                    provider.as_ref(),
-                    &identity,
-                    owner.as_deref().unwrap_or(""),
-                    unix_millis(),
-                )
-                .await?;
+                if let Err(error) = self
+                    .send_due_item(
+                        &item,
+                        provider.as_ref(),
+                        &identity,
+                        owner.unwrap_or(""),
+                        unix_millis(),
+                    )
+                    .await
+                {
+                    log::warn!("Outbox item {} failed during tick: {error}", item.id);
+                }
             }
         }
-        Ok(())
     }
 
     /// Attempt one due, non-uncertain outbox item against `provider`: obtain a

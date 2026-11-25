@@ -763,7 +763,11 @@ fn next_poll_delay(
     foreground: bool,
 ) -> Duration {
     match result {
-        Ok(status) if pending_before > 0 || status.pending_mutations > 0 => MIN_POLL_INTERVAL,
+        // Keep the fast 15s cadence only while pending mutations actually made
+        // progress (or new ones arrived). Stuck mutations — waiting on retry
+        // backoff, an unbound IMAP label, or reauthentication — must not pin
+        // full sync polls to every 15s.
+        Ok(status) if status.pending_mutations != pending_before => MIN_POLL_INTERVAL,
         Ok(_) if foreground => ACTIVE_POLL_INTERVAL,
         Ok(_) => (current * 2).min(MAX_POLL_INTERVAL),
         Err(ProviderError::RetryableServer(_)) => MAX_POLL_INTERVAL,
@@ -2134,6 +2138,29 @@ mod tests {
         assert_eq!(
             next_poll_delay(MAX_POLL_INTERVAL, 1, Ok(status()), true),
             MIN_POLL_INTERVAL
+        );
+        // Progress (draining mutations) or newly queued mutations keep the fast
+        // 15s cadence, whereas stuck mutations (pending count unchanged) fall back
+        // to normal foreground/background backoff instead of polling every 15s.
+        let status_with_pending = |pending_mutations| SyncStatus {
+            pending_mutations,
+            ..status()
+        };
+        assert_eq!(
+            next_poll_delay(MAX_POLL_INTERVAL, 0, Ok(status_with_pending(2)), true),
+            MIN_POLL_INTERVAL
+        );
+        assert_eq!(
+            next_poll_delay(MIN_POLL_INTERVAL, 3, Ok(status_with_pending(2)), false),
+            MIN_POLL_INTERVAL
+        );
+        assert_eq!(
+            next_poll_delay(MIN_POLL_INTERVAL, 2, Ok(status_with_pending(2)), true),
+            ACTIVE_POLL_INTERVAL
+        );
+        assert_eq!(
+            next_poll_delay(ACTIVE_POLL_INTERVAL, 2, Ok(status_with_pending(2)), false),
+            Duration::from_secs(60)
         );
     }
 

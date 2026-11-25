@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMAIL_ZOOM, parseEmailZoom, EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_TEXT_COLORS, parseEmailTextColors, belowMinimumContrast, isDeliberatelyHiddenText, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, declaredImageAspectRatio, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, sanitizeHtmlFontSize, EMAIL_LEGACY_FONT_SIZE } from "./emailRenderingPolicy";
+import { EMAIL_ZOOM, parseEmailZoom, EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_TEXT_COLORS, parseEmailTextColors, belowMinimumContrast, isDeliberatelyHiddenText, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, parseInlineRasterDataUri, preservedImageMinWidth, declaredImageAspectRatio, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, sanitizeHtmlFontSize, EMAIL_LEGACY_FONT_SIZE } from "./emailRenderingPolicy";
 
 describe("email rendering numeric policy", () => {
   it("validates email zoom at both bounds without clamping or accepting CSS", () => {
@@ -403,6 +403,41 @@ describe("generated background painting", () => {
       for (const property of ["background", "background-image"]) {
         expect([property, value, sanitizeCssDeclaration(property, value)]).toEqual([property, value, null]);
       }
+    }
+  });
+});
+
+describe("inline raster data URI policy", () => {
+  it("admits supported raster base64 data URIs up to the byte limit", () => {
+    for (const [input, expected] of [
+      ["data:image/png;base64,iVBORw0KGgo=", "data:image/png;base64,iVBORw0KGgo="],
+      ["  DATA:IMAGE/JPG;BASE64,AA\nBB==  ", "data:image/jpeg;base64,AABB=="],
+      ["data:image/jpeg;base64,AAAA", "data:image/jpeg;base64,AAAA"],
+      ["data:image/gif;base64,R0lGODlh", "data:image/gif;base64,R0lGODlh"],
+      ["data:image/webp;base64,UklGRg==", "data:image/webp;base64,UklGRg=="],
+      ["data:image/avif;base64,AAAA", "data:image/avif;base64,AAAA"],
+    ]) {
+      expect(parseInlineRasterDataUri(input)).toBe(expected);
+    }
+
+    const prefix = "data:image/png;base64,";
+    const exactLimit = `${prefix}${"A".repeat(40)}`;
+    expect(parseInlineRasterDataUri(exactLimit, exactLimit.length + 1)).toBe(exactLimit);
+    expect(parseInlineRasterDataUri(exactLimit, exactLimit.length)).toBe(exactLimit);
+    expect(parseInlineRasterDataUri(exactLimit, exactLimit.length - 1)).toBeNull();
+  });
+
+  it("rejects SVG, HTML, non-base64, and malformed payloads", () => {
+    for (const value of [
+      "data:image/svg+xml;base64,PHN2Zz4=",
+      "data:image/svg+xml,<svg/>",
+      "data:text/html;base64,PHNjcmlwdD4=",
+      "data:image/png,not-base64",
+      "data:image/png;base64,",
+      "data:image/png;base64,***",
+      "https://example.com/a.png",
+    ]) {
+      expect(parseInlineRasterDataUri(value), value).toBeNull();
     }
   });
 });

@@ -42,6 +42,8 @@ struct FakeFolder {
     /// EXAMINE of this folder answers `NO [NONEXISTENT]` (a catalog row
     /// whose mailbox was renamed or deleted on the server).
     examine_fails: bool,
+    /// EXAMINE omits `* OK [UIDVALIDITY ...]` (malformed/incomplete server answer).
+    omit_uidvalidity: bool,
     /// `UID SEARCH` in this folder never answers, and the server stops
     /// serving the connection (a stalled server). Search-deadline tests.
     search_stalls: bool,
@@ -55,6 +57,7 @@ impl FakeFolder {
             messages: Vec::new(),
             fail_after_body_fetches: None,
             examine_fails: false,
+            omit_uidvalidity: false,
             search_stalls: false,
         }
     }
@@ -231,10 +234,14 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
                     .await;
                     continue;
                 }
+                let uidvalidity_line = if folder.omit_uidvalidity {
+                    String::new()
+                } else {
+                    format!("* OK [UIDVALIDITY {}] .\r\n", folder.uidvalidity)
+                };
                 let body = format!(
-                    "* {} EXISTS\r\n* OK [UIDVALIDITY {}] .\r\n* OK [UIDNEXT {}] .\r\n{tag} OK [READ-ONLY] done\r\n",
+                    "* {} EXISTS\r\n{uidvalidity_line}* OK [UIDNEXT {}] .\r\n{tag} OK [READ-ONLY] done\r\n",
                     folder.messages.len(),
-                    folder.uidvalidity,
                     folder.uidnext
                 );
                 reply(&mut server, &body).await;
@@ -716,6 +723,31 @@ async fn a_uidvalidity_reset_drops_locations_but_keeps_cached_bodies() {
     // And the mailbox still has exactly one live location.
     assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 1);
     let _ = db;
+}
+
+#[tokio::test]
+async fn missing_uidvalidity_on_examine_returns_transient_error_without_resetting_mailbox() {
+    let mut mb = FakeMailbox::new(42);
+    mb.add(&[], &message("<m1@x>", "One", ""));
+    let mailbox = Arc::new(Mutex::new(mb));
+    let (provider, store) = provider_with(mailbox.clone());
+
+    provider.baseline_cursor().await.unwrap();
+    let before = store.locations_in_mailbox("INBOX").unwrap();
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].uidvalidity, 42);
+
+    mailbox.lock().unwrap().inbox().omit_uidvalidity = true;
+    let err = provider.baseline_cursor().await.unwrap_err();
+    assert!(
+        matches!(err, ProviderError::TransientTransport(ref msg) if msg.contains("UIDVALIDITY")),
+        "expected transient UIDVALIDITY error, got {err:?}"
+    );
+    let after = store.locations_in_mailbox("INBOX").unwrap();
+    assert_eq!(
+        after, before,
+        "missing UIDVALIDITY must not reset or drop existing mailbox locations"
+    );
 }
 
 #[tokio::test]

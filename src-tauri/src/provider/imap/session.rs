@@ -61,6 +61,24 @@ impl MailboxStatus {
     }
 }
 
+/// Requires a non-zero `UIDVALIDITY` from `EXAMINE` / `SELECT` so a server that
+/// omits it is treated as a transient failure rather than `0` (which would
+/// mismatch the stored incarnation and trigger a destructive full re-download).
+pub(crate) fn require_uidvalidity(
+    status: &MailboxStatus,
+    mailbox: &str,
+) -> Result<i64, ProviderError> {
+    status
+        .uid_validity
+        .filter(|&value| value > 0)
+        .map(i64::from)
+        .ok_or_else(|| {
+            ProviderError::TransientTransport(format!(
+                "mailbox {mailbox:?} reported no UIDVALIDITY on EXAMINE"
+            ))
+        })
+}
+
 /// Render an `async-imap` [`Flag`](async_imap::types::Flag) to its IMAP wire
 /// spelling (`\Seen`, `$Forwarded`, …). `async-imap`'s `Flag` has no
 /// `Display`, so the system-flag spellings are written out; a `Custom` keyword

@@ -403,6 +403,16 @@ pub(crate) fn export(
             Some(bytes) => {
                 write_new(path, &bytes)
                     .map_err(|error| format!("Could not write {relative}: {error}"))?;
+                if let Err(error) = crate::attachment_security::quarantine(path) {
+                    return match fs::remove_file(path) {
+                        Ok(()) => Err(format!(
+                            "Unable to export {relative} safely because quarantine metadata could not be applied: {error}"
+                        )),
+                        Err(remove_error) => Err(format!(
+                            "Quarantine metadata could not be applied to exported {relative} ({error}), and the unsafe copy could not be removed ({remove_error})"
+                        )),
+                    };
+                }
                 written_files += 1;
             }
             None => {
@@ -784,6 +794,32 @@ mod tests {
             fs::read(folder.path().join("attachments/Photo (1).png")).unwrap(),
             b"aaa"
         );
+        #[cfg(target_os = "macos")]
+        {
+            for name in ["Photo (1).png", "photo (1) 2.PNG"] {
+                let value = xattr::get(
+                    folder.path().join("attachments").join(name),
+                    "com.apple.quarantine",
+                )
+                .unwrap()
+                .expect("exported note attachment must carry quarantine xattr");
+                assert!(String::from_utf8(value).unwrap().starts_with("0083;"));
+            }
+            assert_eq!(
+                xattr::get(folder.path().join("notes/Plan.md"), "com.apple.quarantine").unwrap(),
+                None
+            );
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+            let attachment = folder.path().join("attachments/Photo (1).png");
+            let mut stream = attachment.as_os_str().encode_wide().collect::<Vec<_>>();
+            stream.extend(":Zone.Identifier".encode_utf16());
+            let value = std::fs::read(std::ffi::OsString::from_wide(&stream)).unwrap();
+            assert!(value.windows(8).any(|part| part == b"ZoneId=3"));
+        }
         let text = fs::read_to_string(folder.path().join("notes/Plan.md")).unwrap();
         assert!(text.ends_with(&format!(
             "![](../attachments/Photo%20%281%29.png)\n[Floor plan.pdf](../attachments/photo%20%281%29%202.PNG \"plan\")\n![]({ATTACHMENT_SCHEME}{c})\nNot a link: {ATTACHMENT_SCHEME}{a}"
