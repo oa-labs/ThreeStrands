@@ -9,6 +9,7 @@ import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } f
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingAgendaSave, MeetingAgendaUndo, MeetingContext, MeetingPrepBrief, MeetingPrepSelection, MeetingReadiness, MeetingSourcePreview, PlanChanges, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
 import type { PlanAddition } from "../dailyPlan";
+import { localDayStart } from "../calendarTime";
 import {
   BOUNDED_LOCAL_READ,
   invokeWithPolicy,
@@ -804,7 +805,7 @@ const tauriClient: MailClient = {
   reserveMeetingPrep: (date, expected, entry) => complete("reserve_meeting_prep", { date, expected, entry }),
   saveMeetingFollowThrough: (reference, destination, expectedRevision, operationId, accepted) => complete("save_meeting_follow_through", { reference, destination, expectedRevision, operationId, accepted }),
   undoMeetingFollowThrough: (operationId) => complete("undo_meeting_follow_through", { operationId }),
-  dailyPlan: (date) => read("daily_plan", { date }),
+  dailyPlan: (date) => read("daily_plan", { date, dayStart: localDayStart(date) }),
   addToDailyPlan: (date, expected, additions) => complete("add_to_daily_plan", { date, expected, additions }),
   removeFromDailyPlan: (date, expected, key) => complete("remove_from_daily_plan", { date, expected, key }),
   saveDailyPlan: (date, expected, operationId, changes) => complete("save_daily_plan", { date, expected, operationId, changes }),

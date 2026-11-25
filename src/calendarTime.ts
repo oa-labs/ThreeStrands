@@ -27,6 +27,12 @@ export function startOfWeek(date: Date): Date {
   return addDays(start, -start.getDay());
 }
 
+/** The instant local midnight begins a `YYYY-MM-DD` day, as an ISO string. */
+export function localDayStart(day: string): string {
+  const [year, month, date] = day.split("-").map(Number);
+  return new Date(year, month - 1, date).toISOString();
+}
+
 export function dateInputValue(date: Date): string {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 10);

@@ -116,7 +116,8 @@ describe("native account requests", () => {
     await client.draftHandoffStatus("h");
     expect(invoke).toHaveBeenLastCalledWith("correspondence_request", { request: { op: "handoffStatus", handoffId: "h" } });
     await client.dailyPlan("2026-11-16");
-    expect(invoke).toHaveBeenLastCalledWith("daily_plan", { date: "2026-11-16" });
+    // The plan's day starts at local midnight, so check-ins count from then.
+    expect(invoke).toHaveBeenLastCalledWith("daily_plan", { date: "2026-11-16", dayStart: new Date(2026, 10, 16).toISOString() });
     const additions = [{ kind: "newTask" as const, title: "Draft memo" }];
     await client.addToDailyPlan("2026-11-16", null, additions);
     expect(invoke).toHaveBeenLastCalledWith("add_to_daily_plan", { date: "2026-11-16", expected: null, additions });

@@ -10,9 +10,13 @@ use crate::models::Note;
 use crate::{run_database_task, AppResult, AppState};
 
 #[tauri::command]
-pub(crate) async fn daily_plan(date: String, state: State<'_, AppState>) -> AppResult<DailyPlan> {
+pub(crate) async fn daily_plan(
+    date: String,
+    day_start: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<DailyPlan> {
     let database = state.database.clone();
-    run_database_task(move || database.daily_plan(&date)).await
+    run_database_task(move || database.daily_plan_from(&date, day_start.as_deref())).await
 }
 
 #[tauri::command]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SIDE_BY_SIDE_START_MINUTES, STACK_INSET, addDays, eventColumnBox, eventDayBounds, formatUpcomingDate, friendlyZoneName, layOutDayEvents, occursOnDay, startOfWeek, timeZoneChoices } from "./calendarTime";
+import { SIDE_BY_SIDE_START_MINUTES, STACK_INSET, addDays, eventColumnBox, eventDayBounds, formatUpcomingDate, friendlyZoneName, layOutDayEvents, localDayStart, occursOnDay, startOfWeek, timeZoneChoices } from "./calendarTime";
 import type { ScheduleEvent } from "./domain";
 
 function timedEvent(id: string, start: string, end: string): ScheduleEvent {
@@ -176,6 +176,14 @@ describe("calendar time helpers", () => {
         timedEvent("later", "2026-09-22T11:00:00", "2026-09-22T12:00:00"),
       ]).map(({ id, lanes, layer }) => [id, lanes, layer])).toEqual([["a", 1, 0], ["b", 1, 1], ["later", 1, 0]]);
     });
+  });
+
+  it("gives the instant local midnight begins a date, in summer and winter", () => {
+    // Tests run in America/New_York.
+    expect(localDayStart("2026-11-16")).toBe("2026-11-16T05:00:00.000Z");
+    expect(localDayStart("2026-07-01")).toBe("2026-07-01T04:00:00.000Z");
+    // Clocks change at 2am, after that day's midnight.
+    expect(localDayStart("2026-03-08")).toBe("2026-03-08T05:00:00.000Z");
   });
 
   it("adds days across month boundaries", () => {

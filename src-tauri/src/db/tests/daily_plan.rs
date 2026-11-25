@@ -146,6 +146,166 @@ fn a_plan_is_read_from_the_day_note_with_each_items_current_state() {
     assert!(empty.revision.is_none() && empty.items.is_empty());
 }
 
+/// Mail from the user's account to `to`, or from `to` to the user when
+/// `received`, stored the way sync stores it.
+fn mail(db: &Database, id: &str, date: &str, to: &str, received: bool) {
+    let mut message = crate::db::test_support::message(id, id, date, "Body");
+    let (from, recipient) = if received {
+        (to.to_string(), "Me <me@example.com>".to_string())
+    } else {
+        ("Me <me@example.com>".to_string(), to.to_string())
+    };
+    message.from = from;
+    message.to = vec![recipient];
+    message.labels = vec![if received { "INBOX" } else { "SENT" }.into()];
+    db.upsert_thread("me@example.com", &[message]).unwrap();
+}
+
+#[test]
+fn a_check_in_is_done_once_the_user_emails_the_contact_on_the_plans_local_day() {
+    let db = database();
+    db.adopt_account("me@example.com").unwrap();
+    let ann = contact(&db, "ann@example.org");
+    let mut second = db.get_contact_profile(&ann.id).unwrap().unwrap();
+    second.addresses.push("ann@work.example".into());
+    db.save_contact_profile(&crate::models::SaveContactRequest {
+        birthday: None,
+        keep_in_touch: None,
+        id: Some(ann.id.clone()),
+        display_name: Some("Ann".into()),
+        role: None,
+        company: None,
+        phone: None,
+        location: None,
+        bio: None,
+        notes: None,
+        links: vec![],
+        photo_data: None,
+        favorite: false,
+        addresses: second.addresses,
+        time_zone: None,
+    })
+    .unwrap();
+    db.save_daily_note(
+        DAY,
+        &format!(
+            "## Plan\n\n- [Ann]({})\n- [Bo]({})\n",
+            contact_ref("ann@example.org").href().unwrap(),
+            contact_ref("bo@example.net").href().unwrap(),
+        ),
+    )
+    .unwrap();
+    // In Sydney (UTC+11), 2026-11-16 begins at 13:00 UTC the day before.
+    const SYDNEY: &str = "2026-11-15T13:00:00Z";
+    let states = |day_start: Option<&str>| -> Vec<PlanItemState> {
+        db.daily_plan_from(DAY, day_start)
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| item.state)
+            .collect()
+    };
+    assert_eq!(
+        states(Some(SYDNEY)),
+        [PlanItemState::Open, PlanItemState::Open]
+    );
+
+    // Mail from Ann isn't the user checking in.
+    mail(
+        &db,
+        "from-ann",
+        "2026-11-16T09:00:00Z",
+        "Ann <ann@example.org>",
+        true,
+    );
+    // Mail the user sent late on the local day before doesn't count.
+    mail(
+        &db,
+        "eve",
+        "2026-11-15T12:00:00Z",
+        "Ann <ann@example.org>",
+        false,
+    );
+    assert_eq!(
+        states(Some(SYDNEY)),
+        [PlanItemState::Open, PlanItemState::Open]
+    );
+
+    // Mail sent to Ann's other address on the local morning counts, though it
+    // is still the day before in UTC.
+    mail(
+        &db,
+        "morning",
+        "2026-11-15T21:00:00Z",
+        "ann@work.example",
+        false,
+    );
+    assert_eq!(
+        states(Some(SYDNEY)),
+        [PlanItemState::Done, PlanItemState::Open]
+    );
+    assert_eq!(states(None), [PlanItemState::Open, PlanItemState::Open]);
+
+    // An address no saved contact owns counts its own mail.
+    mail(
+        &db,
+        "to-bo",
+        "2026-11-16T02:00:00Z",
+        "bo@example.net",
+        false,
+    );
+    assert_eq!(
+        states(Some(SYDNEY)),
+        [PlanItemState::Done, PlanItemState::Done]
+    );
+}
+
+#[test]
+fn mark_contacted_counts_from_the_plans_local_midnight() {
+    let db = database();
+    let ann = contact(&db, "ann@example.org");
+    db.save_daily_note(
+        DAY,
+        &format!(
+            "## Plan\n\n- [Ann]({})\n",
+            contact_ref("ann@example.org").href().unwrap()
+        ),
+    )
+    .unwrap();
+    // Marked contacted at 7am in Sydney, still 2026-11-15 in UTC.
+    db.connection()
+        .unwrap()
+        .execute(
+            "UPDATE contacts SET kit_last_touch_at='2026-11-15T20:00:00+00:00' WHERE id=?1",
+            [&ann.id],
+        )
+        .unwrap();
+    let state = |day_start| db.daily_plan_from(DAY, day_start).unwrap().items[0].state;
+    assert_eq!(state(Some("2026-11-15T13:00:00Z")), PlanItemState::Done);
+    // In New York the day begins after that touch.
+    assert_eq!(state(Some("2026-11-16T05:00:00Z")), PlanItemState::Open);
+}
+
+#[test]
+fn a_plans_day_start_must_be_that_dates_midnight_in_some_time_zone() {
+    let db = database();
+    for start in [
+        "2026-11-15T10:00:00Z",
+        "2026-11-16T05:00:00Z",
+        "2026-11-16T12:00:00Z",
+    ] {
+        assert!(db.daily_plan_from(DAY, Some(start)).is_ok(), "{start}");
+    }
+    for start in [
+        "2026-11-15T09:59:00Z",
+        "2026-11-16T12:01:00Z",
+        "2026-11-17T05:00:00Z",
+        "Monday",
+    ] {
+        assert!(db.daily_plan_from(DAY, Some(start)).is_err(), "{start}");
+    }
+}
+
 #[test]
 fn adding_to_a_plan_writes_the_section_once_and_skips_links_already_there() {
     let db = database();

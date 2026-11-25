@@ -8,6 +8,7 @@ use super::{Database, DatabaseError, DbResult};
 use crate::daily_plan::{self, PlanAddition, PlanItemKind, PlanLine, PlanMarker};
 use crate::models::Note;
 use crate::note_entities::{normalize_contact_address, NoteReference};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
@@ -117,9 +118,36 @@ fn contact_for(c: &Connection, reference: &NoteReference) -> DbResult<Option<Str
     .optional()?)
 }
 
+/// The instant a plan's day begins: `day_start`, local midnight as the app
+/// computed it, or UTC midnight without one. Offsets run from UTC−12 to
+/// UTC+14, so any other start is no time zone's midnight and is refused.
+fn plan_day_start(date: &str, day_start: Option<&str>) -> DbResult<DateTime<Utc>> {
+    let midnight = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map_err(|_| DatabaseError::invalid("Invalid date"))?
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| DatabaseError::invalid("Invalid date"))?
+        .and_utc();
+    let Some(value) = day_start else {
+        return Ok(midnight);
+    };
+    let start = DateTime::parse_from_rfc3339(value)
+        .map_err(|_| DatabaseError::invalid("Invalid day start"))?
+        .with_timezone(&Utc);
+    let offset = start - midnight;
+    if offset < -Duration::hours(14) || offset > Duration::hours(12) {
+        return Err(DatabaseError::invalid("Invalid day start"));
+    }
+    Ok(start)
+}
+
+fn at_or_after(at: Option<&str>, start: DateTime<Utc>) -> bool {
+    at.and_then(|at| DateTime::parse_from_rfc3339(at).ok())
+        .is_some_and(|at| at.with_timezone(&Utc) >= start)
+}
+
 pub(super) fn resolve(
     c: &Connection,
-    date: &str,
+    day_start: DateTime<Utc>,
     note_id: &str,
     line: &PlanLine,
 ) -> DbResult<DailyPlanItem> {
@@ -198,7 +226,7 @@ pub(super) fn resolve(
         }
         PlanItemKind::Contact => {
             let contact = contact_for(c, reference)?;
-            let touched: Option<String> = match &contact {
+            let marked: Option<String> = match &contact {
                 Some(id) => c
                     .query_row(
                         "SELECT kit_last_touch_at FROM contacts WHERE id=?1",
@@ -209,8 +237,18 @@ pub(super) fn resolve(
                     .flatten(),
                 None => None,
             };
-            // Marked contacted on or after the plan's day.
-            item.state = if touched.is_some_and(|at| at.get(..10).is_some_and(|day| day >= date)) {
+            // Mail the user sent to any of the contact's addresses, from any
+            // account, or to the linked address when no contact owns it.
+            let emailed: Option<String> = c.query_row(
+                "SELECT MAX(sent_at) FROM contact_interactions WHERE direction='sent'
+                   AND email IN (SELECT email FROM contact_addresses WHERE contact_id=?1 UNION SELECT ?2)",
+                params![contact, normalize_contact_address(&reference.id)],
+                |r| r.get(0),
+            )?;
+            // Marked contacted, or emailed, on or after the plan's day.
+            item.state = if at_or_after(marked.as_deref(), day_start)
+                || at_or_after(emailed.as_deref(), day_start)
+            {
                 PlanItemState::Done
             } else {
                 PlanItemState::Open
@@ -278,11 +316,20 @@ const MESSAGES: DailyInsertMessages = DailyInsertMessages {
 };
 
 impl Database {
-    /// The plan in `date`'s daily note, with each item's current state.
+    /// The plan in `date`'s daily note, with each item's current state, for a
+    /// day starting at UTC midnight; see [`Self::daily_plan_from`].
     pub fn daily_plan(&self, date: &str) -> DbResult<DailyPlan> {
+        self.daily_plan_from(date, None)
+    }
+
+    /// The plan in `date`'s daily note, with each item's current state.
+    /// `day_start` is the instant the user's local day begins, so a check-in
+    /// counts mail and Mark Contacted from local midnight.
+    pub fn daily_plan_from(&self, date: &str, day_start: Option<&str>) -> DbResult<DailyPlan> {
         if !crate::notes::is_daily_date(date) {
             return Err(DatabaseError::invalid("Invalid date"));
         }
+        let day_start = plan_day_start(date, day_start)?;
         let note_id = crate::notes::daily_note_id(date);
         self.with_connection(|c| {
             let note: Option<(String, String)> = c
@@ -307,10 +354,10 @@ impl Database {
                 daily_plan::parse_plan(&note_id, &body).map_err(DatabaseError::invalid)?
             {
                 for line in &section.items {
-                    plan.items.push(resolve(c, date, &note_id, line)?);
+                    plan.items.push(resolve(c, day_start, &note_id, line)?);
                 }
                 for line in &section.not_today {
-                    plan.not_today.push(resolve(c, date, &note_id, line)?);
+                    plan.not_today.push(resolve(c, day_start, &note_id, line)?);
                 }
             }
             super::plan_review::fill_carry_counts(
