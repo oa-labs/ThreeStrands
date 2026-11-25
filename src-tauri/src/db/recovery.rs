@@ -119,6 +119,7 @@ impl Database {
             path: Some(path.to_path_buf()),
             replicated_sync_projecting: Mutex::new(HashMap::new()),
             gmail_identity_refresh_failures: Mutex::new(HashMap::new()),
+            deferred_control_objects: Mutex::new(Default::default()),
         };
         // The v44 contact-interactions reindex was an upgrade-only fixup for
         // databases below v44. The historical migration chain is retired and
@@ -145,6 +146,7 @@ impl Database {
             path: None,
             replicated_sync_projecting: Mutex::new(HashMap::new()),
             gmail_identity_refresh_failures: Mutex::new(HashMap::new()),
+            deferred_control_objects: Mutex::new(Default::default()),
         };
         database.rebuild_contact_interactions().unwrap();
         database

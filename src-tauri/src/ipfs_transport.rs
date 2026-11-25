@@ -20,6 +20,7 @@ use reqwest::header::{HeaderValue, AUTHORIZATION};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::transport_limits::{read_capped, read_error_body, MAX_OBJECT_BYTES};
 use async_trait::async_trait;
 use threestrands_sync_envelope::{
     compute_cid, decode_signed_head, encode_signed_head, SignedDeviceHead,
@@ -33,6 +34,12 @@ use threestrands_sync_transport::{
 pub(crate) const FILEBASE_RPC_URL: &str = "https://rpc.filebase.io";
 
 const SCAN_PAGE_SIZE: usize = 500;
+/// Ceiling for the `pin/ls` listing: roughly 100 bytes per pin, so this
+/// covers several hundred thousand objects in one space while still bounding
+/// a hostile endpoint.
+const MAX_PIN_LIST_BYTES: u64 = 64 * 1024 * 1024;
+/// A `dag/import` reply is one short JSON line per imported root.
+const MAX_IMPORT_REPLY_BYTES: u64 = 64 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -235,7 +242,7 @@ impl IpfsRpcTransport {
         let response = self.post("version", &[]).await?;
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = read_error_body(response).await;
             return Err(map_status_error(status, &body));
         }
         Ok(())
@@ -260,7 +267,7 @@ impl IpfsRpcTransport {
             return Ok(true);
         }
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = read_error_body(response).await;
         if is_not_pinned_error(&body) {
             return Ok(false);
         }
@@ -271,10 +278,14 @@ impl IpfsRpcTransport {
         let response = self.post("pin/ls", &[("type", "recursive")]).await?;
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = read_error_body(response).await;
             return Err(map_status_error(status, &body));
         }
-        let body: Value = response.json().await.map_err(map_reqwest_error)?;
+        let mut response = response;
+        let raw = read_capped(&mut response, MAX_PIN_LIST_BYTES, "pin listing").await?;
+        let body: Value = serde_json::from_slice(&raw).map_err(|error| {
+            TransportError::Transient(format!("unparseable pin listing: {error}"))
+        })?;
         let mut cids: Vec<String> = body
             .get("Keys")
             .and_then(Value::as_object)
@@ -369,10 +380,12 @@ impl SyncTransport for IpfsRpcTransport {
             .await?;
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = read_error_body(response).await;
             return Err(map_status_error(status, &body));
         }
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let mut response = response;
+        let body = read_capped(&mut response, MAX_IMPORT_REPLY_BYTES, "dag/import reply").await?;
+        let body = String::from_utf8_lossy(&body);
         if !dag_import_confirms_root(&body, &cid.0)? {
             return Err(TransportError::Transient(
                 "dag/import did not confirm the expected root as imported".to_string(),
@@ -397,13 +410,14 @@ impl SyncTransport for IpfsRpcTransport {
         let response = self.post("block/get", &[("arg", &cid.0)]).await?;
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = read_error_body(response).await;
             if is_not_found_error(status, &body) {
                 return Err(TransportError::NotFound);
             }
             return Err(map_status_error(status, &body));
         }
-        let bytes = response.bytes().await.map_err(map_reqwest_error)?.to_vec();
+        let mut response = response;
+        let bytes = read_capped(&mut response, MAX_OBJECT_BYTES, "block").await?;
         // Gateway/endpoint responses are never trusted on their word: the
         // exact same CID re-verification every other adapter performs.
         if compute_cid(&bytes) != cid.0 {
@@ -490,7 +504,7 @@ impl SyncTransport for IpfsRpcTransport {
         let response = self.post("pin/rm", &[("arg", &cid.0)]).await?;
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = read_error_body(response).await;
             if is_not_pinned_error(&body) {
                 return Ok(());
             }
@@ -661,6 +675,10 @@ mod fake_server {
         /// instead of the one actually requested — simulating a `/add`-style
         /// endpoint that silently substitutes a different (UnixFS) CID.
         pub substitute_root: Option<String>,
+        /// Whitespace appended to the `pin/ls` listing, to make it huge.
+        pub pin_listing_padding: usize,
+        /// Makes `block/get` fail with a 500 whose body is this many bytes.
+        pub error_body_bytes: Option<usize>,
     }
 
     #[derive(Default)]
@@ -856,7 +874,14 @@ mod fake_server {
             .keys()
             .map(|cid| (cid.clone(), serde_json::json!({"Type": "recursive"})))
             .collect();
-        axum::Json(serde_json::json!({"Keys": keys})).into_response()
+        let mut listing = serde_json::json!({"Keys": keys}).to_string();
+        listing.push_str(&" ".repeat(guard.faults.pin_listing_padding));
+        (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            listing,
+        )
+            .into_response()
     }
 
     async fn pin_rm(State(state): State<SharedState>, headers: HeaderMap, uri: Uri) -> Response {
@@ -894,6 +919,9 @@ mod fake_server {
         let Some(cid) = query_one(&pairs, "arg") else {
             return (StatusCode::BAD_REQUEST, kubo_error("missing arg")).into_response();
         };
+        if let Some(length) = guard.faults.error_body_bytes {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "x".repeat(length)).into_response();
+        }
         let Some(bytes) = guard.pins.get(cid).cloned() else {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1081,6 +1109,61 @@ mod transport_tests {
             result,
             Err(TransportError::Corruption(
                 "returned block bytes do not match the requested CID".to_string()
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_block_is_read_up_to_the_size_cap_and_refused_beyond_it() {
+        let server = FakeKuboServer::spawn().await;
+        let transport = open(&server, "a");
+        for len in [MAX_OBJECT_BYTES - 1, MAX_OBJECT_BYTES] {
+            let bytes = vec![3u8; len as usize];
+            let cid = TransportCid::for_bytes(&bytes);
+            server.faults().pins.insert(cid.0.clone(), bytes);
+            assert_eq!(transport.get_object(&cid).await.unwrap().len() as u64, len);
+        }
+        let bytes = vec![3u8; (MAX_OBJECT_BYTES + 1) as usize];
+        let cid = TransportCid::for_bytes(&bytes);
+        server.faults().pins.insert(cid.0.clone(), bytes);
+        assert!(matches!(
+            transport.get_object(&cid).await,
+            Err(TransportError::Corruption(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_oversized_pin_listing_is_refused_not_buffered() {
+        let server = FakeKuboServer::spawn().await;
+        let transport = open(&server, "a");
+        let bytes = b"one object".to_vec();
+        transport
+            .put_object(&TransportCid::for_bytes(&bytes), &bytes)
+            .await
+            .unwrap();
+        // Under the cap (with room to spare) it lists normally.
+        server.faults().faults.pin_listing_padding = 1024 * 1024;
+        assert_eq!(
+            transport.scan(None).await.unwrap().unwrap().objects.len(),
+            1
+        );
+        server.faults().faults.pin_listing_padding = MAX_PIN_LIST_BYTES as usize;
+        assert!(matches!(
+            transport.scan(None).await,
+            Err(TransportError::Corruption(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_enormous_error_body_is_truncated_and_still_maps_to_a_status_error() {
+        let server = FakeKuboServer::spawn().await;
+        let transport = open(&server, "a");
+        server.faults().faults.error_body_bytes = Some(10 * 1024 * 1024);
+        let cid = TransportCid::for_bytes(b"anything");
+        assert_eq!(
+            transport.get_object(&cid).await,
+            Err(TransportError::Transient(
+                "HTTP 500 Internal Server Error".to_string()
             ))
         );
     }

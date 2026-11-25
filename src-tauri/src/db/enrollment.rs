@@ -403,6 +403,61 @@ impl Database {
             .map_err(DatabaseError::from)
     }
 
+    /// A digest of everything that can make a control object verifiable: each
+    /// device's id, keys and status, and each known invitation's key. Equal
+    /// digests mean nothing a sweep could rely on has changed.
+    pub(crate) fn trust_state_digest(&self) -> DbResult<u64> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let connection = self.connection()?;
+        let mut devices = connection.prepare(
+            "SELECT device_id, public_key, x25519_public, status FROM sync_devices ORDER BY device_id",
+        )?;
+        let rows = devices.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<Vec<u8>>>(1)?,
+                row.get::<_, Option<Vec<u8>>>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        for row in rows {
+            row?.hash(&mut hasher);
+        }
+        let mut invitations = connection.prepare(
+            "SELECT invitation_cid, direction, invite_ed25519_public FROM replicated_sync_invitations ORDER BY invitation_cid",
+        )?;
+        let rows = invitations.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<Vec<u8>>>(2)?,
+            ))
+        })?;
+        for row in rows {
+            row?.hash(&mut hasher);
+        }
+        Ok(hasher.finish())
+    }
+
+    /// Forgets the objects the sweep gave up on, so they are looked at again.
+    /// Applied and non-control objects stay seen.
+    pub(crate) fn clear_ignored_control_objects(&self) -> DbResult<usize> {
+        Ok(self.connection()?.execute(
+            "DELETE FROM sync_control_objects_seen WHERE object_kind='ignored'",
+            [],
+        )?)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ignored_control_object_count(&self) -> DbResult<i64> {
+        Ok(self.connection()?.query_row(
+            "SELECT COUNT(*) FROM sync_control_objects_seen WHERE object_kind='ignored'",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
     pub(crate) fn mark_control_object_seen(&self, cid: &str, kind: &str) -> DbResult<()> {
         self.connection()?.execute(
             "INSERT OR IGNORE INTO sync_control_objects_seen(cid, object_kind) VALUES (?1,?2)",
