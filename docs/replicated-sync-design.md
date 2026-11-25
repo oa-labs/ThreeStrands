@@ -1,6 +1,8 @@
 # Replicated sync: state-based design
 
-**Status:** Implemented in 0.30.0 (sync protocol version 3)
+**Status:** Implemented in 0.30.0 (sync protocol version 3). Protocol 4
+anchors key rotations so a recovery-phrase join can trust them (see
+[Recovery-phrase joins](#recovery-phrase-joins)).
 **Date:** 2026-09-23
 **Scope:** `crates/sync-core`, `crates/sync-envelope`, `src-tauri/src/db/sync_state.rs`,
 `src-tauri/src/replicated_sync.rs`, `src-tauri/src/enrollment/`
@@ -49,7 +51,11 @@ exactly the values the reference `OperationGraph` leaves, where each write
 names the values it replaced as its parents. The graph is kept in `sync-core`
 as that reference.
 
-## Wire format (protocol 3)
+## Wire format (protocol 4)
+
+Protocol 4 changed only key rotations and the marker. Snapshots and heads
+are as protocol 3 left them, and keep their v3 names and vectors.
+
 
 - **Replica snapshot** (`ReplicaSnapshot`, sealed as `ObjectKind::Snapshot`):
   - Contents: the author, a `state_sequence` that increases with every
@@ -67,8 +73,24 @@ as that reference.
   is `…/device-head-signature/v3`, and v1 and v2 heads are refused.
 - **Sealed objects:** each object kind has its own signature domain, and
   opening checks the header's kind.
+- **Key rotations** (`SignedKeyRotation`): besides the initiator's device
+  signature (`…/key-rotation-signature/v1`), each carries exactly one proof
+  over the same canonical rotation:
+  - `recovery_anchor`, on epoch 0 only: a signature by the recovery
+    Ed25519 key, under `…/key-rotation-recovery-anchor/v1`. Genesis makes
+    it while it still holds the seed.
+  - `epoch_link`, on every epoch `n + 1` only: a signature under
+    `…/key-rotation-epoch-link/v1` by an Ed25519 key derived from the raw
+    `K_n` with HKDF-SHA256, `info` = `…/epoch-link-key/v1` followed by `n`
+    as a big-endian `u32`. A holder of `K_n` derives the same public key to
+    check it.
+
+  Both fields are left out of the encoding when absent, so a protocol 3
+  rotation still decodes byte for byte (which is how its group is
+  recognized as `Legacy`), but neither verifier accepts it. Epoch 0 with a
+  link, or a later epoch with an anchor, is refused the same way.
 - **Protocol marker:** a well-known object reading `threestrands-sync
-  protocol 3`. A connector holding a group without it is reported as
+  protocol 4`. A connector holding a group without it is reported as
   `Legacy` and refused.
 - **Epoch keyring:** grants and invitations carry `earlier_epoch_keys`, which
   predates this design and is unchanged.
@@ -141,6 +163,47 @@ future writes. None of this lets a non-member read or write anything:
 snapshots are sealed with the group's key and signed by a trusted member.
 The previous design had the same trust model; it just exposed less.
 
+### Recovery-phrase joins
+
+A recovering device has the phrase and nothing else: no roster to check
+initiators against. Opening a rotation's stanza with the phrase-derived
+recovery X25519 secret proves nothing, because the recovery public keys
+travel in cleartext in every rotation and anyone who can write to the
+connector can seal a key of their choosing to them. Before protocol 4 a
+recovery join trusted any self-signed rotation that opened that way, so
+someone with only write access to the storage could plant a rotation at the
+next epoch naming themselves; the recovering device adopted it and announced
+the planted roster under the recovery key, and every member then trusted
+the intruder and shared every epoch key with it.
+
+Protocol 4 anchors the chain on two facts: only holders of the phrase can
+sign with the recovery Ed25519 key, and only members hold epoch keys.
+`join_with_recovery_phrase`:
+
+1. Derives both recovery public keys from the phrase and ignores every
+   rotation naming different ones. It stores the phrase-derived keys, never
+   a rotation's.
+2. Keeps the rotations that verify against their own initiator and open
+   with the recovery secret, as candidates.
+3. Accepts at epoch 0 only the candidate whose anchor verifies under the
+   phrase-derived key. None is `NoRecoverableRotation`; more than one
+   (only possible if the phrase leaked) is `AmbiguousRecoveryGroup`.
+4. Accepts at each later epoch only candidates whose link verifies under
+   the key of a rotation accepted at the epoch before, and takes the
+   longest chain these links form, so a rotation the chain continues from
+   wins over a dead end. At the tip, of several linked rotations the one
+   with the greater content address wins: its initiator is the one that
+   rotates again to settle the collision (`must_rotate_after_collision`),
+   so the chain continues from it.
+5. Stores keys and activations for the chain only, adopts the tip's
+   roster, and refuses with `RecoveryIncomplete` if any epoch below the
+   newest candidate has no candidate at all, or if a member's verified head
+   is past the tip. A candidate right after the tip that doesn't link is
+   ignored, not treated as a gap.
+
+Members still apply a rotation only when its initiator is in their own
+roster, and don't check links.
+
 ## Device authority for external operations
 
 Assign one owner to each operation that can make a conflicting or duplicate
@@ -205,7 +268,12 @@ another operation needs the same transitions.
   - contract refusals, and every limit below, at and above its boundary;
   - the fails-closed suite, now on snapshots;
   - golden v3 snapshot and head vectors;
-  - v1 and v2 heads refused.
+  - v1 and v2 heads refused;
+  - golden protocol 4 genesis and successor rotations, and a protocol 3
+    rotation that decodes but proves nothing;
+  - anchor and link signing and verification, domain separation between
+    the device signature, anchor and link, a link bound to its epoch, and
+    missing or extra proofs refused.
 - **`src-tauri`:**
   - sealing, delivery and heads, including a head waiting for its snapshot
     and old snapshots being deleted afterwards;
@@ -217,7 +285,12 @@ another operation needs the same transitions.
   - never reusing a write counter after a restore from backup;
   - the heartbeat;
   - key catch-up, plus refusing shares from revoked or unknown members;
-  - migration from protocol 2 groups.
+  - migration from protocol 2 groups, and leaving protocol 3 groups;
+  - recovery joins next to rotations planted by someone with only storage
+    access: after the newest epoch, competing at an existing one, a genesis
+    without the phrase's anchor, substituted recovery keys, and a missing
+    or tampered link. The intruder stays off every roster and never
+    receives a key.
 - **Simulation (`sync_sim.rs`):**
   - **Schedules:** seeded runs of up to five devices, using the app's own
     snippet mutations, with outages, delayed objects, reordered scans,
@@ -245,6 +318,13 @@ another operation needs the same transitions.
   - a recovery join could miss a rotation for good.
 - **0.30.0:** a member a rotation was never sealed to had no way to get that
   key, now handled by key catch-up.
+- **Protocol 4:** a recovery-phrase join could be taken over by anyone able
+  to write to a connector (see [Recovery-phrase joins](#recovery-phrase-joins)).
+  Rotations now carry a recovery anchor or an epoch link. Existing groups
+  can't be upgraded in place, so updating leaves them, as protocol 3 did
+  with protocol 2 groups: schema migration v121 clears the membership,
+  queues the old keys for removal from the keychain, and shows the reset
+  notice once.
 
 ### What the event-log design needed that this one doesn't
 
@@ -258,6 +338,22 @@ These no longer apply:
 A connector holds about one snapshot per device, plus control objects.
 
 ## Known gaps and open questions
+
+- **A former member can fork the chain for a recovering device.** A link
+  proves only that its maker held `K_n`. A device revoked at epoch `n + 1`
+  still holds `K_n` and can publish its own rotation `n + 1`. Members ignore
+  it (its initiator is revoked), but a recovering device sees two linked
+  rotations at the tip and takes the one with the greater content address,
+  which the former member can choose by retrying. The same goes for a
+  device that received a key on the losing side of a concurrent rotation.
+  Existing members still refuse to reactivate a revoked device from the
+  announcement that follows, but the recovering device ends up on the wrong
+  key and roster. Telling such forks apart needs the revocation itself to
+  be part of what the next link proves, which this design doesn't do yet.
+- **Planted rotations can stall a recovery join.** A rotation planted
+  further than one epoch past the tip looks like a key change that hasn't
+  arrived, so the join waits. Anyone who can write to the storage can
+  equally delete the group's files, so this adds no new denial of service.
 
 - **Concurrent rotations** by two devices both claim the next epoch number,
   and each device keeps one key per epoch. The harness avoids this case. It

@@ -15,13 +15,13 @@
 //!   trust decision is a human comparing [`enrollment_fingerprint`](threestrands_sync_envelope::enrollment_fingerprint) between
 //!   two screens before the new device imports the grant — see
 //!   [`confirm_and_import_grant`].
-//! - **Recovery-phrase import**: the recovery X25519 public key is never
-//!   published anywhere in cleartext (it rides in the roster's `RosterEntry`
-//!   list is a *device* list; recovery is a distinct, fixed, always-eligible
-//!   recipient carried only inside grant/rotation payloads a device must
-//!   already be able to decrypt). Successfully opening a sealed stanza with
-//!   a phrase-derived recovery secret is itself the trust proof — see
-//!   [`join_with_recovery_phrase`].
+//! - **Recovery-phrase import**: the recovery public keys travel in
+//!   cleartext in every rotation, so opening a stanza with the
+//!   phrase-derived recovery secret proves nothing about who sealed it.
+//!   Trust comes from the chain instead: the genesis rotation carries a
+//!   signature by the phrase-derived recovery Ed25519 key, and every later
+//!   rotation a signature by a key derived from the previous epoch's key,
+//!   which only members hold. See [`join_with_recovery_phrase`].
 
 mod crypto;
 mod error;

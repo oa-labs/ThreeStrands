@@ -9,13 +9,23 @@
 //! versions' heads, which this crate no longer accepts (version 3 replaced
 //! the event log with replica snapshots). They stay checked in so the
 //! refusal itself is pinned.
+//!
+//! The key rotation vectors pin protocol 4's rotation shape: a genesis
+//! rotation with its recovery anchor, a successor with its epoch link, and
+//! a protocol-3 rotation with neither, which still decodes (so its group is
+//! recognized as one from an earlier build) but proves nothing. Snapshots
+//! and heads did not change in protocol 4, so their v3 vectors stand.
 
 use ed25519_dalek::SigningKey;
+use serde_bytes::ByteBuf;
 use serde_json::json;
 use threestrands_sync_envelope::{
-    decode_signed_head, encode_signed_head, open_snapshot, seal_snapshot_with_nonces,
-    sign_device_head, verify_device_head, DeviceHead, DeviceId, EntityType, ObjectKind, OpenParams,
-    ReplicaSnapshot, SealParams, SequenceEntry, SnapshotField, SnapshotValue, PROTOCOL_VERSION,
+    decode_signed_head, decode_signed_key_rotation, encode_signed_head, encode_signed_key_rotation,
+    open_snapshot, seal_snapshot_with_nonces, sign_device_head, sign_key_rotation,
+    verify_device_head, verify_key_rotation, verify_rotation_anchor, verify_rotation_link,
+    DeviceHead, DeviceId, EntityType, EnvelopeError, KeyRotation, ObjectKind, OpenParams,
+    ReplicaSnapshot, RosterEntry, RotationProof, SealParams, SequenceEntry, SnapshotField,
+    SnapshotValue, PROTOCOL_MARKER, PROTOCOL_VERSION,
 };
 
 const SYNC_SPACE_ID: &[u8] = b"golden-vector-sync-space";
@@ -38,6 +48,10 @@ const GOLDEN_SNAPSHOT_CID: &str = include_str!("vectors/snapshot_v3.cid");
 const GOLDEN_HEAD_HEX: &str = include_str!("vectors/device_head_v3.hex");
 const V1_HEAD_HEX: &str = include_str!("vectors/device_head_v1.hex");
 const V2_HEAD_HEX: &str = include_str!("vectors/device_head_v2.hex");
+const GENESIS_ROTATION_HEX: &str = include_str!("vectors/key_rotation_genesis_v4.hex");
+const SUCCESSOR_ROTATION_HEX: &str = include_str!("vectors/key_rotation_successor_v4.hex");
+const V3_ROTATION_HEX: &str = include_str!("vectors/key_rotation_v3.hex");
+const RECOVERY_SIGNING_SEED: [u8; 32] = [0x60; 32];
 
 const AUTHOR: [u8; 16] = [0x22; 16];
 const PEER: [u8; 16] = [0x10; 16];
@@ -97,6 +111,51 @@ fn golden_head(state_cid: &str) -> DeviceHead {
         state_cid: Some(state_cid.to_string()),
         published_at_ms: 1_700_000_500_000,
     }
+}
+
+/// A rotation with fixed contents. Its stanzas are fixed bytes standing in
+/// for sealed boxes, which are randomized and so can't be frozen.
+fn golden_rotation(key_epoch: u32) -> KeyRotation {
+    let signing_key = SigningKey::from_bytes(&SIGNING_SEED);
+    let recovery = SigningKey::from_bytes(&RECOVERY_SIGNING_SEED);
+    KeyRotation {
+        key_epoch,
+        initiator_device_id: DeviceId::from_bytes(AUTHOR),
+        roster: vec![RosterEntry {
+            device_id: DeviceId::from_bytes(AUTHOR),
+            ed25519_public: ByteBuf::from(signing_key.verifying_key().to_bytes().to_vec()),
+            x25519_public: ByteBuf::from(vec![0x70; 32]),
+            status: "active".to_string(),
+        }],
+        sealed_stanzas: vec![ByteBuf::from(vec![0x71; 88]), ByteBuf::from(vec![0x72; 88])],
+        recovery_ed25519_public: ByteBuf::from(recovery.verifying_key().to_bytes().to_vec()),
+        recovery_x25519_public: ByteBuf::from(vec![0x73; 32]),
+        created_at_ms: 1_700_000_600_000 + i64::from(key_epoch),
+    }
+}
+
+fn golden_rotation_bytes(key_epoch: u32) -> Vec<u8> {
+    let signing_key = SigningKey::from_bytes(&SIGNING_SEED);
+    let recovery = SigningKey::from_bytes(&RECOVERY_SIGNING_SEED);
+    let proof = if key_epoch == 0 {
+        RotationProof::Genesis {
+            recovery_signing_key: &recovery,
+        }
+    } else {
+        RotationProof::Successor {
+            previous_k_epoch: &K_EPOCH,
+        }
+    };
+    let signed = sign_key_rotation(&signing_key, golden_rotation(key_epoch), proof).unwrap();
+    encode_signed_key_rotation(&signed).unwrap()
+}
+
+/// A protocol-3 rotation: the protocol-4 genesis with both proofs removed.
+fn v3_rotation_bytes() -> Vec<u8> {
+    let mut signed = decode_signed_key_rotation(&golden_rotation_bytes(0)).unwrap();
+    signed.recovery_anchor = None;
+    signed.epoch_link = None;
+    encode_signed_key_rotation(&signed).unwrap()
 }
 
 fn seal_params(signing_key: &SigningKey) -> SealParams<'_> {
@@ -170,6 +229,46 @@ fn signed_head_encodes_to_the_frozen_bytes() {
 }
 
 #[test]
+fn the_protocol_marker_names_protocol_4() {
+    assert_eq!(PROTOCOL_MARKER, b"threestrands-sync protocol 4\n");
+}
+
+#[test]
+fn key_rotations_encode_to_the_frozen_bytes_and_verify() {
+    let signing_key = SigningKey::from_bytes(&SIGNING_SEED);
+    let recovery = SigningKey::from_bytes(&RECOVERY_SIGNING_SEED);
+
+    let genesis = golden_rotation_bytes(0);
+    assert_eq!(hex_encode(&genesis), GENESIS_ROTATION_HEX.trim());
+    let decoded = decode_signed_key_rotation(&hex_decode(GENESIS_ROTATION_HEX)).unwrap();
+    assert_eq!(encode_signed_key_rotation(&decoded).unwrap(), genesis);
+    verify_key_rotation(&signing_key.verifying_key(), &decoded).unwrap();
+    verify_rotation_anchor(&recovery.verifying_key(), &decoded).unwrap();
+
+    let successor = golden_rotation_bytes(1);
+    assert_eq!(hex_encode(&successor), SUCCESSOR_ROTATION_HEX.trim());
+    let decoded = decode_signed_key_rotation(&hex_decode(SUCCESSOR_ROTATION_HEX)).unwrap();
+    assert_eq!(encode_signed_key_rotation(&decoded).unwrap(), successor);
+    verify_key_rotation(&signing_key.verifying_key(), &decoded).unwrap();
+    verify_rotation_link(&K_EPOCH, &decoded).unwrap();
+}
+
+#[test]
+fn a_protocol_3_rotation_decodes_but_carries_no_proof() {
+    let signing_key = SigningKey::from_bytes(&SIGNING_SEED);
+    let recovery = SigningKey::from_bytes(&RECOVERY_SIGNING_SEED);
+    let bytes = hex_decode(V3_ROTATION_HEX);
+    assert_eq!(bytes, v3_rotation_bytes());
+    let decoded = decode_signed_key_rotation(&bytes).unwrap();
+    assert_eq!(encode_signed_key_rotation(&decoded).unwrap(), bytes);
+    verify_key_rotation(&signing_key.verifying_key(), &decoded).unwrap();
+    assert_eq!(
+        verify_rotation_anchor(&recovery.verifying_key(), &decoded),
+        Err(EnvelopeError::RotationProofMismatch)
+    );
+}
+
+#[test]
 fn earlier_protocol_versions_heads_are_refused() {
     use threestrands_sync_envelope::EnvelopeError;
     assert_eq!(
@@ -196,7 +295,7 @@ fn a_snapshot_of_an_earlier_protocol_version_is_never_sealed() {
     ));
 }
 
-/// Regenerates the frozen v3 files. Run deliberately, only for an
+/// Regenerates the frozen snapshot, head, and rotation files. Run deliberately, only for an
 /// intentional format change: `cargo test -p threestrands-sync-envelope
 /// --test golden_vectors -- --ignored regenerate`.
 #[test]
@@ -221,4 +320,11 @@ fn regenerate() {
         format!("{}\n", hex_encode(&encode_signed_head(&signed).unwrap())),
     )
     .unwrap();
+    for (name, bytes) in [
+        ("key_rotation_genesis_v4.hex", golden_rotation_bytes(0)),
+        ("key_rotation_successor_v4.hex", golden_rotation_bytes(1)),
+        ("key_rotation_v3.hex", v3_rotation_bytes()),
+    ] {
+        std::fs::write(dir.join(name), format!("{}\n", hex_encode(&bytes))).unwrap();
+    }
 }

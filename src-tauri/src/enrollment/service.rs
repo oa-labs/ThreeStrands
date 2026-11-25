@@ -15,10 +15,10 @@ use threestrands_sync_envelope::{
     recovery_ed25519_signing_key, recovery_phrase_from_seed, recovery_seed_from_phrase,
     recovery_x25519_secret, seal_to_x25519, sign_enrollment_grant, sign_enrollment_rejection,
     sign_enrollment_request, sign_key_rotation, try_open_sealed_box, verify_enrollment_grant,
-    verify_enrollment_rejection, verify_enrollment_request, verify_key_rotation, EnrollmentGrant,
-    EnrollmentRejection, EnrollmentRequest, KeyRotation, RequestId, RosterEntry,
-    SignedEnrollmentGrant, SignedEnrollmentRequest, SignedKeyRotation, VerifyingKey,
-    X25519PublicKey,
+    verify_enrollment_rejection, verify_enrollment_request, verify_key_rotation,
+    verify_rotation_anchor, verify_rotation_link, EnrollmentGrant, EnrollmentRejection,
+    EnrollmentRequest, KeyRotation, RequestId, RosterEntry, RotationProof, SignedEnrollmentGrant,
+    SignedEnrollmentRequest, SignedKeyRotation, VerifyingKey, X25519PublicKey,
 };
 use threestrands_sync_envelope::{protocol_marker_cid, PROTOCOL_MARKER};
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
@@ -292,8 +292,9 @@ pub(crate) async fn publish_protocol_marker(
 /// Starts a brand-new sync space on this device: generates its own device
 /// keys, a fresh epoch-0 key, and a recovery seed, publishes a genesis
 /// [`KeyRotation`] (epoch 0, sealed to itself and to the recovery X25519
-/// key) so a later recovery-phrase import has something to find, and
-/// returns the recovery phrase. **The phrase is shown to the caller exactly
+/// key, and anchored by a recovery Ed25519 signature) so a later
+/// recovery-phrase import has something to find and trust, and returns
+/// the recovery phrase. **The phrase is shown to the caller exactly
 /// once and is never persisted anywhere** — only its two derived public
 /// keys are kept, in `sync_spaces`.
 ///
@@ -323,9 +324,8 @@ pub async fn begin_genesis(
     let seed = generate_recovery_seed();
     let phrase = recovery_phrase_from_seed(&seed);
     let recovery_x25519_public = X25519PublicKey::from(&recovery_x25519_secret(&seed)).to_bytes();
-    let recovery_ed25519_public = recovery_ed25519_signing_key(&seed)
-        .verifying_key()
-        .to_bytes();
+    let recovery_signing_key = recovery_ed25519_signing_key(&seed);
+    let recovery_ed25519_public = recovery_signing_key.verifying_key().to_bytes();
     database.set_recovery_public_keys(&recovery_ed25519_public, &recovery_x25519_public)?;
 
     let identity_x25519_public = x25519_public_bytes(&identity.x25519_secret);
@@ -349,7 +349,15 @@ pub async fn begin_genesis(
         recovery_x25519_public: ByteBuf::from(recovery_x25519_public.to_vec()),
         created_at_ms: now_ms(),
     };
-    let signed = sign_key_rotation(&identity.signing_key, rotation)?;
+    // The anchor is the only proof a recovering device can check without a
+    // roster: no one without the phrase can make it.
+    let signed = sign_key_rotation(
+        &identity.signing_key,
+        rotation,
+        RotationProof::Genesis {
+            recovery_signing_key: &recovery_signing_key,
+        },
+    )?;
     let bytes = encode_signed_key_rotation(&signed)?;
     let cid = publish_control_object(database, transports, &bytes).await?;
 
@@ -1159,7 +1167,15 @@ pub async fn rotate_epoch(
         recovery_x25519_public: ByteBuf::from(recovery_x25519.to_vec()),
         created_at_ms: now_ms(),
     };
-    let signed = sign_key_rotation(&identity.signing_key, rotation)?;
+    // The link proves this rotation comes from a holder of the epoch it
+    // replaces, which is what lets a recovering device follow the chain.
+    let signed = sign_key_rotation(
+        &identity.signing_key,
+        rotation,
+        RotationProof::Successor {
+            previous_k_epoch: &keys.k_epoch,
+        },
+    )?;
     let bytes = encode_signed_key_rotation(&signed)?;
     let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "key_rotation")?;
@@ -1172,17 +1188,116 @@ pub async fn rotate_epoch(
 
 // ============================ Recovery-phrase import ============================
 
-/// Joins an existing sync space using only a recovery phrase — no peer
-/// device needs to be online. Scans every transport for rotation objects
-/// whose sealed stanzas open with the phrase-derived recovery X25519
-/// secret; that success is itself the trust proof (see the module docs).
+/// A rotation a recovery-phrase join found: it verifies against its own
+/// initiator, names the phrase's recovery keys, and opens with the recovery
+/// secret. None of that makes it trustworthy — anyone who can write to the
+/// connector can make one — until [`select_recovery_chain`] links it to the
+/// recovery-anchored genesis.
+pub(super) struct RecoveryCandidate {
+    pub(super) signed: SignedKeyRotation,
+    pub(super) cid: String,
+    pub(super) k_epoch: [u8; 32],
+}
+
+/// Picks the group's chain of rotations out of everything a recovery join
+/// found, by epoch:
 ///
-/// Every rotation carries a recovery stanza, so the scan collects the key
-/// for every epoch it finds, which is what lets this device open history
-/// sealed before the latest rotation. It adopts the roster and active epoch
-/// of the newest rotation, not whichever one the scan happens to meet
-/// first. Only rotations that verify against their own initiator count, so
-/// arbitrary bytes that happen to decode can't steer the choice.
+/// - **Epoch 0:** the one rotation whose recovery anchor verifies under
+///   the phrase-derived Ed25519 key. None is [`EnrollmentError::NoRecoverableRotation`];
+///   more than one is [`EnrollmentError::AmbiguousRecoveryGroup`].
+/// - **Epoch n + 1:** any rotation whose epoch link verifies under the key
+///   of a rotation accepted at epoch n. Only a member holding `K_n` can
+///   make one, so a rotation planted by someone who can only write to the
+///   connector never links.
+/// - **Several at one epoch** happen when two members rotate at once. The
+///   chain is the longest one these links form, so a rotation the chain
+///   continues from wins over a dead end. At the tip, the rotation with the
+///   greater content address wins: that is the one whose initiator rotates
+///   again to settle the collision (see
+///   [`Database::must_rotate_after_collision`]), so the chain continues from
+///   it. A rotation whose link verifies under more than one parent (only
+///   possible when two parents share a key) follows the parent with the
+///   greater content address.
+///
+/// Returns the chain from epoch 0 to its tip. Linking stops at the first
+/// epoch with no linked rotation.
+pub(super) fn select_recovery_chain(
+    recovery_ed25519: &VerifyingKey,
+    mut candidates: std::collections::BTreeMap<u32, Vec<RecoveryCandidate>>,
+) -> EnrollmentResult<Vec<RecoveryCandidate>> {
+    let mut anchored: Vec<RecoveryCandidate> = candidates
+        .remove(&0)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|candidate| verify_rotation_anchor(recovery_ed25519, &candidate.signed).is_ok())
+        .collect();
+    let genesis = match anchored.len() {
+        0 => return Err(EnrollmentError::NoRecoverableRotation),
+        1 => anchored.remove(0),
+        _ => return Err(EnrollmentError::AmbiguousRecoveryGroup),
+    };
+
+    // Each layer holds the rotations linked at one epoch, with the index of
+    // the rotation they link to in the layer before.
+    let mut layers: Vec<Vec<(RecoveryCandidate, usize)>> = vec![vec![(genesis, 0)]];
+    for epoch in 1..=u32::MAX {
+        let Some(at_epoch) = candidates.remove(&epoch) else {
+            break;
+        };
+        let previous = layers.last().expect("the genesis layer is always present");
+        let layer: Vec<(RecoveryCandidate, usize)> = at_epoch
+            .into_iter()
+            .filter_map(|candidate| {
+                let parent = previous
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (parent, _))| {
+                        verify_rotation_link(&parent.k_epoch, &candidate.signed).is_ok()
+                    })
+                    .max_by(|(_, (a, _)), (_, (b, _))| a.cid.cmp(&b.cid))
+                    .map(|(index, _)| index)?;
+                Some((candidate, parent))
+            })
+            .collect();
+        if layer.is_empty() {
+            break;
+        }
+        layers.push(layer);
+    }
+
+    let mut chain = Vec::with_capacity(layers.len());
+    let mut index = layers
+        .last()
+        .expect("the genesis layer is always present")
+        .iter()
+        .enumerate()
+        .max_by(|(_, (a, _)), (_, (b, _))| a.cid.cmp(&b.cid))
+        .map(|(index, _)| index)
+        .expect("every layer holds at least one rotation");
+    while let Some(mut layer) = layers.pop() {
+        let (candidate, parent) = layer.swap_remove(index);
+        chain.push(candidate);
+        index = parent;
+    }
+    chain.reverse();
+    Ok(chain)
+}
+
+/// Joins an existing sync space using only a recovery phrase — no peer
+/// device needs to be online.
+///
+/// The recovery public keys travel in cleartext in every rotation, so a
+/// rotation that opens with the phrase-derived recovery secret could have
+/// been sealed by anyone who can write to the connector. Trust comes from
+/// the chain instead (see [`select_recovery_chain`]): a genesis anchored by
+/// the phrase's recovery Ed25519 key, then rotations each linked by a
+/// holder of the epoch before. Rotations naming recovery keys other than
+/// the phrase's are ignored, and the keys this device stores are always
+/// the phrase-derived ones.
+///
+/// It keeps every chained epoch's key, which is what lets this device open
+/// history sealed before the latest rotation, and adopts the roster and
+/// active epoch of the chain's tip.
 pub async fn join_with_recovery_phrase(
     database: &Database,
     identity: &DeviceIdentity,
@@ -1194,9 +1309,13 @@ pub async fn join_with_recovery_phrase(
     refuse_legacy_space(transports).await?;
     database.set_beta_features_enabled(true)?;
     let seed = recovery_seed_from_phrase(phrase).map_err(EnrollmentError::InvalidRecoveryPhrase)?;
-    let recovery_secret_bytes = recovery_x25519_secret(&seed).to_bytes();
+    let recovery_secret = recovery_x25519_secret(&seed);
+    let recovery_secret_bytes = recovery_secret.to_bytes();
+    let recovery_x25519_public = X25519PublicKey::from(&recovery_secret).to_bytes();
+    let recovery_signing_key = recovery_ed25519_signing_key(&seed);
+    let recovery_ed25519_public = recovery_signing_key.verifying_key();
 
-    let mut opened: std::collections::BTreeMap<u32, (SignedKeyRotation, String, [u8; 32])> =
+    let mut candidates: std::collections::BTreeMap<u32, Vec<RecoveryCandidate>> =
         std::collections::BTreeMap::new();
     for transport in transports {
         let mut cursor: Option<String> = None;
@@ -1214,6 +1333,12 @@ pub async fn join_with_recovery_phrase(
                 let Ok(signed) = decode_signed_key_rotation(&bytes) else {
                     continue;
                 };
+                if signed.rotation.recovery_ed25519_public.as_slice()
+                    != recovery_ed25519_public.as_bytes()
+                    || signed.rotation.recovery_x25519_public.as_slice() != recovery_x25519_public
+                {
+                    continue;
+                }
                 let Some(k_epoch_bytes) = signed
                     .rotation
                     .sealed_stanzas
@@ -1225,11 +1350,18 @@ pub async fn join_with_recovery_phrase(
                 let Ok(k_epoch): Result<[u8; 32], _> = k_epoch_bytes.try_into() else {
                     continue;
                 };
-                opened.entry(signed.rotation.key_epoch).or_insert((
+                let at_epoch = candidates.entry(signed.rotation.key_epoch).or_default();
+                if at_epoch
+                    .iter()
+                    .any(|candidate| candidate.cid == locator.cid.0)
+                {
+                    continue; // the same object on another connector
+                }
+                at_epoch.push(RecoveryCandidate {
                     signed,
-                    locator.cid.0.clone(),
+                    cid: locator.cid.0.clone(),
                     k_epoch,
-                ));
+                });
             }
             cursor = page.next_cursor;
             if cursor.is_none() {
@@ -1237,37 +1369,30 @@ pub async fn join_with_recovery_phrase(
             }
         }
     }
-    let Some((&latest_epoch, (latest, _, latest_key))) = opened.iter().next_back() else {
-        return Err(EnrollmentError::NoRecoverableRotation);
-    };
-    let latest_key = *latest_key;
+    let newest_found = candidates.keys().next_back().copied();
+    let found_every_epoch = newest_found
+        .is_some_and(|newest| (0..=newest).all(|epoch| candidates.contains_key(&epoch)));
+    let chain = select_recovery_chain(&recovery_ed25519_public, candidates)?;
+    let tip = chain.last().expect("a selected chain is never empty");
+    let tip_epoch = tip.signed.rotation.key_epoch;
+    let tip_key = tip.k_epoch;
     // Joining without every epoch's key is permanent: the missing epoch's
     // rotation was sealed only to the members of the time and the recovery
     // key, and this device won't keep the phrase. Epochs are consecutive,
     // and every device's head names the epoch it's on, so a rotation that
-    // hasn't reached this connector yet shows up as a gap or as a newer
-    // epoch in use. Either way, wait rather than join incomplete.
-    let newest_in_use = newest_epoch_in_heads(transports, &latest.rotation.roster).await;
-    if (0..=latest_epoch).any(|epoch| !opened.contains_key(&epoch)) || newest_in_use > latest_epoch
-    {
+    // hasn't reached this connector yet shows up as an epoch no rotation
+    // was found for below a newer one, or as a newer epoch in use than the
+    // chain reaches. Either way, wait rather than join incomplete. A
+    // rotation right after the tip that doesn't link is not a gap: it is
+    // ignored, since only the chain is trusted.
+    let newest_in_use = newest_epoch_in_heads(transports, &tip.signed.rotation.roster).await;
+    if !found_every_epoch || newest_in_use > tip_epoch {
         return Err(EnrollmentError::RecoveryIncomplete);
     }
 
-    database.adopt_roster(&latest.rotation.roster)?;
-    database.set_recovery_public_keys(
-        latest
-            .rotation
-            .recovery_ed25519_public
-            .as_slice()
-            .try_into()
-            .map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
-        latest
-            .rotation
-            .recovery_x25519_public
-            .as_slice()
-            .try_into()
-            .map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
-    )?;
+    database.adopt_roster(&tip.signed.rotation.roster)?;
+    database
+        .set_recovery_public_keys(&recovery_ed25519_public.to_bytes(), &recovery_x25519_public)?;
     // Trust ourselves alongside the recovered roster — a fresh device
     // recovering has no prior self-entry there.
     let self_x25519_public = x25519_public_bytes(&identity.x25519_secret);
@@ -1276,33 +1401,31 @@ pub async fn join_with_recovery_phrase(
         &identity.verifying_key,
         &self_x25519_public,
     )?;
-    for (key_epoch, (_, cid, k_epoch)) in &opened {
-        epoch_keys.store(*key_epoch, k_epoch)?;
-        database.record_epoch_activation(*key_epoch, cid)?;
+    for link in &chain {
+        epoch_keys.store(link.signed.rotation.key_epoch, &link.k_epoch)?;
+        database.record_epoch_activation(link.signed.rotation.key_epoch, &link.cid)?;
     }
-    database.set_active_epoch(latest_epoch)?;
+    database.set_active_epoch(tip_epoch)?;
 
     // Broadcast our own membership so every other device (which has no
     // pending request matching this — nothing asked it to expect us) learns
     // about and trusts us too. Signed by the recovery key, not a peer, so
     // every device that already knows the recovery public key applies it
     // immediately — see `apply_incoming_grant`.
-    let recovery_ed25519_public = recovery_ed25519_signing_key(&seed).verifying_key();
     let announcement = EnrollmentGrant {
         request_id: RequestId::from_bytes(random_id()),
         approver_device_id: identity.device_id,
         signed_by_recovery: true,
-        key_epoch: latest_epoch,
-        sealed_epoch_key: ByteBuf::from(seal_to_x25519(&self_x25519_public, &latest_key)),
+        key_epoch: tip_epoch,
+        sealed_epoch_key: ByteBuf::from(seal_to_x25519(&self_x25519_public, &tip_key)),
         roster: database.full_roster_snapshot()?,
         recovery_ed25519_public: ByteBuf::from(recovery_ed25519_public.to_bytes().to_vec()),
-        recovery_x25519_public: latest.rotation.recovery_x25519_public.clone(),
+        recovery_x25519_public: ByteBuf::from(recovery_x25519_public.to_vec()),
         created_at_ms: now_ms(),
         earlier_epoch_keys: vec![],
     };
     database.ensure_protocol_marker_object()?;
-    let signed_announcement =
-        sign_enrollment_grant(&recovery_ed25519_signing_key(&seed), announcement)?;
+    let signed_announcement = sign_enrollment_grant(&recovery_signing_key, announcement)?;
     let announcement_bytes = encode_signed_enrollment_grant(&signed_announcement)?;
     let announcement_cid =
         publish_control_object(database, transports, &announcement_bytes).await?;

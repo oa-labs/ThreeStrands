@@ -133,16 +133,19 @@ versions. A code made by a newer version asks for this app to be updated.
 
 ### Groups from earlier test versions
 
-Versions 0.29.0 and 0.30.0 each changed the sync format, and neither can read
-or join a group made by an earlier test version. When it upgrades a device that belonged to such a
-group, the device leaves it:
+Versions 0.29.0 and 0.30.0 each changed the sync format, and so did the update
+that made recovery-phrase joins check every key change against the phrase
+(sync protocol 4). None of them can read or join a group made before it. When
+it upgrades a device that belonged to such a group, the device leaves it:
 - Local data, connectors and the beta toggle stay.
 - Settings shows a one-time notice explaining the reset.
 
 To sync again, update every device first. Then, on each connector:
 1. Delete the old group's files (**Delete files and disconnect**).
 2. Add the connector again.
-3. Create a new group on one device and join it from the others.
+3. Create a new group on one device and join it from the others. The new
+   group has a new recovery phrase; write it down, because the old one no
+   longer opens anything.
 
 Settings recognizes a connector that still holds an old group. It won't
 create or join a group there, and it explains what to do. A shared folder that

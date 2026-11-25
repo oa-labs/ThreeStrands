@@ -79,6 +79,10 @@ pub enum EnrollmentError {
     RecoveryIncomplete,
     #[error("No rotation object on any configured transport opened with this recovery phrase yet")]
     NoRecoverableRotation,
+    /// More than one genesis rotation carries a valid signature by this
+    /// phrase's recovery key, so the phrase doesn't pick out one group.
+    #[error("This recovery phrase opens more than one sync group in this connector, so Three Strands can't tell which one to join. Join from another device with a join code or an approval instead.")]
+    AmbiguousRecoveryGroup,
     #[error("This request is no longer pending.")]
     RequestNotPending,
 

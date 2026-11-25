@@ -20,6 +20,7 @@ use crate::header::NONCE_LEN;
 const EPOCH_KEY_HKDF_DOMAIN: &[u8] = b"threestrands/sync-envelope/epoch-key/v1";
 const SEALED_BOX_HKDF_DOMAIN: &[u8] = b"threestrands/sync-envelope/sealed-box/v1";
 const SEALED_BOX_AAD: &[u8] = b"threestrands/sync-envelope/sealed-box/v1";
+const EPOCH_LINK_KEY_HKDF_DOMAIN: &[u8] = b"threestrands/sync-envelope/epoch-link-key/v1";
 
 /// Derives the concrete per-epoch AEAD key from the raw `K_epoch` secret,
 /// domain-separated by the fixed HKDF info string, the key epoch number, and
@@ -35,6 +36,24 @@ pub fn derive_epoch_aead_key(k_epoch: &[u8; 32], sync_space_id: &[u8], key_epoch
     hkdf.expand(&info, &mut out)
         .expect("32-byte output is within HKDF-SHA256's expand limit");
     out
+}
+
+/// Derives the Ed25519 key that proves possession of the raw `K_epoch` of
+/// `key_epoch`: HKDF-SHA256 over `k_epoch` with `info` = a fixed domain
+/// string followed by `key_epoch` as a big-endian `u32`. A rotation to
+/// `key_epoch + 1` is signed with it (see
+/// [`crate::enrollment::sign_key_rotation`]), and anyone who holds the same
+/// `K_epoch` derives the same public key to check it. The domain differs
+/// from [`derive_epoch_aead_key`]'s, so the two never share key material.
+pub(crate) fn derive_epoch_link_signing_key(k_epoch: &[u8; 32], key_epoch: u32) -> SigningKey {
+    let hkdf = Hkdf::<Sha256>::new(None, k_epoch);
+    let mut info = Vec::with_capacity(EPOCH_LINK_KEY_HKDF_DOMAIN.len() + 4);
+    info.extend_from_slice(EPOCH_LINK_KEY_HKDF_DOMAIN);
+    info.extend_from_slice(&key_epoch.to_be_bytes());
+    let mut out = [0u8; 32];
+    hkdf.expand(&info, &mut out)
+        .expect("32-byte output is within HKDF-SHA256's expand limit");
+    SigningKey::from_bytes(&out)
 }
 
 /// The operating system's CSPRNG, for key material, nonces, and salts.
@@ -242,6 +261,26 @@ mod tests {
 
         let different_epoch = derive_epoch_aead_key(&k_epoch, b"space-a", 2);
         assert_ne!(a, different_epoch);
+    }
+
+    #[test]
+    fn epoch_link_keys_are_deterministic_and_bound_to_key_and_epoch() {
+        let k_epoch = [1u8; 32];
+        let a = derive_epoch_link_signing_key(&k_epoch, 4);
+        assert_eq!(
+            a.verifying_key(),
+            derive_epoch_link_signing_key(&k_epoch, 4).verifying_key()
+        );
+        assert_ne!(
+            a.verifying_key(),
+            derive_epoch_link_signing_key(&k_epoch, 5).verifying_key()
+        );
+        assert_ne!(
+            a.verifying_key(),
+            derive_epoch_link_signing_key(&[2u8; 32], 4).verifying_key()
+        );
+        // Never the same bytes as the AEAD key derived from the same secret.
+        assert_ne!(a.to_bytes(), derive_epoch_aead_key(&k_epoch, b"", 4));
     }
 
     #[test]
