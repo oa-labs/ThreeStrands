@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mailClient } from "./data/client";
 import type { ThreadTask } from "./domain";
-import { taskDetailChanges, taskDetailDrafts } from "./TaskDetailDialog";
+import { TaskDetailDialog, taskDetailChanges, taskDetailDrafts } from "./TaskDetailDialog";
 
 const task: ThreadTask = {
   id: "plan", accountId: "you@example.com", threadId: null, sourceMessageId: null, subjectSnapshot: null,
@@ -39,5 +41,30 @@ describe("taskDetailChanges", () => {
   it("ignores the repeat interval for task types that cannot repeat", () => {
     const action = { ...task, kind: "action" as const };
     expect(taskDetailChanges(action, { ...taskDetailDrafts(action), repeatIntervalDays: "0" })).toEqual({ request: {}, errors: [] });
+  });
+});
+
+describe("TaskDetailDialog Done by email", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  const finished: ThreadTask = { ...task, status: "completed", completionSource: "user", completedAt: "2026-09-20T10:00:00Z", completedByEmail: { accountId: "you@example.com", subject: "Launch plan", sentAt: 1, messageId: "m-1" } };
+  const dialog = (value: ThreadTask, onOpenThread = vi.fn()) => render(<TaskDetailDialog embedded task={value} onUpdate={vi.fn()} onSetStatus={vi.fn()} onNavigate={vi.fn()} onOpenThread={onOpenThread} onClose={vi.fn()} />);
+
+  it("names the email that finished the task and opens its conversation", async () => {
+    vi.spyOn(mailClient, "threadForMessage").mockResolvedValue("thread-1");
+    const onOpenThread = vi.fn();
+    dialog(finished, onOpenThread);
+    expect(screen.getByText("Done by email")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Launch plan" }));
+    await waitFor(() => expect(onOpenThread).toHaveBeenCalledWith("thread-1"));
+  });
+
+  it("says when the message is not on this device yet, and shows nothing for an open task", async () => {
+    vi.spyOn(mailClient, "threadForMessage").mockResolvedValue(null);
+    dialog(finished);
+    fireEvent.click(screen.getByRole("button", { name: "Launch plan" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("isn't on this device yet");
+    cleanup();
+    dialog({ ...finished, status: "open" });
+    expect(screen.queryByText("Done by email")).not.toBeInTheDocument();
   });
 });

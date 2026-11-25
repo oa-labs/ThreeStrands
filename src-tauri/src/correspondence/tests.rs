@@ -145,6 +145,7 @@ fn set_draft_from_is_allowed_for_a_reply_mode_draft() {
         forwarded_content: None,
         forwarded_edit: None,
         follow_up_task_id: None,
+        completes_task_id: None,
         attachments: vec![],
         updated_at: unix_millis(),
         server_draft: None,
@@ -332,6 +333,35 @@ fn draft_revision_rejects_stale_writes_and_header_injection() {
     let parsed = addresses("\"Doe, Jane\" <jane@example.com>, José <jose@example.com>").unwrap();
     assert_eq!(parsed.len(), 2);
     assert_eq!(parsed[0].0, "Doe, Jane");
+}
+#[test]
+fn the_task_a_draft_completes_survives_saves_until_the_user_unlinks_it() {
+    let db = database();
+    let mut linked = saved(&db);
+    linked.completes_task_id = Some("task-1".into());
+    let linked = db.save_draft(linked).unwrap();
+    assert_eq!(
+        db.draft(&linked.id).unwrap().completes_task_id.as_deref(),
+        Some("task-1")
+    );
+    let summary = db
+        .draft_summaries()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.id == linked.id)
+        .unwrap();
+    assert_eq!(summary.completes_task_id.as_deref(), Some("task-1"));
+    // Another edit keeps the link, and the follow-up link is its own field.
+    let mut edited = linked.clone();
+    edited.body = "More".into();
+    let edited = db.save_draft(edited).unwrap();
+    assert_eq!(edited.completes_task_id.as_deref(), Some("task-1"));
+    assert_eq!(edited.follow_up_task_id, None);
+    // Unlinking is a save that clears it.
+    let mut unlinked = edited;
+    unlinked.completes_task_id = None;
+    let unlinked = db.save_draft(unlinked).unwrap();
+    assert_eq!(db.draft(&unlinked.id).unwrap().completes_task_id, None);
 }
 #[test]
 fn addresses_accept_a_quoted_display_name_holding_a_comma() {

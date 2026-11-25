@@ -176,6 +176,7 @@ pub(crate) fn draft_from_server_copy(
         forwarded_content: None,
         forwarded_edit: None,
         follow_up_task_id: base.and_then(|base| base.follow_up_task_id.clone()),
+        completes_task_id: base.and_then(|base| base.completes_task_id.clone()),
         attachments,
         updated_at: unix_millis(),
         server_draft: None,
@@ -606,6 +607,7 @@ mod tests {
         let harness = Harness::new();
         let mut draft = harness.new_draft();
         draft.follow_up_task_id = Some("task-1".into());
+        draft.completes_task_id = Some("task-2".into());
         let draft = harness.edit(draft, "Mine");
         harness.run_after(PAST_DELAY).await;
         let message_id = format!("draft-{}@threestrands.local", draft.id);
@@ -627,6 +629,7 @@ mod tests {
             Some("task-1"),
             "ThreeStrands-only fields survive"
         );
+        assert_eq!(pulled.completes_task_id.as_deref(), Some("task-2"));
         assert!(
             pulled.signature.is_none(),
             "the server copy's signature is part of its body"

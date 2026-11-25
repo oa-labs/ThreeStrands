@@ -8,7 +8,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 import { Paperclip, Sparkles, Trash, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem, SendingIdentity } from "./correspondence";
-import type { Account, ReplyAssistContext, Snippet } from "./domain";
+import type { Account, ReplyAssistContext, Snippet, ThreadTask } from "./domain";
+import { isActiveTaskStatus } from "./taskViews";
 import {
   readAiProvider,
   readAiRequestConfig,
@@ -98,6 +99,19 @@ export const Composer = forwardRef<ComposerHandle, {
   const [identities, setIdentities] = useState<SendingIdentity[]>([]);
   const identityCache = useRef(new Map<string, SendingIdentity[]>());
   const [showBlankCopies, setShowBlankCopies] = useState(false);
+  // The task this message finishes once sent, shown while it is still open.
+  const completesTaskId = draft.completesTaskId ?? null;
+  const [completing, setCompleting] = useState<ThreadTask | null>(null);
+  useEffect(() => {
+    setCompleting(null);
+    if (!completesTaskId) return;
+    let live = true;
+    mailClient.listTasks().then(
+      (tasks) => { if (live) setCompleting(tasks.find((task) => task.id === completesTaskId && isActiveTaskStatus(task.status)) ?? null); },
+      logBackgroundFailure("Task lookup for a linked draft"),
+    );
+    return () => { live = false; };
+  }, [completesTaskId]);
   // Reply Assist shows for replies once Draft Assist is on with a provider
   // chosen; it can generate once an API key is configured too.
   const { aiDraftFeatureEnabled, aiDraftAvailable } = useAiAvailability(false);
@@ -203,6 +217,13 @@ export const Composer = forwardRef<ComposerHandle, {
       const signature = draftSignatureSnapshot(signatures?.signatures.find((s) => s.id === id) ?? null);
       replaceDraft({ ...latest.current, signature });
       bodyEditor.current?.replaceSignature(signature);
+    });
+  }
+  function unlinkTask() {
+    void run(async () => {
+      replaceDraft({ ...latest.current, completesTaskId: null });
+      markChanged();
+      await flush();
     });
   }
   function insertText(text: string) {
@@ -528,6 +549,7 @@ export const Composer = forwardRef<ComposerHandle, {
           </select>
         </label>
       ) : <span>From {draft.from ?? draft.account}</span>}</div><button className="btn-icon" aria-label="Save and Close Draft" onClick={close} disabled={busy}><X size={ICON_SIZE.lg} /></button></header>
+      {completing ? <p className="composer-completes">Completes: <strong>{completing.title}</strong> <button type="button" className="btn-link" aria-label={`Unlink ${completing.title}`} onClick={unlinkTask} disabled={busy}>Unlink</button></p> : null}
       <div className="composer-content">
         <RecipientField id="to" label="To" value={draft.to} context={recipientContext} onCommittedChange={reportCommittedRecipients} account={draft.account} disabled={busy} labelExpanded={showBlankCopies} onLabelClick={() => setShowBlankCopies((visible) => !visible)} onChange={(value) => edit("to", value)} />
         {(["cc", "bcc"] as const).map((field) => (

@@ -22,19 +22,21 @@ export type Draft = {
   /** The user's edited copy of `forwardedContent`, already compose-sanitized; sends in its place while the original stays restorable. */
   forwardedEdit?: { html: string; text: string } | null;
   followUpTaskId?: string | null;
+  /** A task sending this draft completes (or, if it repeats, records a follow-up for); separate from `followUpTaskId` so a version without it never records a follow-up on a one-off task. */
+  completesTaskId?: string | null;
   /** Set on a saved draft whose account keeps drafts on the server: where its server copy stands. */
   serverDraft?: ServerDraftStatus | null;
   attachments: Attachment[]; updatedAt: number;
 };
 /** List metadata only. Message content is fetched when the user opens it. */
-export type DraftSummary = Pick<Draft, "id" | "revision" | "account" | "from" | "mode" | "sourceId" | "threadId" | "replyId" | "to" | "cc" | "bcc" | "subject" | "updatedAt" | "followUpTaskId" | "serverDraft"> & { preview: string; hasAttachments: boolean };
+export type DraftSummary = Pick<Draft, "id" | "revision" | "account" | "from" | "mode" | "sourceId" | "threadId" | "replyId" | "to" | "cc" | "bcc" | "subject" | "updatedAt" | "followUpTaskId" | "completesTaskId" | "serverDraft"> & { preview: string; hasAttachments: boolean };
 export const DRAFT_PREVIEW_CHARS = 200;
 export function summarizeDraft(draft: Draft): DraftSummary {
   return {
     id: draft.id, revision: draft.revision, account: draft.account, from: draft.from,
     mode: draft.mode, sourceId: draft.sourceId, threadId: draft.threadId, replyId: draft.replyId,
     to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject, updatedAt: draft.updatedAt,
-    followUpTaskId: draft.followUpTaskId, serverDraft: draft.serverDraft,
+    followUpTaskId: draft.followUpTaskId, completesTaskId: draft.completesTaskId, serverDraft: draft.serverDraft,
     preview: draft.body.replace(/\s+/g, " ").trim().slice(0, DRAFT_PREVIEW_CHARS),
     hasAttachments: draft.attachments.some((attachment) => !attachment.inline),
   };

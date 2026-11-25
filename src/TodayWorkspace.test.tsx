@@ -1033,6 +1033,84 @@ describe("TodayWorkspace", () => {
     });
   });
 
+  describe("Write Email", () => {
+    const noteTask = task("note:n:m1", { title: "Note chore", source: "note", noteSource: { noteId: "n", markerId: "m1", noteTitle: "Notes", conflicted: false } } as Partial<ThreadTask>);
+    const openMenu = async (title: string) => { fireEvent.click(await screen.findByRole("button", { name: `Actions for ${title}` })); return screen.getByRole("menu"); };
+
+    it("offers it on mail and standalone tasks, hands over the task, and leaves note tasks out", async () => {
+      const standalone = task("memo", { title: "Send the contract" });
+      const mail = task("mail", { title: "Answer Sam", threadId: "thread-1", sourceMessageId: "m-1", subjectSnapshot: "Budget" });
+      vi.mocked(mailClient.listTasks).mockResolvedValue([standalone, mail, noteTask]);
+      const onWriteEmail = vi.fn();
+      renderToday({ onWriteEmail });
+      await cardAction("Send the contract", "Write Email");
+      expect(onWriteEmail).toHaveBeenLastCalledWith({ kind: "task", task: standalone });
+      await cardAction("Answer Sam", "Write Email");
+      expect(onWriteEmail).toHaveBeenLastCalledWith({ kind: "task", task: mail });
+      expect(within(await openMenu("Note chore")).queryByRole("menuitem", { name: "Write Email" })).not.toBeInTheDocument();
+    });
+
+    it("offers it on a planned task and on a due commitment that is a task", async () => {
+      const focus = task("focus", { title: "Review the contract" });
+      const waiting = task("waiting", { threadId: "tracked", kind: "waiting_for", title: "Approval from Imani", dueKind: "date", dueValue: localDate(0) });
+      vi.mocked(mailClient.listTasks).mockResolvedValue([focus, waiting]);
+      vi.mocked(mailClient.dailyPlan).mockImplementation(async (date) => ({ ...emptyPlan(date), revision: "r1", items: [planItem("focus", { title: "Review the contract" })] }));
+      const onWriteEmail = vi.fn();
+      renderToday({ onWriteEmail });
+      await cardAction("Review the contract", "Write Email");
+      expect(onWriteEmail).toHaveBeenLastCalledWith({ kind: "task", task: focus });
+      chooseSource("Commitments");
+      await cardAction("Approval from Imani", "Write Email");
+      expect(onWriteEmail).toHaveBeenLastCalledWith({ kind: "task", task: waiting });
+    });
+
+    it("offers it on a check-in with the contact's address and nothing to link", async () => {
+      vi.mocked(mailClient.listKeepInTouch).mockResolvedValue([contact("ada", "Ada Lovelace", daysFromNow(-3))]);
+      const onWriteEmail = vi.fn();
+      renderToday({ onWriteEmail });
+      chooseSource("Keep in Touch");
+      await cardAction("Ada Lovelace", "Write Email");
+      expect(onWriteEmail).toHaveBeenCalledExactlyOnceWith({ kind: "contact", address: "ada@example.com" });
+    });
+
+    it("is not offered when the host cannot write mail", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([task("open", { title: "Open one" })]);
+      renderToday();
+      expect(within(await openMenu("Open one")).queryByRole("menuitem", { name: "Write Email" })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Done by email", () => {
+    const finished = (overrides: Partial<ThreadTask> = {}) => task("sent", {
+      title: "Send the contract", status: "completed", completionSource: "user", completedAt: new Date().toISOString(),
+      completedByEmail: { accountId: "you@example.com", subject: "The contract", sentAt: Date.now(), messageId: "m-sent" }, ...overrides,
+    });
+
+    it("names the email on a completed task's row and opens it when it is on this device", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([finished()]);
+      const lookup = vi.spyOn(mailClient, "threadForMessage").mockResolvedValue("thread-9");
+      const onOpenMessage = vi.fn();
+      renderToday({ onOpenMessage });
+      const completed = within(await screen.findByRole("region", { name: "Done Today" }));
+      expect(await completed.findByText("Done by email")).toBeInTheDocument();
+      fireEvent.click(completed.getByRole("button", { name: "The contract" }));
+      await waitFor(() => expect(onOpenMessage).toHaveBeenCalledWith("thread-9", "m-sent"));
+      expect(lookup).toHaveBeenCalledWith("you@example.com", "m-sent");
+    });
+
+    it("says when the message is not on this device yet, and shows nothing for a task without a record", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([finished(), finished({ id: "plain", title: "Plain one", completedByEmail: null })]);
+      vi.spyOn(mailClient, "threadForMessage").mockResolvedValue(null);
+      const onOpenMessage = vi.fn();
+      renderToday({ onOpenMessage });
+      const completed = within(await screen.findByRole("region", { name: "Done Today" }));
+      fireEvent.click(await completed.findByRole("button", { name: "The contract" }));
+      expect(await completed.findByRole("status")).toHaveTextContent("isn't on this device yet");
+      expect(onOpenMessage).not.toHaveBeenCalled();
+      expect(completed.getAllByText("Done by email")).toHaveLength(1);
+    });
+  });
+
   describe("planSources tabs", () => {
     const candidate = (key: string, overrides: Partial<SourceCandidate> = {}): SourceCandidate => ({
       key, title: `Candidate ${key}`, reason: "starred", detail: null, accountId: "you@example.com", due: null, taskId: null, threadId: null,

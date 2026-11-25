@@ -67,6 +67,7 @@ const MIGRATIONS: &[Migration] = &[
     (120, to_v120),
     (121, to_v121),
     (122, to_v122),
+    (123, to_v123),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1598,6 +1599,24 @@ fn to_v120(tx: &rusqlite::Transaction) -> Result<(), String> {
          DROP TABLE temp.sender_rule_actions_v119;",
     )
     .map_err(error)?;
+    Ok(())
+}
+
+fn to_v123(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // The message that finished a task, as JSON: set when sending a draft
+    // linked to the task completes it. Tasks from before this version have
+    // none.
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tasks') WHERE name='completed_by_email')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)?;
+    if !exists {
+        tx.execute_batch("ALTER TABLE tasks ADD COLUMN completed_by_email TEXT;")
+            .map_err(error)?;
+    }
     Ok(())
 }
 

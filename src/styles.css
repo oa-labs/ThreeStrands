@@ -3350,6 +3350,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-from { display: flex; align-items: center; gap: var(--space-1-5); margin-top: var(--space-1); }
 .compose-from span { margin-top: 0; }
 .composer-header > div { min-width: 0; }
+.composer-completes { margin: 0; padding: var(--space-2) var(--pane-inset); border-bottom: 1px solid var(--border); color: var(--muted); font-size: var(--text-secondary); flex-shrink: 0; }
+.done-by-email { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
+.done-by-email > small { color: var(--muted); font-size: var(--text-secondary); }
+.done-by-email > .btn-link { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.composer-completes strong { color: var(--text); font-weight: inherit; }
 /* Keep From subordinate to the message title and within narrow panes. */
 .compose-from select { min-width: 0; max-width: 100%; height: var(--control-h-sm); font-size: var(--text-control); background-color: transparent; border-color: transparent; }
 .compose-from select:hover, .compose-from select:focus-visible { border-color: var(--border); }

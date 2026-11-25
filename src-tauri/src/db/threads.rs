@@ -280,6 +280,26 @@ impl Database {
         })
     }
 
+    /// The conversation this device holds `message_id` in for `account_id`, or
+    /// `None` when the message hasn't synced here. `message_id` is the key an
+    /// outbox row's `provider_id` shares with the synced copy of its message.
+    pub fn thread_for_account_message(
+        &self,
+        account_id: &str,
+        message_id: &str,
+    ) -> DbResult<Option<String>> {
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT m.thread_id FROM messages m JOIN threads t ON t.id = m.thread_id
+                     WHERE m.id = ?1 AND t.account_id = ?2",
+                    [message_id, account_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?)
+        })
+    }
+
     pub fn get_thread_for_message(&self, message_id: &str) -> DbResult<ThreadDetail> {
         let thread_id = self
             .with_connection(|connection| {

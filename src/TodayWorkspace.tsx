@@ -40,6 +40,7 @@ import { useDailyPlan } from "./useDailyPlan";
 import { useTodayCompletedNotes } from "./useTodayCompletedNotes";
 import { useDoneOnDay } from "./useDoneOnDay";
 import { TodayCompletionCheckbox, useTodayCompletionTransition } from "./useTodayCompletionTransition";
+import { DoneByEmail } from "./DoneByEmail";
 import { DoneCard, uniqueDoneEntries, type DoneEntry } from "./DoneCard";
 import { activeDayChoice, clearDayChoice, localDay, readDayChoice, writeDayChoice, type DayChoice } from "./todayDayChoice";
 import { useTaskBlockDrag } from "./useTaskBlockDrag";
@@ -77,6 +78,8 @@ export type TodayWorkspaceProps = {
   onOpenMessage?(threadId: string, messageId: string): void;
   onDraftCommitmentReply?(reply: CommitmentReply): void;
   onDraftCommitmentFollowUp?(task: ThreadTask): void;
+  /** Opens a message for a planning item: a task's (linked, so sending finishes it) or a contact's (to the contact, unlinked). */
+  onWriteEmail?(request: WriteEmailRequest): void;
   cachedCommitmentAi?: boolean;
   onOpenEvent(event: ScheduleEvent): void;
   /** Add Note for an event: its line in that day's note. */
@@ -97,6 +100,9 @@ export type TodayWorkspaceProps = {
   onCreateTask?(request: TaskFormRequest): Promise<ThreadTask | null>;
   mailAccounts?: readonly Account[];
 };
+
+/** What Write Email starts from: a mail or standalone task, or a Keep in Touch contact's address. */
+export type WriteEmailRequest = { kind: "task"; task: ThreadTask } | { kind: "contact"; address: string };
 
 const taskReference = (id: string): NoteReference => ({ version: 1, kind: "task", id });
 
@@ -145,7 +151,7 @@ function ScheduledToday({ now, day, onChangeDay, ...props }: TodayWorkspaceProps
 function TodayLayout({
   accountId, mailAccountCount = 1, refreshKey, taskRefreshKey, calendars, calendarAccounts = [], now, schedule,
   displaySchedule = schedule, scheduleDay, onChangeDay,
-  onOpenThread, onOpenMessage, onDraftCommitmentReply, onDraftCommitmentFollowUp, cachedCommitmentAi = false,
+  onOpenThread, onOpenMessage, onDraftCommitmentReply, onDraftCommitmentFollowUp, onWriteEmail, cachedCommitmentAi = false,
   onOpenEvent, onAddNote, onEditTask, onTasksChanged, onOpenCalendar, onEventCreated, onOpenContact,
   onOpenNote, onOpenEntity, onNotice, workingHours = null, onCreateTask, mailAccounts = [],
 }: TodayWorkspaceProps & {
@@ -493,6 +499,12 @@ function TodayLayout({
     if (messageId && onOpenMessage) onOpenMessage(threadId, messageId);
     else onOpenThread(threadId);
   };
+  /** Write Email for an open mail or standalone task; a note task has no account to send from. */
+  const writeTaskEmail = (task: ThreadTask | undefined): InboxEntry["actions"] =>
+    onWriteEmail && task && isActiveTaskStatus(task.status) && task.source !== "note" && !noteTaskParts(task.id)
+      ? [{ label: "Write Email", onSelect: () => onWriteEmail({ kind: "task", task }) }] : [];
+  const writeContactEmail = (address: string | null | undefined): InboxEntry["actions"] =>
+    onWriteEmail && address ? [{ label: "Write Email", onSelect: () => onWriteEmail({ kind: "contact", address }) }] : [];
   const taskSourceOpener = (task: ThreadTask | undefined) => task?.threadId ? () => showSource(task.threadId!, task.sourceMessageId) : undefined;
   /** A task's due date for a row; an overdue one is marked in color and named for screen readers. */
   const dueRow = (task: ThreadTask | undefined): { date?: ReactNode; dateClassName?: string } => {
@@ -696,7 +708,10 @@ function TodayLayout({
         : item.kind === "contact" && item.contactId ? () => onOpenContact(item.contactId!)
           : taskSourceOpener(linkedTask),
       removeOrDismiss: () => removeItem(item),
-      actions: [{ label: "Remove from Today's Plan", onSelect: () => void removeItem(item) }],
+      actions: [
+        ...(item.kind === "contact" ? writeContactEmail(item.reference?.id) : writeTaskEmail(linkedTask)),
+        { label: "Remove from Today's Plan", onSelect: () => void removeItem(item) },
+      ],
       row: {
         rowKey: source.id, wrapTitle: true, className: "context-task today-plan-card",
         ...(done ? {} : dueRow(linkedTask)),
@@ -741,7 +756,7 @@ function TodayLayout({
     control: <TodayCompletionCheckbox checked={false} transition={completion} label={`Mark ${candidate.title} Done`} save={() => setNoteTaskDone(candidate.taskId, candidate.title, true)} />,
   } }));
   const candidates: (InboxEntry | null)[] = [
-    ...tasks.filter((task) => isActiveTaskStatus(task.status) && (accountId === null || task.accountId === accountId)).map((task) => candidateEntry(taskCandidate(task), "tasks")),
+    ...tasks.filter((task) => isActiveTaskStatus(task.status) && (accountId === null || task.accountId === accountId)).map((task) => candidateEntry(taskCandidate(task), "tasks", writeTaskEmail(task))),
     ...noteCandidates.map((candidate) => candidateEntry(candidate, "tasks")),
     ...pageCandidates(starredPage, "starredMail").map((candidate) => {
       const entry = candidateEntry(candidate, candidate.taskId ? "tasks" : "emails");
@@ -764,7 +779,7 @@ function TodayLayout({
       ], () => setDismissed(dismissPromise(promise.messageId)));
       return entry ? { ...entry, busy: busyEmails.has(candidate.id) } : null;
     }),
-    ...reconnect.map((profile) => candidateEntry(contactCandidate(profile), "contacts")),
+    ...reconnect.map((profile) => candidateEntry(contactCandidate(profile), "contacts", writeContactEmail(profile.addresses[0]))),
   ];
   const inboxEntries = uniqueInboxEntries([...plannedEntries, ...interleaveInboxCategories(candidates.filter((entry): entry is InboxEntry => entry !== null))]);
   const dismissCommitment = (key: string) => {
@@ -780,7 +795,7 @@ function TodayLayout({
       const due = task.dueValue && (task.dueKind === "date" ? task.dueValue <= planDate : task.dueKind === "datetime" && Date.parse(task.dueValue) <= now.getTime());
       if (followUp ? !due : !task.sourceMessageId || !task.evidenceText) continue;
       const candidate = taskCandidate(task);
-      const actions: InboxEntry["actions"] = [];
+      const actions: InboxEntry["actions"] = [...writeTaskEmail(task)];
       if (followUp && onDraftCommitmentFollowUp) actions.push({ label: "Draft Follow-up", onSelect: () => onDraftCommitmentFollowUp(task) });
       if (task.sourceMessageId) actions.push({ label: "Open Source Message", onSelect: () => showSource(task.threadId!, task.sourceMessageId!) });
       else actions.push({ label: "Open Conversation", onSelect: () => onOpenThread(task.threadId!) });
@@ -827,6 +842,7 @@ function TodayLayout({
     ...completedTasks.filter((task) => finishedOnShownDay(task.completedAt) && (accountId === null || task.accountId === accountId)).map((task): DoneEntry => ({
       id: `task:${task.id}`, identities: identities(planItemKey(taskReference(task.id)), task.id), category: "tasks", title: task.title, at: task.completedAt ?? null,
       row: { wrapTitle: true, onActivate: () => onEditTask(task), detail: accountId === null ? task.accountId : undefined,
+        trailing: <DoneByEmail task={task} onOpen={showSource} />,
         control: <input type="checkbox" className="context-task-checkbox" checked aria-label={`Mark ${task.title} Not Done`} onChange={() => void toggleDone(task)} /> },
     })),
     ...completedNotes.tasks.map((task): DoneEntry => ({

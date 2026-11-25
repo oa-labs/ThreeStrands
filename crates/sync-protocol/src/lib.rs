@@ -154,6 +154,16 @@ impl EntityType {
                 optional_string(object, "notes", 8_000)?;
                 optional_string(object, "evidenceText", 4_000)?;
                 optional_string(object, "goalId", 128)?;
+                // A record of the message that finished the task: small, and
+                // absent from tasks written before it existed.
+                if let Some(record) = object
+                    .get("completedByEmail")
+                    .filter(|value| !value.is_null())
+                {
+                    if !record.is_object() || record.to_string().len() > 4_000 {
+                        return Err("completedByEmail must be a small object".into());
+                    }
+                }
             }
             Self::Note => validate_note(object)?,
             Self::NoteAttachment => validate_note_attachment(object)?,
@@ -1094,6 +1104,22 @@ mod tests {
         assert!(EntityType::Task.validate_payload(&unlinked).is_ok());
         let oversized = json!({ "title": "Draft", "kind": "action", "dueKind": "none", "status": "open", "goalId": "g".repeat(129) });
         assert!(EntityType::Task.validate_payload(&oversized).is_err());
+    }
+
+    #[test]
+    fn accepts_a_small_record_of_the_email_that_finished_a_task() {
+        let task = |record: Value| json!({ "title": "Send it", "kind": "action", "dueKind": "none", "status": "completed", "completedByEmail": record });
+        let record = json!({ "accountId": "a@example.com", "subject": "Hello", "sentAt": 1, "messageId": "m" });
+        assert!(EntityType::Task.validate_payload(&task(record)).is_ok());
+        assert!(EntityType::Task
+            .validate_payload(&task(Value::Null))
+            .is_ok());
+        assert!(EntityType::Task
+            .validate_payload(&task(json!("text")))
+            .is_err());
+        assert!(EntityType::Task
+            .validate_payload(&task(json!({ "subject": "s".repeat(4_000) })))
+            .is_err());
     }
 
     #[test]

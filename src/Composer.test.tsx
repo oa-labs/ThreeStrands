@@ -289,6 +289,52 @@ describe("Composer signatures", () => {
   });
 });
 
+describe("Composer linked task", () => {
+  const openTask = { id: "task-1", accountId: "first@example.com", threadId: null, subjectSnapshot: null, title: "Send the contract", kind: "action", dueKind: "none", status: "open", createdAt: "2026-09-19T10:00:00Z", updatedAt: "2026-09-19T10:00:00Z" } as const;
+  beforeEach(() => {
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (value) => ({ ...value, revision: value.revision + 1 }));
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: draft.account }]);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  const linked = { ...draft, completesTaskId: "task-1" };
+
+  it("says which open task sending completes, under the header", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([openTask, { ...openTask, id: "other", title: "Other task" }]);
+    render(<Composer draft={linked} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const line = await screen.findByText(/^Completes:/);
+    expect(line).toHaveTextContent("Completes: Send the contract");
+    expect(screen.queryByText(/Other task/)).not.toBeInTheDocument();
+    expect(screen.getByRole("banner")).not.toContainElement(line);
+  });
+
+  it.each([
+    ["missing", []],
+    ["done", [{ ...openTask, status: "completed" as const }]],
+    ["cancelled", [{ ...openTask, status: "cancelled" as const }]],
+  ])("shows nothing when the task is %s", async (_name, tasks) => {
+    const list = vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
+    render(<Composer draft={linked} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    await waitFor(() => expect(list).toHaveBeenCalled());
+    expect(screen.queryByText(/^Completes:/)).not.toBeInTheDocument();
+  });
+
+  it("shows nothing for a draft with no link, without reading tasks", () => {
+    const list = vi.spyOn(mailClient, "listTasks").mockResolvedValue([openTask]);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    expect(screen.queryByText(/^Completes:/)).not.toBeInTheDocument();
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it("unlinks the task and saves the draft without the link", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([openTask]);
+    const save = vi.mocked(mailClient.saveDraft);
+    render(<Composer draft={linked} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Unlink Send the contract" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ id: "draft-1", completesTaskId: null })));
+    await waitFor(() => expect(screen.queryByText(/^Completes:/)).not.toBeInTheDocument());
+  });
+});
+
 describe("Composer From selector", () => {
   afterEach(() => {
     cleanup();

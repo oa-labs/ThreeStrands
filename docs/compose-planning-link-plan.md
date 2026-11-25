@@ -1,6 +1,6 @@
 # Finishing planning items by email
 
-**Status:** Phase 1 implemented; Phases 2–3 proposed. **Planned:** 2026-11-25
+**Status:** Phases 1 and 2 implemented; Phase 3 proposed. **Planned:** 2026-11-25
 against 0.211.0. Revised the same day to a smaller scope.
 
 ## Outcome
@@ -56,41 +56,62 @@ Add **Write Email** to planning-inbox tasks, including commitments that are task
 (tracked items and due follow-ups). It opens a draft linked to the task:
 
 - a task without a conversation: a new message, subject from the task title;
-- a task with a conversation: a reply, as **Draft Follow-up** does now.
+- a task with a conversation: a plain reply to the conversation's newest message,
+  with no drafting (**Draft Follow-up** keeps its AI instruction).
 
 The draft shows one line under its header, "Completes: *task title*", with a
 button to unlink. That's the only compose interface. A check-in gets **Write
 Email** too, opening a new message to the contact, with no link: Phase 1 already
 counts the mail.
 
-**Finishing at send time.** Do the work in one native place, on the outbox's
-**sent** transition, so scheduled sends, undo-send windows, and failed sends
-behave the same. A message that never leaves finishes nothing. First check
-whether the immediate send path also goes through that transition; if so, move
-the existing `recordFollowUp` call in `useCorrespondence.tsx` there.
+**Finishing at send time.** One native function, `Database::finish_linked_tasks_on`,
+runs inside `change_outbox` in the transaction that moves an outbox row to
+`sent`, guarded so a row that is already `sent` doesn't run it again. Immediate
+and scheduled sends, and an uncertain send later found in sent mail, all pass
+through it; a failed, undone, or cancelled send never reaches `sent`, so it
+finishes nothing. It reads the outbox row's draft:
 
-- Store the link in a **new** optional draft field (for example
-  `completesTaskId`). Don't widen `followUpTaskId`: an older version that sends a
-  synced draft would call `record_follow_up` on a one-off task, show an error,
-  and leave the task open. **Draft Follow-up** keeps `followUpTaskId` as now.
-- On sent, complete the task with `completion_source = 'user'` (the user chose
-  the link), or record the follow-up if it's a repeating follow-up. Leave a task
-  that's already done alone. Don't add a `completion_source` value; the column's
-  `CHECK` constraint would make an older device fail to apply the synced write.
+- `followUpTaskId` records a follow-up, as before. This replaces both the
+  scheduled-only block in `record_schedule_report_on` and the frontend
+  `recordFollowUp` call at queue time (which advanced a follow-up even when the
+  send was undone).
+- `completesTaskId` records a follow-up when the task is a repeating
+  follow-up, and otherwise completes the task with `completion_source = 'user'`.
+  A task that is missing, finished, or can't take the change is left alone, and
+  the send never fails because of it (the work sits in a savepoint).
+- The changed task fields are recorded for sync in the same transaction.
+- The draft link is its own field, `completesTaskId`, not `followUpTaskId`: an
+  older version that sends a synced draft would call `record_follow_up` on a
+  one-off task, show an error, and leave the task open. **Draft Follow-up**
+  keeps `followUpTaskId` as now. Unlinking is a saved edit that clears it.
+- No new `completion_source` value; the column's `CHECK` constraint would make
+  an older device fail to apply the synced write.
+- After the message leaves, `useCorrespondence` bumps `linkedSendRevision` when
+  it sees a linked outbox row go to `sent`, and `App` refreshes the task lists.
 
-**The record.** Add an optional task field holding the account and RFC
-`Message-ID` of the message that finished it, filled at send time. Don't resolve
-it in the background: when the user opens it, look the message up by
-`Message-ID`, and say so if it isn't on this device yet. Show it as **Done by
-email**, with the subject from the draft, in the task editor and on the task's
-row in Today's **Completed** card. Leave the task's `threadId` as it is, so a
-standalone task doesn't become a mail task.
+**The record.** The task gains an optional `completedByEmail` (a nullable JSON
+column and a replicated field): the account, the draft's subject, the send time
+and the message key. The key is the outbox row's `provider_id`, the same value
+a conversation matches against a synced message's id to replace its optimistic
+copy of a send (`queuedReplies.ts`) and that **Edit as New** reads, for Gmail
+and IMAP alike. A new local lookup, `thread_for_message(account, message id)`,
+finds the conversation on this device or says it isn't there; nothing is
+resolved in the background. An IMAP server that assigns its own ids can give
+the synced copy a different id than the send receipt, in which case the lookup
+says the message isn't on this device yet rather than guessing. Reopening the
+task clears the record, and a record on a task that isn't completed is ignored,
+because a device without the field can reopen a task. It shows as **Done by
+email** with the subject in the task editor and on the task's row in **Today**'s
+**Completed** card. The task's `threadId` is unchanged.
 
-Before adding either field, confirm in `replicated-sync-design.md` and the task
-and draft sync code that an older device keeps or ignores an unknown field
-rather than rejecting the write.
+Older versions ignore both new fields: neither `Draft` nor `ThreadTask` rejects
+unknown fields, and task sync payloads are only checked for the fields they
+know. Drafts no longer replicate (their records are ignored; drafts reach other
+devices as server drafts, which don't carry the link), so the link stays on the
+device that wrote it, like `followUpTaskId`. Tasks are not in the encrypted
+settings export.
 
-Changelog: **New**.
+Changelog: **New**, plus **Fixed** for undo-send no longer advancing a follow-up.
 
 ## Phase 3: suggest after sending
 

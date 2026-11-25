@@ -23,7 +23,7 @@ export type DoneEntry = {
   title: string;
   /** When it was finished, sent, created or edited (ISO); rows without one come last. */
   at: string | null;
-  row: Omit<Parameters<typeof ContextRow>[0], "title" | "date" | "onPointerDown" | "actions" | "trailing">;
+  row: Omit<Parameters<typeof ContextRow>[0], "title" | "date" | "onPointerDown" | "actions">;
 };
 
 /** The first entry for each identity wins, so list the better-dated sources first. */

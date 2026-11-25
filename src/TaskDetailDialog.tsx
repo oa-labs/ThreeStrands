@@ -1,3 +1,4 @@
+import { DoneByEmail } from "./DoneByEmail";
 import { MessageSquare } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
@@ -291,6 +292,7 @@ export function TaskDetailDialog({
           <textarea value={drafts.notes} onChange={(event) => change("notes", event.target.value)} onBlur={() => commit()} rows={5} maxLength={8000} placeholder="Add a description" />
         </label>
         {messages.map((message) => <p key={message} className="form-error" role="alert">{message}</p>)}
+        <DoneByEmail task={task} onOpen={(threadId) => { close(); onOpenThread(threadId); }} />
         {task.threadId ? <section className="task-detail-source" aria-label="Source conversation">
           <h3>Source conversation</h3>
           {task.subjectSnapshot ? <p>{task.subjectSnapshot}</p> : null}

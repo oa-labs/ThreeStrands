@@ -193,3 +193,38 @@ fn synced_messages_store_compressed_metadata_that_attachment_lookup_reads() {
     assert_eq!(account, "work@example.com");
     assert_eq!(raw.id, "m1");
 }
+
+#[test]
+fn a_sent_message_is_found_on_this_device_only_for_its_own_account() {
+    let database = database();
+    database
+        .upsert_thread(
+            "work@example.com",
+            &[message(
+                "sent-message",
+                "sent-thread",
+                "2026-01-01T00:00:00Z",
+                "body",
+            )],
+        )
+        .unwrap();
+    assert_eq!(
+        database
+            .thread_for_account_message("work@example.com", "sent-message")
+            .unwrap()
+            .as_deref(),
+        Some("work@example.com:sent-thread")
+    );
+    assert_eq!(
+        database
+            .thread_for_account_message("other@example.com", "sent-message")
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        database
+            .thread_for_account_message("work@example.com", "not-synced-yet")
+            .unwrap(),
+        None
+    );
+}

@@ -1601,6 +1601,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::mail::list_sent_between,
         commands::mail::list_starred_page,
         commands::mail::get_thread,
+        commands::mail::thread_for_message,
         commands::mail::search_threads,
         commands::mail::backfill_search_threads,
         // Images and attachments

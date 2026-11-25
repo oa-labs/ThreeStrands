@@ -46,7 +46,11 @@ type ComposeOptions = {
   selectedQuote?: string;
   replyAssistInstruction?: string;
   followUpTaskId?: string;
-  prefill?: MailtoRequest;
+  /** Sending the draft finishes this task, or records a follow-up when it repeats. */
+  completesTaskId?: string;
+  prefill?: Partial<MailtoRequest>;
+  /** The account a new message is written from, when it isn't the one in view. */
+  account?: string;
   /** Explicit source account for a message outside the current conversation. */
   sourceAccount?: string;
   standaloneReply?: boolean;
@@ -133,7 +137,6 @@ export function useCorrespondence(
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [activeAvailabilityText, setActiveAvailabilityText] = useState<string | null>(null);
   const [activeReplyAssistInstruction, setActiveReplyAssistInstruction] = useState<string | null>(null);
-  const [activeFollowUpTaskId, setActiveFollowUpTaskId] = useState<string | null>(null);
   // The open draft as the composer last reported it, for the context panel.
   const [liveDraft, setLiveDraft] = useState<Draft | null>(null);
   const [drafts, setDrafts] = useCorrespondenceList(sameDraft);
@@ -171,6 +174,21 @@ export function useCorrespondence(
     return pending;
   }, [setDrafts, setOutbox, setSummaries]);
   useEffect(() => { void refresh().catch((e) => setError(String(e))); }, [refresh]);
+  // A send linked to a task finishes it natively when the message leaves, which
+  // can be well after the composer closed (an undo window, a scheduled time).
+  // Counts those departures, so task lists and Today read the tasks again.
+  const [linkedSendRevision, setLinkedSendRevision] = useState(0);
+  const linkedSendStates = useRef(new Map<string, string>());
+  useEffect(() => {
+    let left = false;
+    for (const item of outbox) {
+      if (!item.draft.followUpTaskId && !item.draft.completesTaskId) continue;
+      const before = linkedSendStates.current.get(item.id);
+      if (item.state === "sent" && before !== undefined && before !== "sent") left = true;
+      linkedSendStates.current.set(item.id, item.state);
+    }
+    if (left) setLinkedSendRevision((value) => value + 1);
+  }, [outbox]);
   // Drafts arrive from the account's server drafts; each pull that changed
   // them says so.
   useEffect(() => {
@@ -203,20 +221,23 @@ export function useCorrespondence(
     try {
       await editor.current?.flush();
       const created = mode === "new"
-        ? await mailClient.createDraft(mode, undefined, activeAccountId ?? undefined)
+        ? await mailClient.createDraft(mode, undefined, options?.account ?? activeAccountId ?? undefined)
         : mode === "editAsNew"
           ? await draftFromSent(messageId ?? sourceId, options?.sourceAccount ?? sourceAccountId)
           : await mailClient.createDraft(mode, messageId ?? sourceId, options?.sourceAccount ?? sourceAccountId);
       const quoted = options?.selectedQuote ? draftWithSelectedQuote(created, options.selectedQuote) : null;
       const filled = quoted ?? (options?.prefill ? { ...created, ...options.prefill } : null);
       const prepared = filled ? await mailClient.saveDraft(filled) : created;
-      const d = options?.followUpTaskId
-        ? await mailClient.saveDraft({ ...prepared, followUpTaskId: options.followUpTaskId })
+      const d = options?.followUpTaskId || options?.completesTaskId
+        ? await mailClient.saveDraft({
+          ...prepared,
+          ...(options.followUpTaskId ? { followUpTaskId: options.followUpTaskId } : {}),
+          ...(options.completesTaskId ? { completesTaskId: options.completesTaskId } : {}),
+        })
         : prepared;
       setSelectedQuoteDraftId(quoted ? d.id : null);
       setActiveAvailabilityText(options?.availabilityText ?? null);
       setActiveReplyAssistInstruction(options?.replyAssistInstruction ?? null);
-      setActiveFollowUpTaskId(options?.followUpTaskId ?? null);
       setActiveThreadId(mode === "new" || mode === "editAsNew" || options?.standaloneReply ? null : selectedThreadId);
       setActive(d); setError("");
       return true;
@@ -239,7 +260,7 @@ export function useCorrespondence(
     // Return to Draft must not depend on opening Drafts or the next sync.
     if (saved) setDrafts((current) => [summarizeDraft(saved), ...current.filter((draft) => draft.id !== saved.id)]);
     if (activeRef.current) setParkedId(activeRef.current.id);
-    setActive(null); setLiveDraft(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null);
+    setActive(null); setLiveDraft(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null);
   }, [setDrafts]);
   // Called when navigating to the inline Drafts/Outbox view: makes sure
   // whatever was being edited is saved and the lists are current.
@@ -270,7 +291,6 @@ export function useCorrespondence(
       try {
         await editor.current?.flush();
         const d = await mailClient.cancelSend(target);
-        setActiveFollowUpTaskId(d.followUpTaskId ?? null);
         setActiveThreadId(null);
         setActive(d);
         await refresh();
@@ -281,7 +301,7 @@ export function useCorrespondence(
   const restoreFailedSend = useCallback((id: string) => {
     if (pendingOutboxActionsRef.current.has(id)) return;
     withOutboxActionGuard(id, () =>
-      mailClient.recoverSend(id).then((d) => { setActiveFollowUpTaskId(d.followUpTaskId ?? null); setActiveThreadId(null); setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
+      mailClient.recoverSend(id).then((d) => { setActiveThreadId(null); setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
     );
   }, [refresh, withOutboxActionGuard]);
   /**
@@ -361,8 +381,14 @@ export function useCorrespondence(
       followUpTaskId: taskId,
     });
   }, [start]);
-  const replyFromOutside = useCallback((messageId: string, accountId: string, instruction?: string, followUpTaskId?: string) =>
-    start("reply", messageId, { sourceAccount: accountId, standaloneReply: true, replyAssistInstruction: instruction, followUpTaskId }), [start]);
+  const replyFromOutside = useCallback((messageId: string, accountId: string, instruction?: string, followUpTaskId?: string, completesTaskId?: string) =>
+    start("reply", messageId, { sourceAccount: accountId, standaloneReply: true, replyAssistInstruction: instruction, followUpTaskId, completesTaskId }), [start]);
+  /** Opens a new message with `prefill` filled in, from `account` when given, queued behind any other link waiting to open. */
+  const composeNew = useCallback((prefill: Partial<MailtoRequest>, options?: { account?: string; completesTaskId?: string }) => {
+    const opened = mailtoQueue.current.then(async () => { await start("new", undefined, { prefill, ...options }); });
+    mailtoQueue.current = opened;
+    return opened;
+  }, [start]);
   const forward = useCallback((messageId?: string, selectedQuote?: string) => { void start("forward", messageId, { selectedQuote }); }, [start]);
   const editAsNew = useCallback((messageId: string, sourceAccount?: string) => { void start("editAsNew", messageId, { sourceAccount }); }, [start]);
   const openInbox = useCallback(() => {
@@ -400,7 +426,6 @@ export function useCorrespondence(
       if (request !== draftOpenRequest.current) return;
       setParkedId((current) => current === draft.id ? null : current);
       setSelectedQuoteDraftId(null);
-      setActiveFollowUpTaskId(draft.followUpTaskId ?? null);
       setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null);
       setActiveThreadId(null);
       setActive(draft); setError("");
@@ -424,7 +449,6 @@ export function useCorrespondence(
       setSelectedQuoteDraftId(null);
       setActiveAvailabilityText(null);
       setActiveReplyAssistInstruction(null);
-      setActiveFollowUpTaskId(opened.followUpTaskId ?? null);
       setActiveThreadId(null);
       setActive(opened);
       setError("");
@@ -478,19 +502,17 @@ export function useCorrespondence(
       review={review}
       onClose={() => {
         const closedId = active.id;
-        setActive(null); setLiveDraft(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null);
+        setActive(null); setLiveDraft(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null);
         // Park only after Drafts is current: closing an empty draft or the
         // trash button discards it, and it must not be offered back meanwhile.
         void refresh().then(() => setParkedId(closedId), logBackgroundFailure("Drafts refresh after closing the composer"));
       }}
       onQueued={(item) => {
         setParkedId((current) => current === active.id ? null : current);
-        const followUpTaskId = activeFollowUpTaskId ?? active.followUpTaskId ?? null;
         setActive(null); setLiveDraft(null);
         setActiveThreadId(null);
         setActiveAvailabilityText(null);
         setActiveReplyAssistInstruction(null);
-        setActiveFollowUpTaskId(null);
         // queueDraft already returned the authoritative queued item. Publish
         // it immediately instead of waiting for a second listOutbox roundtrip
         // so an open conversation can render the reply optimistically.
@@ -498,9 +520,6 @@ export function useCorrespondence(
         outboxBodies.prime(item);
         setOutbox((current) => [summarizeOutbox(item), ...current.filter((entry) => entry.id !== item.id)]);
         void refresh();
-        if (followUpTaskId && !item.schedule) {
-          void mailClient.recordFollowUp(followUpTaskId).catch((reason) => setError(String(reason)));
-        }
       }}
     />
   ) : null;
@@ -513,6 +532,8 @@ export function useCorrespondence(
     context,
     pendingUndoOrder,
     composeMailto,
+    composeNew,
+    linkedSendRevision,
     replyWithAvailability,
     replyWithText,
     replyWithFollowUp,

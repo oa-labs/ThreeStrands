@@ -379,6 +379,27 @@ pub struct ThreadTask {
     /// Absent from tasks written before goals existed.
     #[serde(default)]
     pub goal_id: Option<String>,
+    /// The message that finished this task, when sending a linked draft did.
+    /// Absent from tasks written before it existed, and cleared when the task
+    /// reopens.
+    #[serde(default)]
+    pub completed_by_email: Option<CompletedByEmail>,
+}
+
+/// Where to find the message that finished a task. `message_id` is the
+/// outbox row's `provider_id`, the same key a conversation uses to replace its
+/// optimistic copy of a send with the synced one (`messages.id`); it is `None`
+/// until the provider reports one. The subject is a snapshot, so the record
+/// reads the same when the message isn't on this device.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletedByEmail {
+    pub account_id: String,
+    pub subject: String,
+    /// Unix milliseconds when the send was accepted.
+    pub sent_at: i64,
+    #[serde(default)]
+    pub message_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

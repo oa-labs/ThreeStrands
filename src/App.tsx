@@ -372,6 +372,13 @@ export function App() {
   };
   const { openTaskThreadIds, taskRevision, setTaskRevision, refreshTaskIndicators } = useTaskIndicators(activeAccountId);
   const senderRuleCatalog = useSenderRules();
+  // A linked send finishes its task natively once the message leaves.
+  const linkedSendRevision = correspondence.linkedSendRevision;
+  useEffect(() => {
+    if (linkedSendRevision === 0) return;
+    setTaskRevision((current) => current + 1);
+    void refreshTaskIndicators();
+  }, [linkedSendRevision, refreshTaskIndicators, setTaskRevision]);
   const { refresh: refreshSplitInboxes } = splitInboxCatalog;
   const isThreadMailbox = mailbox === "snoozed" || mailbox === "inbox" || mailbox === "allMail" || mailbox === "sent" || mailbox === "trash" || mailbox === "split";
   const isTabbedMailbox = mailbox === "inbox" || mailbox === "split";
@@ -2023,6 +2030,28 @@ export function App() {
             if (await correspondence.replyFromOutside(source.id, task.accountId, "Draft a brief check-in about the outstanding reply or deliverable in this conversation.", task.kind === "follow_up" && task.repeatIntervalDays ? task.id : undefined)) {
               setRightWorkspace(null);
             }
+          })().catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
+        }}
+        onWriteEmail={(request) => {
+          void (async () => {
+            if (request.kind === "contact") {
+              // A check-in is counted by the mail itself; nothing is linked.
+              void correspondence.composeNew({ to: request.address });
+              setRightWorkspace(null);
+              return;
+            }
+            const { task } = request;
+            if (!task.threadId) {
+              // A standalone task: a new message titled for the task, which finishes it once sent.
+              void correspondence.composeNew({ subject: task.title }, { account: task.accountId, completesTaskId: task.id });
+              setRightWorkspace(null);
+              return;
+            }
+            // A task about a conversation: a plain reply to its newest message, no drafting.
+            const detail = await mailClient.getThread(task.threadId);
+            const newest = detail.messages.at(-1);
+            if (!newest || detail.thread.accountId !== task.accountId) throw new Error("The task's conversation is unavailable");
+            if (await correspondence.replyFromOutside(newest.id, task.accountId, undefined, undefined, task.id)) setRightWorkspace(null);
           })().catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
         }}
         onOpenEvent={(event) => openCalendarView(eventDate(event), event)}

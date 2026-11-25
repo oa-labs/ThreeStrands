@@ -577,6 +577,8 @@ export interface MailClient extends CorrespondenceClient {
   updateTask(request: UpdateTaskRequest): Promise<ThreadTask>;
   setTaskStatus(id: string, status: ThreadTask["status"], source?: "user" | "reply" | "external"): Promise<ThreadTask>;
   recordFollowUp(id: string): Promise<ThreadTask>;
+  /** The conversation holding this account's message on this device, or null when it hasn't synced here. */
+  threadForMessage(accountId: string, messageId: string): Promise<string | null>;
   reconcileTasks(): Promise<number>;
   listGoals(accountId?: string): Promise<Goal[]>;
   createGoal(request: CreateGoalRequest): Promise<Goal>;
@@ -878,6 +880,7 @@ const tauriClient: MailClient = {
   updateTask: (request) => complete("update_task", { request }),
   setTaskStatus: (id, status, source = "user") => complete("set_task_status", { id, status, source }),
   recordFollowUp: (id) => complete("record_follow_up", { id }),
+  threadForMessage: (accountId, messageId) => complete("thread_for_message", { accountId, messageId }),
   reconcileTasks: () => complete("reconcile_tasks"),
   listGoals: (accountId) => read("list_goals", { accountId }),
   createGoal: (request) => complete("create_goal", { request }),

@@ -54,37 +54,6 @@ fn record_schedule_report_on(
         return Ok(());
     }
     if schedule.report.state != state {
-        if state == "sent" {
-            let payload: String = tx.query_row(
-                "SELECT payload FROM outbox_messages WHERE id=?1",
-                [id],
-                |r| r.get(0),
-            )?;
-            let draft: Draft = serde_json::from_str(&payload).map_err(serialization_error)?;
-            if let Some(task_id) = draft.follow_up_task_id {
-                match Database::record_follow_up_on(tx, &task_id) {
-                    Ok(task) => {
-                        if group(tx)?.is_some() {
-                            crate::db::sync_state::record_replicated_write_in_transaction(
-                                tx,
-                                EntityType::Task,
-                                &task.id,
-                                &BTreeSet::from([
-                                    "dueValue".into(),
-                                    "waitAfter".into(),
-                                    "completionSource".into(),
-                                    "completedAt".into(),
-                                    "updatedAt".into(),
-                                ]),
-                                &serde_json::to_value(&task).map_err(serialization_error)?,
-                            )?;
-                        }
-                    }
-                    Err(DatabaseError::NotFound(_)) | Err(DatabaseError::Validation(_)) => {}
-                    Err(e) => return Err(e),
-                }
-            }
-        }
         schedule.report.state = state;
         schedule.report.report_revision += 1;
         schedule.report.status_changed_at = at;
@@ -369,8 +338,23 @@ impl Database {
         at: i64,
     ) -> DbResult<usize> {
         self.with_transaction(|tx| {
+            let before: Option<String> = tx
+                .query_row("SELECT state FROM outbox_messages WHERE id=?1", [id], |r| {
+                    r.get(0)
+                })
+                .optional()?;
             let count = tx.execute(sql, values)?;
             if count > 0 {
+                // The one place a send becomes `sent`: finish what the message
+                // was linked to, once, before the report records the change.
+                let after: Option<String> = tx
+                    .query_row("SELECT state FROM outbox_messages WHERE id=?1", [id], |r| {
+                        r.get(0)
+                    })
+                    .optional()?;
+                if after.as_deref() == Some("sent") && before.as_deref() != Some("sent") {
+                    Database::finish_linked_tasks_on(tx, id, at)?;
+                }
                 record_schedule_report(tx, id, owner, at)?;
             }
             Ok(count)

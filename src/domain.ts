@@ -337,7 +337,12 @@ export type ThreadTask = {
   completedAt?: string | null;
   /** The goal this task supports, in the same account. */
   goalId?: string | null;
+  /** The message that finished this task, when sending a draft linked to it did. Shown only while the task is completed. */
+  completedByEmail?: CompletedByEmail | null;
 };
+
+/** `messageId` is the key a conversation uses to match its optimistic copy of a send to the synced one; `null` until the provider reports one. */
+export type CompletedByEmail = { accountId: string; subject: string; sentAt: number; messageId?: string | null };
 
 export type CreateTaskRequest = {
   accountId: string;

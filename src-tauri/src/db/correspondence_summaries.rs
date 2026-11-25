@@ -38,6 +38,7 @@ const SUMMARY: &str = "json_object(
  'bcc',json_extract(payload,'$.bcc'), 'subject',json_extract(payload,'$.subject'),
  'updatedAt',json_extract(payload,'$.updatedAt'),
  'followUpTaskId',json_extract(payload,'$.followUpTaskId'),
+ 'completesTaskId',json_extract(payload,'$.completesTaskId'),
  'preview',draft_preview(json_extract(payload,'$.body')),
  'hasAttachments',json(CASE WHEN EXISTS(SELECT 1 FROM json_each(json_extract(payload,'$.attachments')) a
  WHERE COALESCE(json_extract(a.value,'$.inline'),0)=0) THEN 'true' ELSE 'false' END))";

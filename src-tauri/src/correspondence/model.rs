@@ -46,6 +46,8 @@ pub struct DraftSummary {
     pub subject: String,
     pub updated_at: i64,
     pub follow_up_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completes_task_id: Option<String>,
     pub preview: String,
     pub has_attachments: bool,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
@@ -112,6 +114,12 @@ pub struct Draft {
     pub forwarded_edit: Option<ForwardedContent>,
     #[serde(default)]
     pub follow_up_task_id: Option<String>,
+    /// A one-off task the user chose to finish with this message. Its own
+    /// field, not `follow_up_task_id`: a version that predates it would call
+    /// `record_follow_up` on a task that doesn't repeat and fail. Applied once,
+    /// when the outbox row becomes `sent` (`Database::finish_linked_task`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completes_task_id: Option<String>,
     pub attachments: Vec<Attachment>,
     pub updated_at: i64,
     /// Set on a draft a save returns, never stored or synced: where its copy
@@ -386,6 +394,7 @@ impl Database {
             forwarded_content: None,
             forwarded_edit: None,
             follow_up_task_id: None,
+            completes_task_id: None,
             attachments: vec![],
             updated_at: unix_millis(),
             server_draft: None,
@@ -627,6 +636,7 @@ impl Database {
             forwarded_content: None,
             forwarded_edit: None,
             follow_up_task_id: None,
+            completes_task_id: None,
             attachments: forward_attachments(&source, &normalized)?,
             updated_at: unix_millis(),
             server_draft: None,
@@ -674,6 +684,8 @@ impl Database {
             draft.forwarded_edit = None;
         }
         draft.follow_up_task_id = draft.follow_up_task_id.or(old.follow_up_task_id);
+        // Unlinking is a deliberate save: the composer clears the field and the
+        // clear must stick, so unlike the follow-up link it isn't kept from `old`.
         if draft.subject != old.subject {
             draft.thread_id = None;
         }

@@ -649,6 +649,7 @@ fn same_frontier_value(
                 | "waitAfter"
                 | "completedAt"
                 | "goalId"
+                | "completedByEmail"
         )
         || entity_type == EntityType::Goal.as_str()
             && matches!(field, "notes" | "parentGoalId" | "closedAt")

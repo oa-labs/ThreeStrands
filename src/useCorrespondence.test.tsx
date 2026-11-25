@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor, render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { summarizeDraft, type DraftSummary, type Draft, type OutboxItem, type ScheduledSendReport } from "./correspondence";
+import { summarizeDraft, summarizeOutbox, type DraftSummary, type Draft, type OutboxItem, type ScheduledSendReport } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Snippet } from "./domain";
 import { OutboxDetail, OutboxList, outboxStateLabel, useCorrespondence } from "./useCorrespondence";
@@ -376,6 +376,90 @@ describe("useCorrespondence", () => {
     await act(async () => { await result.current.replyFromOutside("customer-message", "customer@example.test"); });
     expect(create).toHaveBeenCalledWith("reply", "customer-message", "customer@example.test");
     expect(result.current.activeDraft?.sourceId).toBe("customer-message");
+  });
+
+  it("opens a new message for a task from its account, titled and linked, and a reply linked the same way", async () => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    const create = vi.spyOn(mailClient, "createDraft").mockImplementation(async (mode, sourceId) => ({ ...draft, id: `d-${mode}`, mode, sourceId: sourceId ?? null, account: "tasks@example.com" }));
+    const save = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (value) => ({ ...value, revision: value.revision + 1 }));
+    const { result } = renderHook(() => useCorrespondence([], "work-message", "work@example.com", ...snippetArgs, "work-thread", undefined, undefined, "work@example.com"));
+
+    await act(async () => { await result.current.composeNew({ subject: "Send the contract" }, { account: "tasks@example.com", completesTaskId: "task-1" }); });
+    expect(create).toHaveBeenCalledWith("new", undefined, "tasks@example.com");
+    expect(result.current.activeDraft).toMatchObject({ subject: "Send the contract", completesTaskId: "task-1" });
+    expect(save.mock.calls.at(-1)![0]).not.toHaveProperty("followUpTaskId");
+
+    await act(async () => { await result.current.replyFromOutside("their-message", "tasks@example.com", undefined, undefined, "task-2"); });
+    expect(create).toHaveBeenLastCalledWith("reply", "their-message", "tasks@example.com");
+    expect(result.current.activeDraft).toMatchObject({ mode: "reply", completesTaskId: "task-2" });
+    expect(result.current.activeDraft?.followUpTaskId).toBeUndefined();
+  });
+
+  it("opens a new message to a contact with nothing linked", async () => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    vi.spyOn(mailClient, "createDraft").mockResolvedValue(draft);
+    const save = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (value) => ({ ...value, revision: value.revision + 1 }));
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await act(async () => { await result.current.composeNew({ to: "ada@example.com" }); });
+    expect(result.current.activeDraft?.to).toBe("ada@example.com");
+    expect(save.mock.calls.every(([value]) => !value.completesTaskId && !value.followUpTaskId)).toBe(true);
+  });
+
+  it("leaves following up to the native send: queueing a linked draft records nothing", async () => {
+    const written = { ...draft, to: "ann@example.org", subject: "Plans", body: "Hello", followUpTaskId: "follow-1", completesTaskId: "task-1" };
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([written]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([]);
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (value) => ({ ...value, revision: value.revision + 1 }));
+    const queue = vi.spyOn(mailClient, "queueDraft").mockResolvedValue({ ...outbox, draft: written });
+    const record = vi.spyOn(mailClient, "recordFollowUp");
+    let state: ReturnType<typeof useCorrespondence>;
+    function Harness() {
+      state = useCorrespondence([], undefined, undefined, ...snippetArgs, null);
+      return <>
+        <button onClick={() => state.openDraft(written)}>Open</button>
+        {state.renderComposer()}
+      </>;
+    }
+    try {
+      render(<Harness />);
+      await waitFor(() => expect(state.drafts).toHaveLength(1));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open" })); });
+      await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "Send" })); });
+      await waitFor(() => expect(queue).toHaveBeenCalled());
+      await waitFor(() => expect(state.activeDraft).toBeNull());
+      expect(record).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("reports a linked send leaving once, only after it was seen waiting", async () => {
+    vi.spyOn(mailClient, "listDraftSummaries").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    const linked = (id: string, state: OutboxItem["state"], link: Partial<Draft>) => summarizeOutbox({ ...outbox, id, state, draft: { ...draft, id: `draft-${id}`, ...link } });
+    const list = vi.spyOn(mailClient, "listOutboxSummaries").mockResolvedValue([
+      linked("already-sent", "sent", { completesTaskId: "t0" }), linked("waiting", "undo_pending", { completesTaskId: "t1" }), linked("plain", "undo_pending", {}),
+    ]);
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await waitFor(() => expect(result.current.outbox).toHaveLength(3));
+    expect(result.current.linkedSendRevision).toBe(0);
+
+    list.mockResolvedValue([linked("already-sent", "sent", { completesTaskId: "t0" }), linked("waiting", "sent", { completesTaskId: "t1" }), linked("plain", "sent", {})]);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.linkedSendRevision).toBe(1);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.linkedSendRevision).toBe(1);
+
+    // An undone send never reports.
+    list.mockResolvedValue([linked("undone", "undo_pending", { followUpTaskId: "t2" })]);
+    await act(async () => { await result.current.refresh(); });
+    list.mockResolvedValue([linked("undone", "canceled", { followUpTaskId: "t2" })]);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.linkedSendRevision).toBe(1);
   });
 
   it("reloads drafts after each pull and reopens the open draft on a version saved elsewhere", async () => {

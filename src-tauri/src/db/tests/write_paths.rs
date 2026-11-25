@@ -364,7 +364,7 @@ fn settings_import_writes_exactly_these_rows() {
 }
 
 const SYNCED_PROJECTION: &str = r##"[tasks]
-id=task-1 | account_id=me@example.com | thread_id=thread-1 | source_message_id=message-1 | subject_snapshot=Subject | title=Renamed | notes=Notes | kind=action | due_kind=date | due_value=2020-03-04 | time_zone=UTC | repeat_interval_days=7 | status=open | completion_source=NULL | evidence_text=NULL | wait_after=NULL | created_at=2020-01-02T03:04:05+00:00 | updated_at=2021-02-03T04:05:06+00:00 | completed_at=NULL | goal_id=NULL
+id=task-1 | account_id=me@example.com | thread_id=thread-1 | source_message_id=message-1 | subject_snapshot=Subject | title=Renamed | notes=Notes | kind=action | due_kind=date | due_value=2020-03-04 | time_zone=UTC | repeat_interval_days=7 | status=open | completion_source=NULL | evidence_text=NULL | wait_after=NULL | created_at=2020-01-02T03:04:05+00:00 | updated_at=2021-02-03T04:05:06+00:00 | completed_at=NULL | goal_id=NULL | completed_by_email=NULL
 [snippets]
 id=snippet-1 | name=Hey | body=Hello again | created_at=2020-01-02T03:04:05+00:00 | updated_at=<now>
 [split_inboxes]

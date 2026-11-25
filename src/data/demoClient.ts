@@ -1936,6 +1936,11 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       tasks = tasks.map((task) => task.id === id ? next : task);
       return structuredClone(next);
     },
+    async threadForMessage(accountId, messageId) {
+      const message = findMessage(messageId);
+      const thread = message ? threads.find((candidate) => candidate.id === message.threadId) : undefined;
+      return thread && thread.accountId === accountId ? thread.id : null;
+    },
     async recordFollowUp(id) {
       const current = tasks.find((task) => task.id === id);
       if (!current) throw new Error("Task not found");

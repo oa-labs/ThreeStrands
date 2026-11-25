@@ -269,6 +269,18 @@ pub(crate) async fn list_sent_page(
     run_database_task(move || database.list_sent_page(account_id.as_deref(), offset, limit)).await
 }
 
+/// The local conversation holding a message of this account, if it has synced
+/// to this device. Reads only local mail; never contacts the provider.
+#[tauri::command]
+pub(crate) async fn thread_for_message(
+    account_id: String,
+    message_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<Option<String>> {
+    let database = state.database.clone();
+    run_database_task(move || database.thread_for_account_message(&account_id, &message_id)).await
+}
+
 #[tauri::command]
 pub(crate) async fn get_thread(id: String, state: State<'_, AppState>) -> AppResult<ThreadDetail> {
     let database = state.database.clone();

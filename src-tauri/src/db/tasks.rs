@@ -80,6 +80,9 @@ pub(super) fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadT
         updated_at: row.get(17)?,
         completed_at: row.get(18)?,
         goal_id: row.get(19)?,
+        completed_by_email: row
+            .get::<_, Option<String>>(20)?
+            .and_then(|json| serde_json::from_str(&json).ok()),
     })
 }
 
@@ -87,7 +90,7 @@ pub(super) fn select_sql() -> &'static str {
     "SELECT id, account_id, thread_id, source_message_id, subject_snapshot,
             title, notes, kind, due_kind, due_value, time_zone,
             repeat_interval_days, status, completion_source, evidence_text,
-            wait_after, created_at, updated_at, completed_at, goal_id
+            wait_after, created_at, updated_at, completed_at, goal_id, completed_by_email
      FROM tasks"
 }
 
@@ -385,7 +388,8 @@ impl Database {
         };
         self.with_transaction(|connection| {
             let changed = connection.execute(
-                "UPDATE tasks SET status=?1, completion_source=?2, completed_at=?3, updated_at=?4
+                "UPDATE tasks SET status=?1, completion_source=?2, completed_at=?3, updated_at=?4,
+                        completed_by_email=CASE WHEN ?1 IN ('open', 'in_progress') THEN NULL ELSE completed_by_email END
                  WHERE id=?5 AND (?6 IS NULL OR updated_at=?6)",
                 params![status, completion_source, completed_at, now, id, expected],
             )?;
@@ -399,7 +403,7 @@ impl Database {
                 [id],
                 task_from_row,
             )?;
-            let fields = ["status", "completionSource", "completedAt", "updatedAt"]
+            let fields = ["status", "completionSource", "completedAt", "completedByEmail", "updatedAt"]
                 .into_iter()
                 .map(str::to_owned)
                 .collect();
@@ -479,6 +483,118 @@ impl Database {
         )?)
     }
 
+    /// Finishes what a message that just left was linked to. Called in the
+    /// transaction that moves an outbox row to `sent`, once per row, for an
+    /// immediate send and a scheduled one alike.
+    ///
+    /// `follow_up_task_id` records a follow-up. `completes_task_id` records a
+    /// follow-up when the task repeats, and otherwise completes the task as
+    /// the user's (`completion_source = 'user'`, since they chose the link)
+    /// and notes the message that did it. A task that is missing, finished, or
+    /// can't take the change is left alone: the message is already gone, so a
+    /// task problem must never fail the send. The savepoint keeps a failed
+    /// half-write out of the transaction.
+    pub(crate) fn finish_linked_tasks_on(
+        tx: &Transaction<'_>,
+        outbox_id: &str,
+        at: i64,
+    ) -> DbResult<()> {
+        let row: Option<(String, Option<String>)> = tx
+            .query_row(
+                "SELECT payload, provider_id FROM outbox_messages WHERE id=?1",
+                [outbox_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((payload, provider_id)) = row else {
+            return Ok(());
+        };
+        let Ok(draft) = serde_json::from_str::<crate::correspondence::Draft>(&payload) else {
+            return Ok(());
+        };
+        if draft.follow_up_task_id.is_none() && draft.completes_task_id.is_none() {
+            return Ok(());
+        }
+        tx.execute_batch("SAVEPOINT finish_linked_tasks")?;
+        match Self::finish_linked_tasks_inner(tx, &draft, provider_id, at) {
+            Ok(()) => tx.execute_batch("RELEASE finish_linked_tasks")?,
+            Err(_) => {
+                tx.execute_batch("ROLLBACK TO finish_linked_tasks; RELEASE finish_linked_tasks")?
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_linked_tasks_inner(
+        tx: &Transaction<'_>,
+        draft: &crate::correspondence::Draft,
+        provider_id: Option<String>,
+        at: i64,
+    ) -> DbResult<()> {
+        const FOLLOW_UP_FIELDS: [&str; 5] = [
+            "dueValue",
+            "waitAfter",
+            "completionSource",
+            "completedAt",
+            "updatedAt",
+        ];
+        let record_follow_up = |tx: &Transaction<'_>, id: &str| -> DbResult<()> {
+            match Self::record_follow_up_on(tx, id) {
+                Ok(task) => record_task(
+                    tx,
+                    &task,
+                    Some(FOLLOW_UP_FIELDS.into_iter().map(str::to_owned).collect()),
+                ),
+                Err(DatabaseError::NotFound(_)) | Err(DatabaseError::Validation(_)) => Ok(()),
+                Err(error) => Err(error),
+            }
+        };
+        if let Some(id) = &draft.follow_up_task_id {
+            record_follow_up(tx, id)?;
+        }
+        let Some(id) = draft
+            .completes_task_id
+            .as_ref()
+            .filter(|id| draft.follow_up_task_id.as_ref() != Some(*id))
+        else {
+            return Ok(());
+        };
+        let Some(task) = task_by_id(tx, id)?.filter(|task| is_active_status(&task.status)) else {
+            return Ok(());
+        };
+        if task.kind == "follow_up" && task.repeat_interval_days.is_some() {
+            return record_follow_up(tx, id);
+        }
+        let record = crate::models::CompletedByEmail {
+            account_id: draft.account.clone(),
+            subject: draft.subject.chars().take(MAX_TITLE).collect(),
+            sent_at: at,
+            message_id: provider_id,
+        };
+        let now = Utc::now().to_rfc3339();
+        tx.execute(
+            "UPDATE tasks SET status='completed', completion_source='user', completed_at=?1, updated_at=?1, completed_by_email=?2
+             WHERE id=?3 AND status IN ('open', 'in_progress')",
+            params![now, serde_json::to_string(&record).map_err(serialization_error)?, id],
+        )?;
+        let done = tx.query_row(
+            &format!("{} WHERE id = ?1", select_sql()),
+            [id],
+            task_from_row,
+        )?;
+        let fields = [
+            "status",
+            "completionSource",
+            "completedAt",
+            "completedByEmail",
+            "updatedAt",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        record_task(tx, &done, Some(fields))
+    }
+
     pub fn reconcile_waiting_tasks(&self) -> DbResult<usize> {
         let now = Utc::now().to_rfc3339();
         self.with_connection(|connection| {
@@ -517,8 +633,17 @@ impl Database {
                     task.thread_id = Some(super::threads::local_thread_id(&task.account_id, &provider_id));
                 }
             }
+            // Only a finished task keeps the record. A device that predates it
+            // can reopen a task without knowing to clear it.
+            let completed_by_email = task
+                .completed_by_email
+                .as_ref()
+                .filter(|_| !is_active_status(&task.status))
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(serialization_error)?;
             connection.execute(
-                "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at,goal_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20) ON CONFLICT(id) DO UPDATE SET goal_id=excluded.goal_id, account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
+                "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at,goal_id,completed_by_email) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21) ON CONFLICT(id) DO UPDATE SET goal_id=excluded.goal_id, completed_by_email=excluded.completed_by_email, account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
                 params![
                     task.id,
                     task.account_id,
@@ -539,7 +664,8 @@ impl Database {
                     task.created_at,
                     task.updated_at,
                     task.completed_at,
-                    task.goal_id
+                    task.goal_id,
+                    completed_by_email,
                 ],
             )?;
             Ok(())
@@ -779,6 +905,77 @@ mod tests {
         assert!(database.create_task(&request).is_err());
         request.kind = "action".into();
         assert!(database.create_task(&request).is_err());
+    }
+
+    #[test]
+    fn a_synced_task_keeps_the_email_that_finished_it_and_an_older_write_still_applies() {
+        let source = Database::open_memory();
+        let task = source
+            .create_task(&CreateTaskRequest {
+                account_id: "account@example.com".into(),
+                thread_id: None,
+                source_message_id: None,
+                subject_snapshot: None,
+                title: "Send the contract".into(),
+                notes: None,
+                kind: "action".into(),
+                due_kind: "none".into(),
+                due_value: None,
+                time_zone: None,
+                repeat_interval_days: None,
+                evidence_text: None,
+                goal_id: None,
+            })
+            .unwrap();
+        let record = crate::models::CompletedByEmail {
+            account_id: "account@example.com".into(),
+            subject: "The contract".into(),
+            sent_at: 1_900_000_000_000,
+            message_id: Some("m-1".into()),
+        };
+        let mut finished = task.clone();
+        finished.status = "completed".into();
+        finished.completion_source = Some("user".into());
+        finished.completed_at = Some("2026-11-25T10:00:00Z".into());
+        finished.completed_by_email = Some(record.clone());
+
+        let peer = Database::open_memory();
+        let payload = serde_json::to_value(&finished).unwrap();
+        assert_eq!(payload["completedByEmail"]["messageId"], "m-1");
+        threestrands_sync_protocol::EntityType::Task
+            .validate_payload(&payload)
+            .unwrap();
+        peer.upsert_synced_task(serde_json::from_value(payload).unwrap())
+            .unwrap();
+        assert_eq!(
+            peer.list_tasks(None, None).unwrap()[0].completed_by_email,
+            Some(record)
+        );
+
+        // A device that predates the field writes none, and still applies.
+        let mut older = serde_json::to_value(&task).unwrap();
+        older.as_object_mut().unwrap().remove("completedByEmail");
+        threestrands_sync_protocol::EntityType::Task
+            .validate_payload(&older)
+            .unwrap();
+        let older: ThreadTask = serde_json::from_value(older).unwrap();
+        assert_eq!(older.completed_by_email, None);
+        peer.upsert_synced_task(older).unwrap();
+        let reopened = &peer.list_tasks(None, None).unwrap()[0];
+        assert_eq!(reopened.status, "open");
+        assert_eq!(
+            reopened.completed_by_email, None,
+            "reopening elsewhere drops the record"
+        );
+
+        // A record that arrives on a task that is open is not kept.
+        let mut stale = finished;
+        stale.status = "open".into();
+        peer.upsert_synced_task(stale).unwrap();
+        assert_eq!(
+            peer.list_tasks(None, None).unwrap()[0].completed_by_email,
+            None
+        );
     }
 
     #[test]
