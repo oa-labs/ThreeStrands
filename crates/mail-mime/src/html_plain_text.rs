@@ -176,6 +176,11 @@ pub fn image_only_words(html: &str) -> HashSet<String> {
 /// an unclosed hidden element swallowed the message.
 pub const MAX_PREHEADER_CHARS: usize = 300;
 
+/// How many at-rules deep a leading stylesheet may nest (`@media` inside
+/// `@supports`, and so on). A stylesheet nested deeper is not treated as one,
+/// which bounds the recursion on sender-controlled text.
+pub const MAX_CSS_NESTING_DEPTH: usize = 16;
+
 /// Fewest words, each with two or more letters, a preheader must hold, so a
 /// hidden tracking token is not mistaken for one.
 pub const MIN_PREHEADER_WORDS: usize = 3;
@@ -333,7 +338,7 @@ pub fn preheader(html: &str) -> Option<String> {
 pub fn after_leading_stylesheet(text: &str) -> Option<&str> {
     let mut rest = text;
     let mut found = false;
-    while let Some(end) = css_rule_end(rest.trim_start()) {
+    while let Some(end) = css_rule_end(rest.trim_start(), 0) {
         rest = &rest.trim_start()[end..];
         found = true;
     }
@@ -341,7 +346,9 @@ pub fn after_leading_stylesheet(text: &str) -> Option<&str> {
 }
 
 /// Byte length of the CSS rule or at-rule at the start of `text`.
-fn css_rule_end(text: &str) -> Option<usize> {
+/// `depth` counts the at-rules enclosing `text`; past `MAX_CSS_NESTING_DEPTH`
+/// the rule is not recognized.
+fn css_rule_end(text: &str, depth: usize) -> Option<usize> {
     if text.starts_with('@') {
         let stop = text.find(['{', ';', '}'])?;
         return match text.as_bytes()[stop] {
@@ -351,9 +358,12 @@ fn css_rule_end(text: &str) -> Option<usize> {
                 if let Some(end) = declaration_block_end(body) {
                     return Some(stop + 1 + end);
                 }
+                if depth >= MAX_CSS_NESTING_DEPTH {
+                    return None;
+                }
                 let mut inner = body;
                 let mut nested = false;
-                while let Some(end) = css_rule_end(inner.trim_start()) {
+                while let Some(end) = css_rule_end(inner.trim_start(), depth + 1) {
                     inner = &inner.trim_start()[end..];
                     nested = true;
                 }
@@ -402,8 +412,8 @@ fn is_declaration(entry: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        after_leading_stylesheet, image_only_words, preheader, MAX_PREHEADER_CHARS,
-        MIN_PREHEADER_WORDS,
+        after_leading_stylesheet, image_only_words, preheader, MAX_CSS_NESTING_DEPTH,
+        MAX_PREHEADER_CHARS, MIN_PREHEADER_WORDS,
     };
 
     #[test]
@@ -529,5 +539,50 @@ mod tests {
         ] {
             assert_eq!(after_leading_stylesheet(text), None, "{text}");
         }
+    }
+
+    fn nested_stylesheet(levels: usize) -> String {
+        format!(
+            "{}.a {{ color: red; }}{} Hello",
+            "@media screen {".repeat(levels),
+            "}".repeat(levels)
+        )
+    }
+
+    #[test]
+    fn strips_nested_at_rules_up_to_the_depth_limit() {
+        assert_eq!(
+            after_leading_stylesheet(
+                "@supports (display: grid) { @media screen { .a { color: red; } } } Hi"
+            ),
+            Some("Hi")
+        );
+        for (levels, expected) in [
+            (MAX_CSS_NESTING_DEPTH - 1, Some("Hello")),
+            (MAX_CSS_NESTING_DEPTH, Some("Hello")),
+            (MAX_CSS_NESTING_DEPTH + 1, None),
+        ] {
+            assert_eq!(
+                after_leading_stylesheet(&nested_stylesheet(levels)),
+                expected,
+                "{levels} levels"
+            );
+        }
+    }
+
+    #[test]
+    fn adversarial_nesting_neither_overflows_the_stack_nor_matches() {
+        // A small stack proves the walk is not deeply recursive.
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                assert_eq!(after_leading_stylesheet(&"@a{".repeat(100_000)), None);
+                assert_eq!(after_leading_stylesheet(&"@a{ ".repeat(100_000)), None);
+                let balanced = format!("{}{}", "@a{".repeat(100_000), "}".repeat(100_000));
+                assert_eq!(after_leading_stylesheet(&balanced), None);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

@@ -164,17 +164,25 @@ fn subject_text(subject: &str) -> &str {
 /// `text` without complete HTML comments (`<!-- … -->`) or conditional
 /// markers (`<![endif]-->`), which some senders' plain-text parts copy from
 /// their HTML. An unterminated comment stays as written.
+///
+/// Linear in the length of `text`: each terminator search is remembered, so a
+/// terminator that is absent ahead of one opener is not searched for again at
+/// the next, and one that is present is not searched for again until the
+/// scan has moved past it.
 fn strip_html_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find("<!") {
-        out.push_str(&rest[..start]);
-        rest = &rest[start..];
+    let mut pos = 0;
+    let mut comment_close = None;
+    let mut bracket_close = None;
+    while let Some(offset) = text[pos..].find("<!") {
+        let start = pos + offset;
+        out.push_str(&text[pos..start]);
+        let rest = &text[start..];
         let end = if rest.starts_with("<!--") {
-            rest[4..].find("-->").map(|end| 4 + end + 3)
+            cached_find(text, start + 4, "-->", &mut comment_close).map(|close| close + 3)
         } else if rest.starts_with("<![") {
-            rest.find(']').and_then(|close| {
-                let after = &rest[close + 1..];
+            cached_find(text, start, "]", &mut bracket_close).and_then(|close| {
+                let after = &text[close + 1..];
                 if after.starts_with("-->") {
                     Some(close + 4)
                 } else if after.starts_with('>') {
@@ -187,15 +195,34 @@ fn strip_html_comments(text: &str) -> String {
             None
         };
         match end {
-            Some(end) => rest = &rest[end..],
+            Some(end) => pos = end,
             None => {
                 out.push_str("<!");
-                rest = &rest[2..];
+                pos = start + 2;
             }
         }
     }
-    out.push_str(rest);
+    out.push_str(&text[pos..]);
     out
+}
+
+/// Byte offset of the first `needle` in `text` at or after `from`. `cache`
+/// holds the previous answer: `Some(None)` when no later search can succeed,
+/// `Some(Some(at))` while `at` is still ahead of `from`.
+fn cached_find(
+    text: &str,
+    from: usize,
+    needle: &str,
+    cache: &mut Option<Option<usize>>,
+) -> Option<usize> {
+    match *cache {
+        Some(None) => return None,
+        Some(Some(at)) if at >= from => return Some(at),
+        _ => {}
+    }
+    let found = text[from..].find(needle).map(|offset| from + offset);
+    *cache = Some(found);
+    found
 }
 
 /// `line` with runs of `MIN_RULE_RUN` or more of one rule character
@@ -852,6 +879,40 @@ mod tests {
         assert!(
             full("[Don't Let Your Funds Go To Waste](https://example.com/fsa)")
                 .starts_with("Don't Let Your Funds")
+        );
+    }
+
+    #[test]
+    fn strips_comments_and_markers_but_keeps_unterminated_ones() {
+        assert_eq!(
+            super::strip_html_comments("a<!-- x -->b<![endif]-->c<![if x]>d"),
+            "abcd"
+        );
+        assert_eq!(
+            super::strip_html_comments("a<!-- x b <!-- y"),
+            "a<!-- x b <!-- y"
+        );
+        assert_eq!(super::strip_html_comments("<!--a<!--b-->c"), "c");
+        assert_eq!(super::strip_html_comments("<!-->x-->y"), "y");
+        assert_eq!(super::strip_html_comments("<![x<![y]>z"), "z");
+    }
+
+    #[test]
+    fn unterminated_openers_stay_linear_and_stay_as_written() {
+        let comments = "<!--".repeat(500_000);
+        assert_eq!(super::strip_html_comments(&comments), comments);
+        let markers = "<![".repeat(500_000);
+        assert_eq!(super::strip_html_comments(&markers), markers);
+        // A closing bracket far ahead that never completes a marker.
+        let far = format!("{}]x", "<![".repeat(500_000));
+        assert_eq!(super::strip_html_comments(&far), far);
+        let mixed = "<!--<![<!".repeat(200_000);
+        assert_eq!(super::strip_html_comments(&mixed), mixed);
+        // A real comment at the end still goes, after many failed openers.
+        let ended = format!("{}<!-- gone -->kept", "<![".repeat(100_000));
+        assert_eq!(
+            super::strip_html_comments(&ended),
+            format!("{}kept", "<![".repeat(100_000))
         );
     }
 }
