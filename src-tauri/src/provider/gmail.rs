@@ -248,7 +248,8 @@ impl GmailClient {
         request: RequestBuilder,
         history: bool,
     ) -> ProviderResult<reqwest::Response> {
-        self.send_with_retries(request, history, RETRIES).await
+        self.send_with_retries(request, history, RETRIES, false)
+            .await
     }
 
     /// Like [`send`](Self::send), but never replays a request Gmail may
@@ -259,7 +260,7 @@ impl GmailClient {
         &self,
         request: RequestBuilder,
     ) -> ProviderResult<reqwest::Response> {
-        self.send_with_retries(request, false, 0).await
+        self.send_with_retries(request, false, 0, false).await
     }
 
     async fn send_with_retries(
@@ -267,6 +268,7 @@ impl GmailClient {
         mut request: RequestBuilder,
         history: bool,
         retries: u32,
+        id_lookup: bool,
     ) -> ProviderResult<reqwest::Response> {
         let mut reauthorized = false;
         let mut attempt = 0;
@@ -341,6 +343,12 @@ impl GmailClient {
                 continue;
             }
             let detail = gmail_error_detail(status, &body);
+            if id_lookup && is_invalid_identifier(status, &body) {
+                // The request's only variable is the identifier, and Gmail's
+                // structured error says that identifier is itself invalid, so
+                // no such object can exist.
+                return Err(ProviderError::NotFound);
+            }
             return Err(classify_client_rejection(status, detail));
         }
         Err(ProviderError::RetryableServer(
@@ -362,8 +370,20 @@ impl GmailClient {
         history: bool,
         retries: u32,
     ) -> ProviderResult<T> {
+        self.json_lookup(request, history, retries, false).await
+    }
+
+    /// `id_lookup` marks a GET whose only variable is an object id, so a
+    /// structured "invalid id" answer reports [`ProviderError::NotFound`].
+    async fn json_lookup<T: DeserializeOwned>(
+        &self,
+        request: RequestBuilder,
+        history: bool,
+        retries: u32,
+        id_lookup: bool,
+    ) -> ProviderResult<T> {
         let body = self
-            .send_with_retries(request, history, retries)
+            .send_with_retries(request, history, retries, id_lookup)
             .await?
             .bytes()
             .await
@@ -381,6 +401,40 @@ impl GmailClient {
             ))
         })
     }
+}
+
+/// Whether a Gmail error body structurally says the request's identifier is
+/// invalid: a 400 whose error status is `INVALID_ARGUMENT` or whose first
+/// error item's reason is `invalidArgument`. Any other 400, such as
+/// `failedPrecondition`, says nothing about whether the object exists.
+fn is_invalid_identifier(status: StatusCode, body: &str) -> bool {
+    #[derive(Deserialize)]
+    struct Reply {
+        error: ErrorBody,
+    }
+    #[derive(Deserialize)]
+    struct ErrorBody {
+        #[serde(default)]
+        status: String,
+        #[serde(default)]
+        errors: Vec<ErrorItem>,
+    }
+    #[derive(Deserialize)]
+    struct ErrorItem {
+        #[serde(default)]
+        reason: String,
+    }
+    if status != StatusCode::BAD_REQUEST {
+        return false;
+    }
+    let Ok(Reply { error }) = serde_json::from_str::<Reply>(body) else {
+        return false;
+    };
+    error.status == "INVALID_ARGUMENT"
+        || error
+            .errors
+            .iter()
+            .any(|item| item.reason == "invalidArgument")
 }
 
 fn classify_client_rejection(status: StatusCode, detail: String) -> ProviderError {
@@ -567,7 +621,10 @@ impl MailSync for GmailClient {
                 format!("{}/threads/{id}?format=full", self.api),
             )
             .await?;
-        Ok(self.json::<GmailThread>(request, false).await?.messages)
+        Ok(self
+            .json_lookup::<GmailThread>(request, false, RETRIES, true)
+            .await?
+            .messages)
     }
 
     async fn poll(&self, cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
@@ -1665,6 +1722,103 @@ mod tests {
         assert!(message_modify_url(API, &ids[..1])
             .unwrap()
             .ends_with("/messages/message-1/modify"));
+    }
+
+    mod thread_fetch_errors {
+        use axum::{
+            extract::{Path, State},
+            http::StatusCode as HttpStatus,
+            routing::get,
+            Router,
+        };
+        use std::sync::{Arc, Mutex as StdMutex};
+
+        use super::*;
+        use crate::auth::Tokens;
+
+        const INVALID_ID: &str = r#"{"error":{"code":400,"message":"Invalid id value","errors":[{"message":"Invalid id value","domain":"global","reason":"invalidArgument"}],"status":"INVALID_ARGUMENT"}}"#;
+        const FAILED_PRECONDITION: &str = r#"{"error":{"code":400,"message":"Precondition check failed.","errors":[{"message":"Precondition check failed.","domain":"global","reason":"failedPrecondition"}],"status":"FAILED_PRECONDITION"}}"#;
+
+        async fn serve(status: u16, body: &'static str) -> String {
+            let reply = Arc::new(StdMutex::new((status, body)));
+            let router = Router::new()
+                .route(
+                    "/threads/{id}",
+                    get(
+                        |State(reply): State<Arc<StdMutex<(u16, &'static str)>>>,
+                         Path(_): Path<String>| async move {
+                            let (status, body) = *reply.lock().unwrap();
+                            (HttpStatus::from_u16(status).unwrap(), body)
+                        },
+                    ),
+                )
+                .with_state(reply);
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            format!("http://{address}")
+        }
+
+        async fn fetch(status: u16, body: &'static str) -> ProviderResult<Vec<RawMessage>> {
+            let base = serve(status, body).await;
+            GmailClient::new(OAuthCredential::in_memory_for_test(
+                &format!("{base}/token"),
+                Tokens {
+                    access_token: "token".into(),
+                    refresh_token: Some("refresh".into()),
+                    expires_at: u64::MAX,
+                },
+            ))
+            .with_api_base(&base)
+            .fetch_thread("t-1")
+            .await
+        }
+
+        #[tokio::test]
+        async fn a_404_and_the_structured_invalid_id_answer_say_the_thread_is_gone() {
+            assert!(matches!(
+                fetch(404, "{}").await,
+                Err(ProviderError::NotFound)
+            ));
+            assert!(matches!(
+                fetch(400, INVALID_ID).await,
+                Err(ProviderError::NotFound)
+            ));
+        }
+
+        #[tokio::test]
+        async fn other_400s_do_not_say_the_thread_is_gone() {
+            for body in [FAILED_PRECONDITION, "not json", "{}"] {
+                assert!(
+                    matches!(
+                        fetch(400, body).await,
+                        Err(ProviderError::InvalidOperation(_))
+                    ),
+                    "{body}"
+                );
+            }
+            assert!(matches!(
+                fetch(422, INVALID_ID).await,
+                Err(ProviderError::InvalidOperation(_))
+            ));
+        }
+
+        #[test]
+        fn only_a_400_with_an_invalid_argument_error_names_the_identifier_invalid() {
+            assert!(is_invalid_identifier(StatusCode::BAD_REQUEST, INVALID_ID));
+            assert!(!is_invalid_identifier(
+                StatusCode::BAD_REQUEST,
+                FAILED_PRECONDITION
+            ));
+            assert!(!is_invalid_identifier(StatusCode::FORBIDDEN, INVALID_ID));
+            // Message wording alone proves nothing without the structured reason.
+            assert!(!is_invalid_identifier(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":{"message":"Invalid id value"}}"#
+            ));
+        }
     }
 
     mod server_drafts {

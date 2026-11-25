@@ -404,6 +404,9 @@ impl ImapProvider {
         thread_dynamic.sort();
 
         let mut messages = Vec::new();
+        // Messages that exist on the server but were refused under our limits.
+        // Unlike an expunged message they do not prove the thread is gone.
+        let mut skipped: Vec<(String, String)> = Vec::new();
         for message_id in message_ids {
             let locations = self
                 .store
@@ -442,8 +445,23 @@ impl ImapProvider {
                     };
                     match fetched {
                         Ok(Some(raw)) => raw,
-                        // No body on the server (expunged between sync and read).
-                        Ok(None) => continue,
+                        // The server returned no body although this device
+                        // still holds a location for the message. That is not
+                        // proof it was expunged: async-imap drops a tagged
+                        // `NO` to a FETCH (Dovecot's "Some messages could not
+                        // be FETCHed") and returns an empty result. A real
+                        // expunge removes the location at the next sync round,
+                        // which is what makes the thread `NotFound`.
+                        Ok(None) => {
+                            log::warn!(
+                                "imap fetch_thread: no body returned for {message_id}; keeping its thread"
+                            );
+                            skipped.push((
+                                message_id.clone(),
+                                "The mail server returned no content for this message".to_string(),
+                            ));
+                            continue;
+                        }
                         // Oversize/unfetchable body: skip this message with a
                         // reason, do NOT fail the whole thread (design rule /
                         // SLICE5A_FIXES item 2). Only transport/auth propagates.
@@ -451,6 +469,7 @@ impl ImapProvider {
                             log::warn!(
                                 "imap fetch_thread: skipping {message_id} (oversize body): {reason}"
                             );
+                            skipped.push((message_id.clone(), reason));
                             continue;
                         }
                         Err(error) => return Err(error),
@@ -468,6 +487,7 @@ impl ImapProvider {
                     // Per-message oversize: skip this message with a recorded
                     // reason, do NOT fail the whole thread (design rule).
                     log::warn!("imap fetch_thread: skipping {message_id}: {reason}");
+                    skipped.push((message_id.clone(), reason));
                     continue;
                 }
                 Err(error) => return Err(error),
@@ -475,7 +495,15 @@ impl ImapProvider {
         }
 
         if messages.is_empty() {
-            return Err(ProviderError::NotFound);
+            // Every message was expunged (NotFound), or at least one is still
+            // on the server but could not be fetched, so the thread remains.
+            if skipped.is_empty() {
+                return Err(ProviderError::NotFound);
+            }
+            return Err(ProviderError::ThreadUnfetchable {
+                reason: skipped[0].1.clone(),
+                messages: skipped,
+            });
         }
         Ok(messages)
     }

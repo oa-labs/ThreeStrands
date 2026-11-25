@@ -8,7 +8,8 @@
 //! | `UNAVAILABLE`, `INUSE`, dropped conn, timeout    | `TransientTransport`         |
 //! | `OVERQUOTA`                                      | `PermanentClientRejection`   |
 //! | `TRYCREATE`                                      | (caller) create + retry once |
-//! | `BAD` (and other `No`/`Bad` without a code)      | `InvalidOperation`           |
+//! | `BAD`, and `NO` with an unrecognised code        | `InvalidOperation`           |
+//! | `NO` without any code                            | `TransientTransport`         |
 //!
 //! Only an explicit authentication failure pauses the account, matching the
 //! Gmail rule that only `invalid_grant` forces a reconnect
@@ -21,7 +22,7 @@
 //! no mailbox-create path in Slice 1), so for now it maps to a
 //! `TransientTransport` carrying the retry intent, with a `// Slice 3` note.
 
-use async_imap::imap_proto::{Response, ResponseCode};
+use async_imap::imap_proto::{Response, ResponseCode, Status};
 
 use crate::provider::ProviderError;
 
@@ -44,6 +45,11 @@ pub enum ImapFailure {
     /// A `BAD` response or any other protocol-level rejection with no code we
     /// map specially.
     Bad(String),
+    /// A `NO` with no response code at all. RFC 3501 reserves `BAD` for
+    /// protocol and client errors; `NO` is an operational failure, such as
+    /// Dovecot's "Some messages could not be FETCHed", that usually clears on
+    /// its own. It is retried, never treated as a permanent rejection.
+    OperationFailed(String),
 }
 
 impl ImapFailure {
@@ -66,6 +72,9 @@ impl ImapFailure {
                 "mailbox does not exist (TRYCREATE); create-and-retry lands in Slice 3: {m}"
             )),
             ImapFailure::Bad(m) => ProviderError::InvalidOperation(m),
+            ImapFailure::OperationFailed(m) => ProviderError::TransientTransport(format!(
+                "the mail server could not complete the request: {m}"
+            )),
         }
     }
 }
@@ -92,6 +101,24 @@ pub fn classify_response_code(code: Option<&ResponseCode<'_>>, text: &str) -> Im
                 _ => ImapFailure::Bad(text.to_string()),
             }
         }
+    }
+}
+
+/// [`classify_response_code`] for a tagged completion with a known status:
+/// a `NO` that carries no response code (typed or bracketed) is an
+/// [`ImapFailure::OperationFailed`] rather than a protocol error.
+pub fn classify_tagged_response(
+    status: &Status,
+    code: Option<&ResponseCode<'_>>,
+    text: &str,
+) -> ImapFailure {
+    match classify_response_code(code, text) {
+        ImapFailure::Bad(text)
+            if *status == Status::No && code.is_none() && !text.starts_with('[') =>
+        {
+            ImapFailure::OperationFailed(text)
+        }
+        failure => failure,
     }
 }
 
@@ -140,6 +167,27 @@ pub(super) fn classify_async_imap_status_text(text: &str) -> ImapFailure {
     classify_status_text(text)
 }
 
+/// Whether async-imap's debug-formatted status text carries no response code,
+/// neither typed (`code: Some(..)`) nor bracketed at the start of the text.
+fn async_status_is_uncoded(text: &str) -> bool {
+    let information = [
+        "code: None, info: Some(\"",
+        "outcome: Outcome { code: None, information: Some(\"",
+    ]
+    .iter()
+    .find_map(|prefix| text.strip_prefix(prefix));
+    match information {
+        Some(information) => !information.trim_start().starts_with('['),
+        None if text.starts_with("code: None, info: None")
+            || text.starts_with("outcome: Outcome { code: None, information: None") =>
+        {
+            true
+        }
+        None if text.starts_with("code: ") || text.starts_with("outcome: ") => false,
+        None => !text.trim_start().starts_with('['),
+    }
+}
+
 /// Map an `async-imap` error directly to a [`ProviderError`], classifying IO /
 /// connection-drop kinds as transient and parsing any protocol status text
 /// through [`classify_status_text`]. This is the single entry point the
@@ -159,6 +207,22 @@ pub fn map_imap_error(err: &async_imap::error::Error) -> ProviderError {
         other => ImapFailure::Bad(format!("{other}")),
     };
     failure.into_provider_error()
+}
+
+/// [`map_imap_error`] for a command that only reads. There a `NO` with no
+/// response code is an operational failure that usually clears on its own, so
+/// it is retried rather than treated as a permanent invalid operation (as
+/// the write paths still do, since a refused change must not be retried
+/// forever). A `BAD`, or a `NO` carrying any code, keeps its mapping.
+pub fn map_read_error(err: &async_imap::error::Error) -> ProviderError {
+    if let async_imap::error::Error::No(text) = err {
+        if let ImapFailure::Bad(detail) = classify_async_imap_status_text(text) {
+            if async_status_is_uncoded(text) {
+                return ImapFailure::OperationFailed(detail).into_provider_error();
+            }
+        }
+    }
+    map_imap_error(err)
 }
 
 #[cfg(test)]
@@ -244,6 +308,14 @@ mod tests {
             classify_status_text("a02 NO Something unexpected"),
             ImapFailure::Bad(_)
         ));
+    }
+
+    #[test]
+    fn the_write_path_keeps_an_uncoded_no_permanent() {
+        let err = map_imap_error(&async_imap::error::Error::No(
+            "code: None, info: Some(\"Permission denied\")".into(),
+        ));
+        assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
     }
 
     #[test]

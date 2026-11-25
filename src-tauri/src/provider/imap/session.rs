@@ -24,7 +24,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::provider::ProviderError;
 
-use super::error::{classify_response_code, map_imap_error};
+use super::error::{
+    classify_response_code, classify_tagged_response, map_imap_error, map_read_error,
+};
 
 /// A mailbox's post-SELECT status, the subset of `async-imap`'s `Mailbox` the
 /// later slices read: the UID counters a resync compares and whether arbitrary
@@ -332,11 +334,11 @@ where
             .session
             .uid_fetch(uid_set, items)
             .await
-            .map_err(|e| map_imap_error(&e))?;
+            .map_err(|e| map_read_error(&e))?;
         let fetches: Vec<Result<Fetch, _>> = stream.collect().await;
         fetches
             .into_iter()
-            .map(|f| f.map_err(|e| map_imap_error(&e)))
+            .map(|f| f.map_err(|e| map_read_error(&e)))
             .collect()
     }
 
@@ -404,7 +406,8 @@ where
                     outcome,
                 } if tag.as_bytes() == request.as_bytes() => {
                     if *status != Status::Ok {
-                        return Err(classify_response_code(
+                        return Err(classify_tagged_response(
+                            status,
                             outcome.code.as_ref(),
                             outcome.information.as_deref().unwrap_or_default(),
                         )

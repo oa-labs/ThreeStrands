@@ -35,11 +35,13 @@ pub(crate) fn server_message_local_part(draft_id: &str) -> String {
 }
 
 fn server_message_id(draft_id: &str, domain: Option<&str>) -> String {
-    format!(
-        "{}@{}",
-        server_message_local_part(draft_id),
-        domain.unwrap_or("threestrands.local")
-    )
+    server_message_id_for_local_part(&server_message_local_part(draft_id), domain)
+}
+
+/// The same Message-ID from a local part already built by
+/// [`server_message_local_part`], as a queued deletion stores it.
+fn server_message_id_for_local_part(local_part: &str, domain: Option<&str>) -> String {
+    format!("{local_part}@{}", domain.unwrap_or("threestrands.local"))
 }
 
 /// Whether drafts on accounts of this kind are kept on the server.
@@ -87,6 +89,8 @@ pub(crate) struct Link {
     pub(crate) server_version: Option<String>,
     pub(crate) pushed_revision: i64,
     pub(crate) attempts: u32,
+    /// The sender address the server copy's Message-ID was built from.
+    pub(crate) sender: Option<String>,
 }
 
 pub(crate) struct Deletion {
@@ -95,6 +99,9 @@ pub(crate) struct Deletion {
     pub(crate) server_id: Option<String>,
     pub(crate) message_id: String,
     pub(crate) attempts: u32,
+    /// The sender address the copy's Message-ID was built from. Rows queued
+    /// before it was recorded have none and use the account address.
+    pub(crate) sender: Option<String>,
 }
 
 fn retry_at(attempts: u32, at: i64) -> i64 {
@@ -262,6 +269,10 @@ impl Correspondence {
             self.notify_draft(&draft, "local", None);
             return Ok(());
         }
+        // Record the sender before the copy exists, so a deletion queued at any
+        // later point can rebuild the Message-ID the copy was created with.
+        self.database
+            .record_draft_sender(&draft.id, draft.sender_address())?;
         match self.push_to_provider(provider.as_ref(), &draft, link).await {
             Ok(None) => {
                 // Changed on the server too: the user picks a version first.
@@ -404,14 +415,21 @@ impl Correspondence {
         let server_id = match &deletion.server_id {
             Some(id) => Some(id.clone()),
             None => {
-                let domain = provider
-                    .message_id_domain(&deletion.account)
-                    .unwrap_or(None);
-                let message_id = format!(
-                    "{}@{}",
-                    deletion.message_id,
-                    domain.as_deref().unwrap_or("threestrands.local")
-                );
+                // Build the Message-ID exactly as the push did: from the
+                // sender it was queued with, or the account address for a row
+                // queued before the sender was recorded.
+                let sender = deletion.sender.as_deref().unwrap_or(&deletion.account);
+                let domain = match provider.message_id_domain(sender) {
+                    Ok(domain) => domain,
+                    // Searching with a guessed domain would miss the copy and
+                    // let the deletion finish with it still on the server.
+                    Err(_) => {
+                        retry(deletion.attempts + 1)?;
+                        return Ok(());
+                    }
+                };
+                let message_id =
+                    server_message_id_for_local_part(&deletion.message_id, domain.as_deref());
                 match provider.find_server_draft(&message_id).await {
                     Ok(found) => found.map(|found| found.id),
                     Err(_) => {
@@ -496,6 +514,12 @@ pub(crate) mod tests {
         /// How many of the next listings fail.
         failing_lists: StdMutex<usize>,
         created: StdMutex<usize>,
+        /// Message-ID domain by sender address, as an IMAP account answers.
+        domains: StdMutex<HashMap<String, String>>,
+        /// Extra sending addresses the account answers with.
+        identities: StdMutex<Vec<String>>,
+        /// Whether the Message-ID domain lookup fails.
+        domain_lookup_fails: StdMutex<bool>,
     }
 
     impl FakeDrafts {
@@ -525,6 +549,18 @@ pub(crate) mod tests {
         pub(crate) fn fail_lists(&self, count: usize) {
             *self.failing_lists.lock().unwrap() = count;
         }
+        fn use_domain(&self, sender: &str, domain: &str) {
+            self.domains
+                .lock()
+                .unwrap()
+                .insert(sender.into(), domain.into());
+        }
+        fn add_identity(&self, address: &str) {
+            self.identities.lock().unwrap().push(address.into());
+        }
+        fn fail_domain_lookup(&self, fails: bool) {
+            *self.domain_lookup_fails.lock().unwrap() = fails;
+        }
         fn fail_next(&self, error: ProviderError) {
             *self.fail_next.lock().unwrap() = Some(error);
         }
@@ -553,6 +589,24 @@ pub(crate) mod tests {
         }
         fn server_drafts(&self) -> bool {
             self.supported
+        }
+        async fn identities(
+            &self,
+            account: &str,
+        ) -> ProviderResult<Vec<crate::provider::SendingIdentity>> {
+            Ok(std::iter::once(account.to_string())
+                .chain(self.identities.lock().unwrap().iter().cloned())
+                .map(|address| crate::provider::SendingIdentity {
+                    address,
+                    ..Default::default()
+                })
+                .collect())
+        }
+        fn message_id_domain(&self, sender: &str) -> ProviderResult<Option<String>> {
+            if *self.domain_lookup_fails.lock().unwrap() {
+                return Err(ProviderError::InvalidOperation("no domain".into()));
+            }
+            Ok(self.domains.lock().unwrap().get(sender).cloned())
         }
         async fn find_server_draft(&self, message_id: &str) -> ProviderResult<Option<ServerDraft>> {
             self.calls
@@ -1182,6 +1236,113 @@ pub(crate) mod tests {
             1,
             "the restored draft keeps a server copy"
         );
+    }
+
+    const ALIAS: &str = "alias@other.example";
+
+    /// A draft written from an alias on another domain, pushed so its server
+    /// copy carries that domain in its Message-ID, then discarded.
+    async fn pushed_from_alias_then_discarded(harness: &Harness) -> Draft {
+        harness.server.use_domain(ALIAS, "other.example");
+        harness.server.use_domain(ACCOUNT, "example.com");
+        harness.server.add_identity(ALIAS);
+        let draft = harness.edit(harness.new_draft(), "From an alias");
+        harness
+            .db()
+            .test_connection()
+            .unwrap()
+            .execute(
+                "UPDATE drafts SET payload=json_set(payload, '$.from', ?2) WHERE id=?1",
+                params![draft.id, ALIAS],
+            )
+            .unwrap();
+        harness.run_after(PAST_DELAY).await;
+        let pushed = harness.only_server_body();
+        assert!(pushed.contains("@other.example>"), "{pushed}");
+        // The push never recorded the server's id, so deleting the copy means
+        // finding it by Message-ID.
+        harness
+            .db()
+            .test_connection()
+            .unwrap()
+            .execute("UPDATE draft_server_links SET server_id=NULL", [])
+            .unwrap();
+        harness.db().discard_draft(&draft.id).unwrap();
+        draft
+    }
+
+    #[tokio::test]
+    async fn deleting_an_alias_draft_finds_its_copy_by_the_senders_domain() {
+        let harness = Harness::new();
+        pushed_from_alias_then_discarded(&harness).await;
+        let late = crate::correspondence::DISCARD_SERVER_DELAY_MS + 1;
+        harness.run_after(late).await;
+        harness.run_after(late).await;
+        assert!(
+            harness.server.drafts().is_empty(),
+            "the copy on the alias's domain is deleted"
+        );
+        let calls = harness.server.calls();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.starts_with("find draft-") && call.ends_with("@other.example")),
+            "{calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_deletion_queued_before_senders_were_recorded_looks_up_by_the_account() {
+        let harness = Harness::new();
+        harness.server.use_domain(ACCOUNT, "example.com");
+        let draft = harness.edit(harness.new_draft(), "Plain");
+        harness.run_after(PAST_DELAY).await;
+        assert!(harness.only_server_body().contains("@example.com>"));
+        // A link from before senders were recorded has none.
+        harness
+            .db()
+            .test_connection()
+            .unwrap()
+            .execute(
+                "UPDATE draft_server_links SET sender=NULL, server_id=NULL",
+                [],
+            )
+            .unwrap();
+        harness.db().discard_draft(&draft.id).unwrap();
+        let late = crate::correspondence::DISCARD_SERVER_DELAY_MS + 1;
+        harness.run_after(late).await;
+        harness.run_after(late).await;
+        assert!(harness.server.drafts().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_domain_lookup_defers_the_deletion_instead_of_finishing_it() {
+        let harness = Harness::new();
+        pushed_from_alias_then_discarded(&harness).await;
+        harness.server.fail_domain_lookup(true);
+        let late = crate::correspondence::DISCARD_SERVER_DELAY_MS + 1;
+        harness.run_after(late).await;
+        let queued: i64 = harness
+            .db()
+            .test_connection()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM draft_server_deletions WHERE attempts>0",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(queued, 1, "the deletion stays queued for a retry");
+        assert_eq!(harness.server.drafts().len(), 1);
+        assert!(!harness
+            .server
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("delete")));
+
+        harness.server.fail_domain_lookup(false);
+        harness.run_after(late + 24 * 60 * 60 * 1000).await;
+        assert!(harness.server.drafts().is_empty(), "the retry deletes it");
     }
 
     #[tokio::test]
