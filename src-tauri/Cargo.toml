@@ -129,6 +129,10 @@ jni = "=0.22.4"
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"
+# The PDF worker's resource limits (setrlimit) and the macOS footprint poll
+# (proc_pid_rusage). Already in the tree via other crates; only declared here,
+# like `smtp-proto` above — no new crate.
+libc = "0.2"
 
 # Windows and Linux open email links and calendar files by launching the app
 # with them as arguments; this forwards a second launch to the running copy

@@ -11,7 +11,7 @@ use chrono::Utc;
 use tauri::State;
 
 use super::attachments::load_attachment;
-use crate::{ai, attachment_text, db};
+use crate::{ai, attachment_text, db, pdf_worker};
 use crate::{database_result, run_database_task, AppError, AppResult, AppState};
 
 #[tauri::command]
@@ -511,16 +511,27 @@ fn chat_attachment_refs(
 }
 
 /// Extracts an attachment's text off the async runtime, failing if the
-/// parser runs past the timeout or panics on a hostile file.
+/// parser runs past the timeout or panics on a hostile file. PDFs are parsed
+/// by `pdf_command` (a killable worker process on desktop).
 async fn extract_chat_attachment(
     filename: &str,
     mime_type: &str,
     bytes: Vec<u8>,
     timeout: std::time::Duration,
+    pdf_command: &pdf_worker::WorkerCommand,
 ) -> AppResult<attachment_text::ExtractedText> {
     let kind = attachment_text::kind_for(filename, mime_type).ok_or_else(|| {
         format!("Thread Chat can't read {filename}; it reads text, PDF, Word, Excel, and PowerPoint files")
     })?;
+    if kind == attachment_text::DocumentKind::Pdf {
+        if bytes.len() > crate::limits::MAX_ATTACHMENT_BYTES {
+            return Err(format!("Couldn't read {filename}: it is too large to read").into());
+        }
+        return pdf_worker::pdf_pages(pdf_command, bytes, timeout)
+            .await
+            .and_then(|pages| attachment_text::extract_pdf_pages(&pages))
+            .map_err(|reason| format!("Couldn't read {filename}: {reason}").into());
+    }
     run_attachment_extraction(filename, timeout, move || {
         attachment_text::extract(kind, &bytes)
     })
@@ -549,7 +560,16 @@ async fn chat_attachments(
 ) -> AppResult<(Vec<ChatAttachmentSource>, Vec<ai::ChatAttachmentInput>)> {
     let mut sources = Vec::new();
     let mut inputs = Vec::new();
+    let pdf_command = pdf_worker::WorkerCommand::current_exe()
+        .map_err(|_| "Thread Chat couldn't start its document reader")?;
     for reference in references {
+        // A file that already failed or timed out is not run again.
+        if let Some(error) = state
+            .attachment_text
+            .failure(&reference.message_id, &reference.attachment_id)
+        {
+            return Err(error.into());
+        }
         let (filename, mime_type, extracted) = match state
             .attachment_text
             .get(&reference.message_id, &reference.attachment_id)
@@ -558,13 +578,25 @@ async fn chat_attachments(
             None => {
                 let (filename, mime_type, bytes) =
                     load_attachment(&reference.message_id, &reference.attachment_id, state).await?;
-                let text = extract_chat_attachment(
+                let text = match extract_chat_attachment(
                     &filename,
                     &mime_type,
                     bytes,
                     attachment_text::ATTACHMENT_EXTRACT_TIMEOUT,
+                    &pdf_command,
                 )
-                .await?;
+                .await
+                {
+                    Ok(text) => text,
+                    Err(error) => {
+                        state.attachment_text.insert_failure(
+                            &reference.message_id,
+                            &reference.attachment_id,
+                            error.to_string(),
+                        );
+                        return Err(error);
+                    }
+                };
                 let entry = (filename, mime_type, text);
                 state.attachment_text.insert(
                     &reference.message_id,
@@ -659,12 +691,13 @@ mod chat_attachment_tests {
             "text/plain",
             b"Ship Friday".to_vec(),
             Duration::from_secs(5),
+            &pdf_worker::WorkerCommand::current_exe().unwrap(),
         )
         .await
         .unwrap();
         assert_eq!(text.text, "Ship Friday");
         assert_eq!(
-            extract_chat_attachment("photo.jpg", "image/jpeg", vec![1, 2, 3], Duration::from_secs(5)).await.unwrap_err().to_string(),
+            extract_chat_attachment("photo.jpg", "image/jpeg", vec![1, 2, 3], Duration::from_secs(5), &pdf_worker::WorkerCommand::current_exe().unwrap()).await.unwrap_err().to_string(),
             "Thread Chat can't read photo.jpg; it reads text, PDF, Word, Excel, and PowerPoint files"
         );
         assert_eq!(
@@ -672,7 +705,8 @@ mod chat_attachment_tests {
                 "contract.docx",
                 "",
                 b"not a zip".to_vec(),
-                Duration::from_secs(5)
+                Duration::from_secs(5),
+                &pdf_worker::WorkerCommand::current_exe().unwrap()
             )
             .await
             .unwrap_err()
@@ -703,6 +737,105 @@ mod chat_attachment_tests {
             panicked.unwrap_err().to_string(),
             "Couldn't read bad.pdf: it isn't a readable file"
         );
+    }
+
+    /// A stand-in worker: `/bin/sh -c script`, run like the real worker.
+    #[cfg(unix)]
+    fn shell_worker(script: &str) -> pdf_worker::WorkerCommand {
+        pdf_worker::WorkerCommand {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), script.into()],
+            env: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    async fn read_pdf(
+        script: &str,
+        timeout: Duration,
+    ) -> Result<attachment_text::ExtractedText, String> {
+        extract_chat_attachment(
+            "a.pdf",
+            "",
+            b"%PDF-1.4".to_vec(),
+            timeout,
+            &shell_worker(script),
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pdfs_are_read_from_the_worker_with_the_same_messages() {
+        // One page "Hello" as the worker frames it.
+        let text = read_pdf(
+            "cat >/dev/null; printf '\\0\\0\\0\\5Hello'",
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        assert_eq!(text.text, "Hello");
+        assert_eq!(
+            read_pdf("exit 10", Duration::from_secs(5))
+                .await
+                .unwrap_err(),
+            "Couldn't read a.pdf: it is password protected"
+        );
+        assert_eq!(
+            read_pdf("exit 11", Duration::from_secs(5))
+                .await
+                .unwrap_err(),
+            "Couldn't read a.pdf: it isn't a readable PDF"
+        );
+        // A worker with only blank pages is the scanned-image message.
+        assert_eq!(
+            read_pdf("printf '\\0\\0\\0\\0'", Duration::from_secs(5))
+                .await
+                .unwrap_err(),
+            "Couldn't read a.pdf: it has no readable text (it may be a scanned image)"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_pdf_worker_that_hangs_is_killed_at_the_timeout() {
+        let started = std::time::Instant::now();
+        assert_eq!(
+            read_pdf("exec sleep 30", Duration::from_millis(200))
+                .await
+                .unwrap_err(),
+            "Couldn't read a.pdf: it took too long to read"
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_pdf_worker_that_crashes_fails_cleanly() {
+        assert_eq!(
+            read_pdf("kill -SEGV $$", Duration::from_secs(5))
+                .await
+                .unwrap_err(),
+            "Couldn't read a.pdf: it isn't a readable PDF"
+        );
+    }
+
+    #[test]
+    fn failed_attachments_are_remembered_for_the_session() {
+        let cache = attachment_text::ExtractCache::default();
+        assert_eq!(cache.failure("m", "a"), None);
+        cache.insert_failure(
+            "m",
+            "a",
+            "Couldn't read a.pdf: it took too long to read".into(),
+        );
+        assert_eq!(
+            cache.failure("m", "a").as_deref(),
+            Some("Couldn't read a.pdf: it took too long to read")
+        );
+        assert_eq!(cache.failure("m", "b"), None);
+        assert_eq!(cache.failure("n", "a"), None);
     }
 }
 
