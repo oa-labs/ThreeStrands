@@ -1088,19 +1088,19 @@ describe("TodayWorkspace", () => {
 
     it("names the email on a completed task's row and opens it when it is on this device", async () => {
       vi.mocked(mailClient.listTasks).mockResolvedValue([finished()]);
-      const lookup = vi.spyOn(mailClient, "threadForMessage").mockResolvedValue("thread-9");
+      const lookup = vi.spyOn(mailClient, "findCompletedMessage").mockResolvedValue({ threadId: "thread-9", messageId: "m-sent" });
       const onOpenMessage = vi.fn();
       renderToday({ onOpenMessage });
       const completed = within(await screen.findByRole("region", { name: "Done Today" }));
       expect(await completed.findByText("Done by email")).toBeInTheDocument();
       fireEvent.click(completed.getByRole("button", { name: "The contract" }));
       await waitFor(() => expect(onOpenMessage).toHaveBeenCalledWith("thread-9", "m-sent"));
-      expect(lookup).toHaveBeenCalledWith("you@example.com", "m-sent");
+      expect(lookup).toHaveBeenCalledWith(expect.objectContaining({ accountId: "you@example.com", messageId: "m-sent" }));
     });
 
     it("says when the message is not on this device yet, and shows nothing for a task without a record", async () => {
       vi.mocked(mailClient.listTasks).mockResolvedValue([finished(), finished({ id: "plain", title: "Plain one", completedByEmail: null })]);
-      vi.spyOn(mailClient, "threadForMessage").mockResolvedValue(null);
+      vi.spyOn(mailClient, "findCompletedMessage").mockResolvedValue(null);
       const onOpenMessage = vi.fn();
       renderToday({ onOpenMessage });
       const completed = within(await screen.findByRole("region", { name: "Done Today" }));

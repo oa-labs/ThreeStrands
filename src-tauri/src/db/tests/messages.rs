@@ -228,3 +228,142 @@ fn a_sent_message_is_found_on_this_device_only_for_its_own_account() {
         None
     );
 }
+
+mod completed_message_lookup {
+    use super::*;
+    use crate::models::CompletedByEmail;
+
+    const SENT_AT: &str = "2026-01-01T12:00:00Z";
+    fn sent_at_ms() -> i64 {
+        chrono::DateTime::parse_from_rfc3339(SENT_AT)
+            .unwrap()
+            .timestamp_millis()
+    }
+    fn record(message_id: Option<&str>) -> CompletedByEmail {
+        CompletedByEmail {
+            account_id: "work@example.com".into(),
+            subject: "Contract".into(),
+            sent_at: sent_at_ms(),
+            message_id: message_id.map(Into::into),
+            thread_id: None,
+            recipients: vec!["ann@example.org".into()],
+        }
+    }
+    /// A synced message with its own id, sent from `from` to Ann.
+    fn synced(db: &crate::db::Database, id: &str, thread: &str, from: &str, date: &str) {
+        let mut m = message(id, thread, date, "body");
+        m.subject = "Contract".into();
+        m.from = from.into();
+        m.to = vec!["Ann <ann@example.org>".into()];
+        db.upsert_thread("work@example.com", &[m]).unwrap();
+    }
+    fn found(db: &crate::db::Database, record: &CompletedByEmail) -> Option<String> {
+        db.find_completed_message(record)
+            .unwrap()
+            .map(|l| l.message_id)
+    }
+
+    #[test]
+    fn the_recorded_id_wins() {
+        let db = database();
+        synced(&db, "receipt-id", "t1", "work@example.com", SENT_AT);
+        synced(&db, "other", "t2", "work@example.com", SENT_AT);
+        let location = db
+            .find_completed_message(&record(Some("receipt-id")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(location.message_id, "receipt-id");
+        assert_eq!(location.thread_id, "work@example.com:t1");
+    }
+
+    #[test]
+    fn an_id_miss_falls_back_to_the_one_message_the_account_sent_to_those_recipients() {
+        let db = database();
+        synced(
+            &db,
+            "server-assigned",
+            "t1",
+            "work@example.com",
+            "2026-01-01T12:00:20Z",
+        );
+        assert_eq!(
+            found(&db, &record(Some("receipt-id"))).as_deref(),
+            Some("server-assigned")
+        );
+        assert_eq!(
+            found(&db, &record(None)).as_deref(),
+            Some("server-assigned")
+        );
+    }
+
+    #[test]
+    fn two_candidates_are_no_match() {
+        let db = database();
+        synced(&db, "a", "t1", "work@example.com", SENT_AT);
+        synced(&db, "b", "t2", "work@example.com", "2026-01-01T12:01:00Z");
+        assert_eq!(found(&db, &record(Some("receipt-id"))), None);
+    }
+
+    #[test]
+    fn a_message_outside_the_window_is_no_match() {
+        let db = database();
+        // Beyond the clock skew before, and beyond the window after.
+        synced(
+            &db,
+            "early",
+            "t1",
+            "work@example.com",
+            "2026-01-01T11:58:00Z",
+        );
+        synced(
+            &db,
+            "late",
+            "t2",
+            "work@example.com",
+            "2026-01-01T12:20:00Z",
+        );
+        assert_eq!(found(&db, &record(None)), None);
+        // Just inside either edge matches.
+        let db = database();
+        synced(
+            &db,
+            "edge",
+            "t1",
+            "work@example.com",
+            "2026-01-01T11:59:30Z",
+        );
+        assert_eq!(found(&db, &record(None)).as_deref(), Some("edge"));
+    }
+
+    #[test]
+    fn a_message_the_account_did_not_send_or_to_others_is_no_match() {
+        let db = database();
+        synced(&db, "received", "t1", "ann@example.org", SENT_AT);
+        assert_eq!(found(&db, &record(None)), None);
+        let mut other = record(None);
+        other.recipients = vec!["bob@example.org".into()];
+        synced(&db, "mine", "t2", "work@example.com", SENT_AT);
+        assert_eq!(found(&db, &other), None);
+        let mut subject = record(None);
+        subject.subject = "Something else".into();
+        assert_eq!(found(&db, &subject), None);
+        assert_eq!(found(&db, &record(None)).as_deref(), Some("mine"));
+    }
+
+    #[test]
+    fn a_reply_matches_only_inside_its_conversation() {
+        let db = database();
+        synced(&db, "in-thread", "t1", "work@example.com", SENT_AT);
+        synced(&db, "elsewhere", "t2", "work@example.com", SENT_AT);
+        assert_eq!(
+            found(&db, &record(None)),
+            None,
+            "two candidates without a conversation"
+        );
+        let mut reply = record(None);
+        reply.thread_id = Some("t1".into());
+        assert_eq!(found(&db, &reply).as_deref(), Some("in-thread"));
+        reply.thread_id = Some("t3".into());
+        assert_eq!(found(&db, &reply), None);
+    }
+}

@@ -12,28 +12,27 @@ const finished: ThreadTask = {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("DoneByEmail", () => {
-  it("names the email and opens its conversation when the message is on this device", async () => {
-    const lookup = vi.spyOn(mailClient, "threadForMessage").mockResolvedValue("thread-1");
+  it("names the email and opens it where the lookup finds it, even under another id", async () => {
+    const lookup = vi.spyOn(mailClient, "findCompletedMessage").mockResolvedValue({ threadId: "thread-1", messageId: "server-id" });
     const onOpen = vi.fn();
     render(<DoneByEmail task={finished} onOpen={onOpen} />);
     expect(screen.getByText("Done by email")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "The contract" }));
-    await waitFor(() => expect(onOpen).toHaveBeenCalledWith("thread-1", "m-1"));
-    expect(lookup).toHaveBeenCalledWith("me@example.com", "m-1");
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith("thread-1", "server-id"));
+    expect(lookup).toHaveBeenCalledWith(finished.completedByEmail);
   });
 
-  it.each([["has not synced here", "m-1", null], ["has no key yet", null, "unused"]])("says so when the message %s", async (_name, messageId, found) => {
-    const lookup = vi.spyOn(mailClient, "threadForMessage").mockResolvedValue(found);
+  it("says so when the message isn't on this device yet or can't be told apart", async () => {
+    vi.spyOn(mailClient, "findCompletedMessage").mockResolvedValue(null);
     const onOpen = vi.fn();
-    render(<DoneByEmail task={{ ...finished, completedByEmail: { ...finished.completedByEmail!, messageId } }} onOpen={onOpen} />);
+    render(<DoneByEmail task={finished} onOpen={onOpen} />);
     fireEvent.click(screen.getByRole("button", { name: "The contract" }));
     expect(await screen.findByRole("status")).toHaveTextContent("That message isn't on this device yet.");
     expect(onOpen).not.toHaveBeenCalled();
-    if (!messageId) expect(lookup).not.toHaveBeenCalled();
   });
 
   it("reports a failed lookup instead of claiming the message is missing", async () => {
-    vi.spyOn(mailClient, "threadForMessage").mockRejectedValue(new Error("Database is locked"));
+    vi.spyOn(mailClient, "findCompletedMessage").mockRejectedValue(new Error("Database is locked"));
     render(<DoneByEmail task={finished} onOpen={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "The contract" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Database is locked");

@@ -269,16 +269,15 @@ pub(crate) async fn list_sent_page(
     run_database_task(move || database.list_sent_page(account_id.as_deref(), offset, limit)).await
 }
 
-/// The local conversation holding a message of this account, if it has synced
-/// to this device. Reads only local mail; never contacts the provider.
+/// Where a completed task's message is on this device, if it has synced here.
+/// Reads only local mail; never contacts the provider.
 #[tauri::command]
-pub(crate) async fn thread_for_message(
-    account_id: String,
-    message_id: String,
+pub(crate) async fn find_completed_message(
+    record: models::CompletedByEmail,
     state: State<'_, AppState>,
-) -> AppResult<Option<String>> {
+) -> AppResult<Option<models::MessageLocation>> {
     let database = state.database.clone();
-    run_database_task(move || database.thread_for_account_message(&account_id, &message_id)).await
+    run_database_task(move || database.find_completed_message(&record)).await
 }
 
 #[tauri::command]

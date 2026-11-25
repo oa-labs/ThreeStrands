@@ -4,7 +4,7 @@ import type { NoteDocument, NoteTaskRecord, NoteReference, NoteBacklink, AddToNo
 import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
 import type { AgentResearchSettings, AgentResearchConfig, AgentResearchRequest, AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
-import type { SentInRange, DoneNote } from "../domain";
+import type { SentInRange, DoneNote, CompletedByEmail, MessageLocation } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingAgendaSave, MeetingAgendaUndo, MeetingContext, MeetingPrepBrief, MeetingPrepSelection, MeetingReadiness, MeetingSourcePreview, PlanChanges, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
@@ -577,8 +577,8 @@ export interface MailClient extends CorrespondenceClient {
   updateTask(request: UpdateTaskRequest): Promise<ThreadTask>;
   setTaskStatus(id: string, status: ThreadTask["status"], source?: "user" | "reply" | "external"): Promise<ThreadTask>;
   recordFollowUp(id: string): Promise<ThreadTask>;
-  /** The conversation holding this account's message on this device, or null when it hasn't synced here. */
-  threadForMessage(accountId: string, messageId: string): Promise<string | null>;
+  /** Where the message a task's record names is on this device, by its id or else by its sender, subject, recipients and time; null when it hasn't synced here or is ambiguous. */
+  findCompletedMessage(record: CompletedByEmail): Promise<MessageLocation | null>;
   reconcileTasks(): Promise<number>;
   listGoals(accountId?: string): Promise<Goal[]>;
   createGoal(request: CreateGoalRequest): Promise<Goal>;
@@ -880,7 +880,7 @@ const tauriClient: MailClient = {
   updateTask: (request) => complete("update_task", { request }),
   setTaskStatus: (id, status, source = "user") => complete("set_task_status", { id, status, source }),
   recordFollowUp: (id) => complete("record_follow_up", { id }),
-  threadForMessage: (accountId, messageId) => complete("thread_for_message", { accountId, messageId }),
+  findCompletedMessage: (record) => complete("find_completed_message", { record }),
   reconcileTasks: () => complete("reconcile_tasks"),
   listGoals: (accountId) => read("list_goals", { accountId }),
   createGoal: (request) => complete("create_goal", { request }),

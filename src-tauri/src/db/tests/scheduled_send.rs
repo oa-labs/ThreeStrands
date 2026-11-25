@@ -363,6 +363,8 @@ mod linked_tasks {
                 subject: "The contract".into(),
                 sent_at: AT,
                 message_id: Some("provider-1".into()),
+                thread_id: None,
+                recipients: vec!["to@example.com".into()],
             })
         );
     }

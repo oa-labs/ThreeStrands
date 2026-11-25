@@ -94,11 +94,16 @@ column and a replicated field): the account, the draft's subject, the send time
 and the message key. The key is the outbox row's `provider_id`, the same value
 a conversation matches against a synced message's id to replace its optimistic
 copy of a send (`queuedReplies.ts`) and that **Edit as New** reads, for Gmail
-and IMAP alike. A new local lookup, `thread_for_message(account, message id)`,
-finds the conversation on this device or says it isn't there; nothing is
-resolved in the background. An IMAP server that assigns its own ids can give
-the synced copy a different id than the send receipt, in which case the lookup
-says the message isn't on this device yet rather than guessing. Reopening the
+and IMAP alike. A new local lookup, `find_completed_message`, finds it on this
+device or says it isn't there; nothing is resolved in the background. When the id
+misses (an IMAP server that assigns its own ids can give the synced copy a
+different id than the send receipt), it falls back, with no provider branching, to
+the one message in the account that its own addresses sent with the same subject
+(reply and forward prefixes ignored), to the recorded To and Cc addresses, dated
+from 60 seconds before to 10 minutes after the send, and inside the reply's
+conversation when there is one. The record keeps the reply's provider thread id and
+up to twenty normalized recipients for this. None or several matches say the
+message isn't on this device yet rather than guessing. Reopening the
 task clears the record, and a record on a task that isn't completed is ignored,
 because a device without the field can reopen a task. It shows as **Done by
 email** with the subject in the task editor and on the task's row in **Today**'s

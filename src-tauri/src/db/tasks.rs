@@ -16,6 +16,22 @@ use crate::models::{CreateTaskRequest, ThreadTask, UpdateTaskRequest};
 const MAX_TITLE: usize = 240;
 const MAX_NOTES: usize = 8_000;
 const MAX_EVIDENCE: usize = 4_000;
+/// Most recipients kept on a record of the email that finished a task.
+const MAX_RECORDED_RECIPIENTS: usize = 20;
+
+/// The draft's To and Cc addresses, normalized, de-duplicated and bounded.
+/// Bcc is left out: the synced copy doesn't show it.
+fn sent_recipients(draft: &crate::correspondence::Draft) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    [&draft.to, &draft.cc]
+        .into_iter()
+        .flat_map(|list| crate::correspondence::stored_addresses(list))
+        .map(|(_, email)| email.trim().to_ascii_lowercase())
+        .filter(|email| email.len() <= 320 && seen.insert(email.clone()))
+        .take(MAX_RECORDED_RECIPIENTS)
+        .collect()
+}
+
 /// Bounds the open tasks returned for one person's conversations.
 pub(crate) const MAX_CONTACT_TASKS: usize = 50;
 
@@ -570,6 +586,8 @@ impl Database {
             subject: draft.subject.chars().take(MAX_TITLE).collect(),
             sent_at: at,
             message_id: provider_id,
+            thread_id: draft.thread_id.clone(),
+            recipients: sent_recipients(draft),
         };
         let now = Utc::now().to_rfc3339();
         tx.execute(
@@ -932,6 +950,8 @@ mod tests {
             subject: "The contract".into(),
             sent_at: 1_900_000_000_000,
             message_id: Some("m-1".into()),
+            thread_id: None,
+            recipients: vec![],
         };
         let mut finished = task.clone();
         finished.status = "completed".into();

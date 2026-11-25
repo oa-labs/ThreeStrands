@@ -342,7 +342,9 @@ export type ThreadTask = {
 };
 
 /** `messageId` is the key a conversation uses to match its optimistic copy of a send to the synced one; `null` until the provider reports one. */
-export type CompletedByEmail = { accountId: string; subject: string; sentAt: number; messageId?: string | null };
+export type CompletedByEmail = { accountId: string; subject: string; sentAt: number; messageId?: string | null; threadId?: string | null; recipients?: string[] };
+/** Where a completed task's message is on this device. `messageId` can differ from the record's when the synced copy has another id. */
+export type MessageLocation = { threadId: string; messageId: string };
 
 export type CreateTaskRequest = {
   accountId: string;

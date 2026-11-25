@@ -154,13 +154,14 @@ impl EntityType {
                 optional_string(object, "notes", 8_000)?;
                 optional_string(object, "evidenceText", 4_000)?;
                 optional_string(object, "goalId", 128)?;
-                // A record of the message that finished the task: small, and
+                // A record of the message that finished the task (its subject and up to
+                // twenty recipients): bounded, and
                 // absent from tasks written before it existed.
                 if let Some(record) = object
                     .get("completedByEmail")
                     .filter(|value| !value.is_null())
                 {
-                    if !record.is_object() || record.to_string().len() > 4_000 {
+                    if !record.is_object() || record.to_string().len() > 8_000 {
                         return Err("completedByEmail must be a small object".into());
                     }
                 }
@@ -1118,7 +1119,7 @@ mod tests {
             .validate_payload(&task(json!("text")))
             .is_err());
         assert!(EntityType::Task
-            .validate_payload(&task(json!({ "subject": "s".repeat(4_000) })))
+            .validate_payload(&task(json!({ "subject": "s".repeat(8_000) })))
             .is_err());
     }
 

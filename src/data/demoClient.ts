@@ -1936,10 +1936,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       tasks = tasks.map((task) => task.id === id ? next : task);
       return structuredClone(next);
     },
-    async threadForMessage(accountId, messageId) {
-      const message = findMessage(messageId);
+    async findCompletedMessage(record) {
+      const message = record.messageId ? findMessage(record.messageId) : undefined;
       const thread = message ? threads.find((candidate) => candidate.id === message.threadId) : undefined;
-      return thread && thread.accountId === accountId ? thread.id : null;
+      return message && thread && thread.accountId === record.accountId ? { threadId: thread.id, messageId: message.id } : null;
     },
     async recordFollowUp(id) {
       const current = tasks.find((task) => task.id === id);

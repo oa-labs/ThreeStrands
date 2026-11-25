@@ -19,8 +19,8 @@ export function DoneByEmail({ task, onOpen }: {
   if (task.status !== "completed" || !record) return null;
   const open = async () => {
     try {
-      const threadId = record.messageId ? await mailClient.threadForMessage(record.accountId, record.messageId) : null;
-      if (threadId && record.messageId) { setProblem(null); onOpen(threadId, record.messageId); }
+      const found = await mailClient.findCompletedMessage(record);
+      if (found) { setProblem(null); onOpen(found.threadId, found.messageId); }
       else setProblem("That message isn't on this device yet.");
     } catch (reason) {
       setProblem(errorMessage(reason));

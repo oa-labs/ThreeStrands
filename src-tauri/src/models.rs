@@ -400,6 +400,22 @@ pub struct CompletedByEmail {
     pub sent_at: i64,
     #[serde(default)]
     pub message_id: Option<String>,
+    /// The provider thread id of the conversation a reply joined, so a
+    /// fallback match can be limited to it. Absent for a new message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    /// Normalized To and Cc addresses (bounded), for matching the synced copy
+    /// when its id differs from the send receipt's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipients: Vec<String>,
+}
+
+/// Where a completed task's message is on this device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageLocation {
+    pub thread_id: String,
+    pub message_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

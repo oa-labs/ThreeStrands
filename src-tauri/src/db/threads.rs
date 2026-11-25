@@ -30,6 +30,33 @@ pub(super) const THREAD_COLUMNS: &str = "t.id, t.provider_thread_id, t.subject, 
     (SELECT json_extract(s.record_json, '$.until') FROM conversation_snoozes s
      WHERE s.id = t.id AND json_extract(s.record_json, '$.state') = 'active'), t.summary_evidence_json";
 
+/// How far before the recorded send time a message may be dated, for clocks
+/// that disagree. Matches `DRAFT_MATCH_CLOCK_SKEW_MS` in `src/queuedReplies.ts`.
+const SENT_MATCH_CLOCK_SKEW_MS: i64 = 60_000;
+/// How long after the recorded send time a message may be dated and still be
+/// taken for it.
+const SENT_MATCH_WINDOW_MS: i64 = 10 * 60_000;
+
+/// A subject as a person compares it: without reply or forward prefixes,
+/// case, or extra spacing.
+fn comparable_subject(value: &str) -> String {
+    let mut rest = value.trim();
+    loop {
+        let lower = rest.to_ascii_lowercase();
+        let Some(prefix) = ["re:", "fwd:", "fw:"]
+            .into_iter()
+            .find(|p| lower.starts_with(p))
+        else {
+            break;
+        };
+        rest = rest[prefix.len()..].trim_start();
+    }
+    rest.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 impl Database {
     /// `account_id` merges every account when absent, or scopes to one account.
     pub fn list_starred_page(
@@ -297,6 +324,78 @@ impl Database {
                     |row| row.get::<_, String>(0),
                 )
                 .optional()?)
+        })
+    }
+
+    /// Finds the message a completed task's record names. A message whose id
+    /// is the record's key wins. When the synced copy has another id (a server
+    /// that assigns its own), it falls back to the one message in the account
+    /// that its own addresses sent with the same subject, to the recorded
+    /// recipients, inside the send's time window and, for a reply, its
+    /// conversation. None or several candidates is no match.
+    pub fn find_completed_message(
+        &self,
+        record: &crate::models::CompletedByEmail,
+    ) -> DbResult<Option<crate::models::MessageLocation>> {
+        use crate::models::MessageLocation;
+        if let Some(message_id) = record.message_id.as_deref() {
+            if let Some(thread_id) =
+                self.thread_for_account_message(&record.account_id, message_id)?
+            {
+                return Ok(Some(MessageLocation {
+                    thread_id,
+                    message_id: message_id.to_string(),
+                }));
+            }
+        }
+        let millis = |value: i64| {
+            chrono::DateTime::from_timestamp_millis(value).map(|time| time.to_rfc3339())
+        };
+        let (Some(from), Some(to)) = (
+            millis(record.sent_at.saturating_sub(SENT_MATCH_CLOCK_SKEW_MS)),
+            millis(record.sent_at.saturating_add(SENT_MATCH_WINDOW_MS)),
+        ) else {
+            return Ok(None);
+        };
+        let subject = comparable_subject(&record.subject);
+        self.with_connection(|connection| {
+            let mine = super::sending_addresses_for_account(connection, &record.account_id);
+            let mut statement = connection.prepare(
+                "SELECT m.id, m.thread_id, m.sender, m.recipients_json, t.subject, t.provider_thread_id
+                 FROM messages m JOIN threads t ON t.id = m.thread_id
+                 WHERE t.account_id = ?1 AND julianday(m.sent_at) BETWEEN julianday(?2) AND julianday(?3)",
+            )?;
+            let rows = statement.query_map(params![record.account_id, from, to], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?;
+            let mut matches = Vec::new();
+            for row in rows {
+                let (id, thread_id, sender, recipients_json, thread_subject, provider_thread) = row?;
+                let recipients: Vec<String> =
+                    serde_json::from_str(&recipients_json).unwrap_or_default();
+                let recipients: std::collections::BTreeSet<String> = recipients
+                    .iter()
+                    .map(|address| super::normalize_sender(address).0)
+                    .collect();
+                if mine.contains(&super::normalize_sender(&sender).0)
+                    && comparable_subject(&thread_subject) == subject
+                    && record.thread_id.as_ref().is_none_or(|wanted| *wanted == provider_thread)
+                    && record.recipients.iter().all(|address| recipients.contains(address))
+                {
+                    matches.push(MessageLocation { thread_id, message_id: id });
+                }
+            }
+            Ok(match matches.len() {
+                1 => matches.pop(),
+                _ => None,
+            })
         })
     }
 

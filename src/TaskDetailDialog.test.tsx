@@ -50,7 +50,7 @@ describe("TaskDetailDialog Done by email", () => {
   const dialog = (value: ThreadTask, onOpenThread = vi.fn()) => render(<TaskDetailDialog embedded task={value} onUpdate={vi.fn()} onSetStatus={vi.fn()} onNavigate={vi.fn()} onOpenThread={onOpenThread} onClose={vi.fn()} />);
 
   it("names the email that finished the task and opens its conversation", async () => {
-    vi.spyOn(mailClient, "threadForMessage").mockResolvedValue("thread-1");
+    vi.spyOn(mailClient, "findCompletedMessage").mockResolvedValue({ threadId: "thread-1", messageId: "m-1" });
     const onOpenThread = vi.fn();
     dialog(finished, onOpenThread);
     expect(screen.getByText("Done by email")).toBeInTheDocument();
@@ -59,7 +59,7 @@ describe("TaskDetailDialog Done by email", () => {
   });
 
   it("says when the message is not on this device yet, and shows nothing for an open task", async () => {
-    vi.spyOn(mailClient, "threadForMessage").mockResolvedValue(null);
+    vi.spyOn(mailClient, "findCompletedMessage").mockResolvedValue(null);
     dialog(finished);
     fireEvent.click(screen.getByRole("button", { name: "Launch plan" }));
     expect(await screen.findByRole("status")).toHaveTextContent("isn't on this device yet");
