@@ -33,6 +33,7 @@ use super::crypto::{
     roster_entry_verifying_key, roster_entry_x25519, seal_earlier_epoch_keys,
     store_earlier_epoch_keys, EpochKeyStore,
 };
+use super::deferred::{Deferral, DeferredControlObjects, RetryPolicy};
 use super::join_codes;
 use super::{EnrollmentError, EnrollmentResult, EnrollmentStatus};
 
@@ -427,44 +428,89 @@ pub async fn run_enrollment_sweep(
     epoch_keys: &dyn EpochKeyStore,
     transports: &[Arc<dyn SyncTransport>],
 ) -> EnrollmentResult<bool> {
+    run_enrollment_sweep_with(
+        database,
+        identity,
+        epoch_keys,
+        transports,
+        now_ms(),
+        &RetryPolicy::DEFAULT,
+    )
+    .await
+}
+
+/// [`run_enrollment_sweep`] with the clock and retry policy supplied, so
+/// tests can drive many sweeps without sleeping.
+///
+/// Objects that can't be verified yet (unknown sender or invitation) are
+/// tracked by CID in `database.deferred_control_objects` with backoff, and
+/// are not fetched again until due. After the policy's horizon, or if their
+/// own timestamp is in the future, or if too many are already tracked, they
+/// are marked seen as ignored.
+pub(crate) async fn run_enrollment_sweep_with(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &dyn EpochKeyStore,
+    transports: &[Arc<dyn SyncTransport>],
+    now_ms: i64,
+    policy: &RetryPolicy,
+) -> EnrollmentResult<bool> {
+    for cid in lock_deferred(database).take_expired(now_ms, policy) {
+        log::debug!(target: "replicated_sync", "giving up on control object {cid}: retry horizon passed");
+        database.mark_control_object_seen(&cid, "ignored")?;
+    }
     // Objects arrive in content-address order, so a join-code redemption
-    // can come before the invitation it names. Those are retried once the
-    // whole sweep has run, rather than waiting for the next cycle.
-    let mut deferred: Vec<(String, Vec<u8>)> = Vec::new();
+    // can come before the invitation it names. Objects deferred this sweep
+    // are tried again once the whole sweep has run, if anything was
+    // applied meanwhile, rather than waiting for the next cycle. Only
+    // their CIDs are held; the bytes are fetched again.
+    let mut attempted: Vec<(usize, String)> = Vec::new();
+    let mut progressed = false;
     let mut must_rotate = false;
-    for transport in transports {
+    for (index, transport) in transports.iter().enumerate() {
         let mut cursor: Option<String> = None;
         loop {
             let Some(page) = transport.scan(cursor.as_deref()).await? else {
                 break;
             };
             for locator in &page.objects {
-                if database.seen_control_object(&locator.cid.0)? {
+                let cid = &locator.cid.0;
+                if database.seen_control_object(cid)? {
+                    continue;
+                }
+                if lock_deferred(database).is_waiting(cid, now_ms) {
                     continue;
                 }
                 let Ok(bytes) = transport.get_object(&locator.cid).await else {
                     continue;
                 };
-                match try_apply_control_object(
-                    database,
-                    identity,
-                    epoch_keys,
-                    &locator.cid.0,
-                    &bytes,
-                )? {
+                match try_apply_control_object(database, identity, epoch_keys, cid, &bytes, now_ms)?
+                {
                     ControlObject::Applied => {
-                        database.mark_control_object_seen(&locator.cid.0, "control")?
+                        lock_deferred(database).forget(cid);
+                        database.mark_control_object_seen(cid, "control")?;
+                        progressed = true;
                     }
                     // Not recognized as a control object at all (most
                     // objects are sealed snapshots) — still mark
                     // seen so we never re-fetch it.
-                    ControlObject::NotControl => {
-                        database.mark_control_object_seen(&locator.cid.0, "other")?
+                    ControlObject::NotControl => database.mark_control_object_seen(cid, "other")?,
+                    // Missing context (an invitation, or the announcement
+                    // of the sender): retry with backoff, up to a limit.
+                    ControlObject::RetryLater {
+                        kind,
+                        created_at_ms,
+                    } => {
+                        let verdict =
+                            lock_deferred(database).defer(cid, created_at_ms, now_ms, policy);
+                        match verdict {
+                            Deferral::Retry => attempted.push((index, cid.clone())),
+                            Deferral::GiveUp(reason) => {
+                                log::debug!(target: "replicated_sync", "ignoring {kind} control object {cid}: {reason}");
+                                database.mark_control_object_seen(cid, "ignored")?;
+                            }
+                        }
                     }
-                    // A join-code redemption whose invitation hasn't
-                    // arrived yet: retry after this sweep, and leave it
-                    // unseen if it still can't be applied.
-                    ControlObject::RetryLater => deferred.push((locator.cid.0.clone(), bytes)),
                     // Left unseen until this device has rotated past the
                     // colliding epoch, so a crash before the rotation is
                     // published can't lose it.
@@ -477,20 +523,43 @@ pub async fn run_enrollment_sweep(
             }
         }
     }
-    for (cid, bytes) in deferred {
-        match try_apply_control_object(database, identity, epoch_keys, &cid, &bytes)? {
-            ControlObject::Applied => database.mark_control_object_seen(&cid, "control")?,
-            ControlObject::RotateToResolve => must_rotate = true,
-            ControlObject::NotControl | ControlObject::RetryLater => {}
+    if progressed {
+        for (index, cid) in attempted {
+            let Ok(bytes) = transports[index]
+                .get_object(&TransportCid(cid.clone()))
+                .await
+            else {
+                continue;
+            };
+            match try_apply_control_object(database, identity, epoch_keys, &cid, &bytes, now_ms)? {
+                ControlObject::Applied => {
+                    lock_deferred(database).forget(&cid);
+                    database.mark_control_object_seen(&cid, "control")?;
+                }
+                ControlObject::RotateToResolve => must_rotate = true,
+                ControlObject::NotControl | ControlObject::RetryLater { .. } => {}
+            }
         }
     }
     Ok(must_rotate)
 }
 
+fn lock_deferred(database: &Database) -> std::sync::MutexGuard<'_, DeferredControlObjects> {
+    database
+        .deferred_control_objects
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 enum ControlObject {
     Applied,
     NotControl,
-    RetryLater,
+    /// Couldn't be verified for want of context. `created_at_ms` is the
+    /// object's own (unauthenticated) timestamp.
+    RetryLater {
+        kind: &'static str,
+        created_at_ms: i64,
+    },
     RotateToResolve,
 }
 
@@ -500,6 +569,7 @@ fn try_apply_control_object(
     epoch_keys: &dyn EpochKeyStore,
     cid: &str,
     bytes: &[u8],
+    now_ms: i64,
 ) -> EnrollmentResult<ControlObject> {
     if let Ok(signed) = decode_signed_enrollment_request(bytes) {
         apply_incoming_request(database, identity, signed)?;
@@ -508,24 +578,37 @@ fn try_apply_control_object(
     if let Ok(signed) = decode_signed_enrollment_grant(bytes) {
         match apply_key_share(database, identity, epoch_keys, &signed, cid)? {
             KeyShare::Applied => return Ok(ControlObject::Applied),
-            KeyShare::UnknownSender => return Ok(ControlObject::RetryLater),
+            KeyShare::UnknownSender => {
+                return Ok(ControlObject::RetryLater {
+                    kind: "grant",
+                    created_at_ms: signed.grant.created_at_ms,
+                })
+            }
             KeyShare::Other => {}
         }
         apply_incoming_grant(database, identity, epoch_keys, signed)?;
         return Ok(ControlObject::Applied);
     }
     if let Ok(signed) = decode_signed_enrollment_rejection(bytes) {
+        let rejected_at_ms = signed.rejection.rejected_at_ms;
         return Ok(if apply_incoming_rejection(database, signed)? {
             ControlObject::Applied
         } else {
-            ControlObject::RetryLater
+            ControlObject::RetryLater {
+                kind: "rejection",
+                created_at_ms: rejected_at_ms,
+            }
         });
     }
     if let Ok(signed) = decode_signed_key_rotation(bytes) {
+        let created_at_ms = signed.rotation.created_at_ms;
         return Ok(
             match apply_incoming_rotation(database, identity, epoch_keys, signed, cid)? {
                 RotationOutcome::Done => ControlObject::Applied,
-                RotationOutcome::UnknownInitiator => ControlObject::RetryLater,
+                RotationOutcome::UnknownInitiator => ControlObject::RetryLater {
+                    kind: "rotation",
+                    created_at_ms,
+                },
                 RotationOutcome::Collision => ControlObject::RotateToResolve,
             },
         );
@@ -535,11 +618,14 @@ fn try_apply_control_object(
         return Ok(ControlObject::Applied);
     }
     if let Ok(signed) = threestrands_sync_envelope::decode_signed_invitation_redemption(bytes) {
+        let created_at_ms = signed.redemption.created_at_ms;
         return Ok(
-            match join_codes::apply_incoming_redemption(database, identity, signed, cid, now_ms())?
-            {
+            match join_codes::apply_incoming_redemption(database, identity, signed, cid, now_ms)? {
                 join_codes::JoinObjectOutcome::Done => ControlObject::Applied,
-                join_codes::JoinObjectOutcome::RetryLater => ControlObject::RetryLater,
+                join_codes::JoinObjectOutcome::RetryLater => ControlObject::RetryLater {
+                    kind: "redemption",
+                    created_at_ms,
+                },
             },
         );
     }
@@ -562,6 +648,7 @@ fn apply_incoming_request(
         return Ok(());
     };
     if verify_enrollment_request(&verifying_key, &signed).is_err() {
+        log::debug!(target: "replicated_sync", "ignoring enrollment request with an invalid signature");
         return Ok(());
     }
     let fingerprint = enrollment_fingerprint(
@@ -766,6 +853,7 @@ pub(super) fn apply_key_share(
         return Ok(KeyShare::Applied);
     };
     if !verified {
+        log::debug!(target: "replicated_sync", "ignoring key share {cid}: sender is inactive or its signature is invalid");
         return Ok(KeyShare::Applied);
     }
     database.adopt_roster(&grant.roster)?;
@@ -853,6 +941,7 @@ fn apply_incoming_rejection(
     if (direction == "incoming" && !is_trusted_peer)
         || verify_enrollment_rejection(&embedded_key, &signed).is_err()
     {
+        log::debug!(target: "replicated_sync", "ignoring enrollment rejection from an untrusted or unverifiable rejector");
         return Ok(true);
     }
 
@@ -935,6 +1024,7 @@ pub(super) fn apply_incoming_rotation(
         });
     };
     if verify_key_rotation(verifying_key, &signed).is_err() {
+        log::debug!(target: "replicated_sync", "ignoring rotation {cid}: invalid signature");
         return Ok(RotationOutcome::Done);
     }
     apply_rotation_common(database, identity, epoch_keys, &signed, cid)

@@ -41,12 +41,10 @@ use threestrands_sync_transport::{
     TransportError, TransportHealth, TransportInstanceId,
 };
 
+use crate::transport_limits::MAX_OBJECT_BYTES;
+
 const CORPUS_DIR_NAME: &str = "threestrands-sync";
 const FORMAT_MARKER: &str = "format-v1";
-/// Generous relative to any real envelope chunk (at most a few hundred KB;
-/// see `crates/sync-envelope/src/limits.rs`) — this is a defensive ceiling
-/// against a corrupted or hostile file, not a tuned protocol limit.
-const MAX_OBJECT_BYTES: u64 = 8 * 1024 * 1024;
 const SCAN_PAGE_SIZE: usize = 500;
 
 pub struct SyncFolderTransport {
@@ -271,6 +269,8 @@ impl SyncTransport for SyncFolderTransport {
                     Err(_) => continue,
                 },
                 Err(TransportError::NotFound) => continue,
+                // An oversized head file is as unusable as a malformed one.
+                Err(TransportError::Corruption(_)) => continue,
                 Err(error) => return Err(error),
             }
         }
@@ -348,7 +348,26 @@ async fn read_regular_file(path: &Path) -> Result<Vec<u8>, TransportError> {
         // symlink is reported as "not a file" here rather than resolved.
         return Err(TransportError::NotFound);
     }
-    tokio::fs::read(path).await.map_err(io_error)
+    if metadata.len() > MAX_OBJECT_BYTES {
+        return Err(TransportError::Corruption(
+            "stored object exceeds the size limit".to_string(),
+        ));
+    }
+    // The file can grow after the metadata check, so the read is bounded too.
+    let file = tokio::fs::File::open(path).await.map_err(io_error)?;
+    let mut bytes = Vec::new();
+    tokio::io::AsyncReadExt::read_to_end(
+        &mut tokio::io::AsyncReadExt::take(file, MAX_OBJECT_BYTES + 1),
+        &mut bytes,
+    )
+    .await
+    .map_err(io_error)?;
+    if bytes.len() as u64 > MAX_OBJECT_BYTES {
+        return Err(TransportError::Corruption(
+            "stored object exceeds the size limit".to_string(),
+        ));
+    }
+    Ok(bytes)
 }
 
 async fn list_object_cids(objects_dir: &Path) -> Result<Vec<String>, TransportError> {
@@ -627,6 +646,53 @@ mod tests {
             transport.put_object(&cid, &bytes).await,
             Err(TransportError::Permanent(_))
         ));
+    }
+
+    /// Writes `len` bytes straight into the object path, as another process
+    /// (or a hostile one) could, and returns the CID they hash to.
+    async fn plant_file(transport: &SyncFolderTransport, len: u64) -> Cid {
+        let bytes = vec![7u8; len as usize];
+        let cid = Cid::for_bytes(&bytes);
+        let path = transport.object_path(&cid).unwrap();
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&path, &bytes).await.unwrap();
+        cid
+    }
+
+    #[tokio::test]
+    async fn reading_a_stored_object_is_capped_below_at_and_above_the_limit() {
+        let folder = TempFolder::new();
+        let transport = open_transport(&folder, "a").await;
+        for len in [MAX_OBJECT_BYTES - 1, MAX_OBJECT_BYTES] {
+            let cid = plant_file(&transport, len).await;
+            assert_eq!(transport.get_object(&cid).await.unwrap().len() as u64, len);
+        }
+        let cid = plant_file(&transport, MAX_OBJECT_BYTES + 1).await;
+        assert!(matches!(
+            transport.get_object(&cid).await,
+            Err(TransportError::Corruption(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_oversized_head_file_is_skipped_rather_than_failing_resolution() {
+        let folder = TempFolder::new();
+        let transport = open_transport(&folder, "a").await;
+        let device_id = threestrands_sync_envelope::DeviceId::from_bytes([9u8; 16]);
+        let path = transport.head_path(&device_id);
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&path, vec![0u8; (MAX_OBJECT_BYTES + 1) as usize])
+            .await
+            .unwrap();
+        let locator = HeadLocator {
+            device_id,
+            remote_id: None,
+        };
+        assert_eq!(transport.resolve_heads(&[locator]).await.unwrap(), vec![]);
     }
 
     #[cfg(unix)]

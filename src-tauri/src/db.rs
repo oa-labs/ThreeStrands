@@ -156,6 +156,9 @@ pub struct Database {
     /// and how many times in a row. Kept in memory: a restart may simply try
     /// again.
     pub(crate) gmail_identity_refresh_failures: Mutex<HashMap<String, (i64, u32)>>,
+    /// Control objects the enrollment sweep couldn't verify yet, as CIDs and
+    /// retry state only. In memory: a restart simply starts over.
+    pub(crate) deferred_control_objects: Mutex<crate::enrollment::DeferredControlObjects>,
 }
 
 impl Database {

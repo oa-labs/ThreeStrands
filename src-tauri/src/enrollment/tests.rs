@@ -4705,3 +4705,447 @@ mod join_code_flows {
         );
     }
 }
+
+/// Control objects a device can't verify must not be fetched forever, nor
+/// held in memory between sweeps. Time is injected, so no test sleeps.
+mod unverifiable_control_objects {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use threestrands_sync_envelope::{
+        encode_signed_enrollment_rejection, encode_signed_invitation_redemption,
+        invite_ed25519_signing_key, sign_enrollment_rejection, sign_invitation_redemption,
+        EnrollmentRejection, InvitationRedemption,
+    };
+    use threestrands_sync_transport::{
+        HeadLocator, ObjectLocator, ScanPage, TransportCapabilities, TransportError,
+        TransportHealth, TransportInstanceId,
+    };
+
+    use super::super::deferred::RetryPolicy;
+
+    const MINUTE_MS: i64 = 60_000;
+    const EIGHT_DAYS_MS: i64 = 8 * 24 * 60 * MINUTE_MS;
+
+    /// A fake transport that counts how often each object is downloaded.
+    struct Counting {
+        inner: FakeTransport,
+        gets: Mutex<HashMap<String, usize>>,
+    }
+
+    impl Counting {
+        fn new(name: &str) -> Arc<Self> {
+            Arc::new(Self {
+                inner: FakeTransport::new(name),
+                gets: Mutex::new(HashMap::new()),
+            })
+        }
+
+        fn gets_of(&self, cid: &str) -> usize {
+            self.gets.lock().unwrap().get(cid).copied().unwrap_or(0)
+        }
+
+        async fn plant(&self, bytes: &[u8]) -> String {
+            let cid = compute_cid(bytes);
+            self.inner
+                .put_object(&TransportCid(cid.clone()), bytes)
+                .await
+                .unwrap();
+            cid
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SyncTransport for Counting {
+        fn instance_id(&self) -> TransportInstanceId {
+            self.inner.instance_id()
+        }
+        fn capabilities(&self) -> TransportCapabilities {
+            self.inner.capabilities()
+        }
+        async fn put_object(
+            &self,
+            cid: &TransportCid,
+            bytes: &[u8],
+        ) -> Result<ObjectLocator, TransportError> {
+            self.inner.put_object(cid, bytes).await
+        }
+        async fn get_object(&self, cid: &TransportCid) -> Result<Vec<u8>, TransportError> {
+            *self.gets.lock().unwrap().entry(cid.0.clone()).or_default() += 1;
+            self.inner.get_object(cid).await
+        }
+        async fn publish_head(
+            &self,
+            head: &threestrands_sync_envelope::SignedDeviceHead,
+        ) -> Result<HeadLocator, TransportError> {
+            self.inner.publish_head(head).await
+        }
+        async fn resolve_heads(
+            &self,
+            known: &[HeadLocator],
+        ) -> Result<Vec<threestrands_sync_envelope::SignedDeviceHead>, TransportError> {
+            self.inner.resolve_heads(known).await
+        }
+        async fn scan(&self, cursor: Option<&str>) -> Result<Option<ScanPage>, TransportError> {
+            self.inner.scan(cursor).await
+        }
+        async fn delete_object(&self, cid: &TransportCid) -> Result<(), TransportError> {
+            self.inner.delete_object(cid).await
+        }
+        async fn health(&self) -> Result<TransportHealth, TransportError> {
+            self.inner.health().await
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Kind {
+        Redemption,
+        Rotation,
+        Grant,
+        Rejection,
+    }
+    const KINDS: [Kind; 4] = [
+        Kind::Redemption,
+        Kind::Rotation,
+        Kind::Grant,
+        Kind::Rejection,
+    ];
+
+    /// A founder alone in its group.
+    async fn enrolled() -> Member {
+        let member = Member::new();
+        begin_genesis(
+            &member.database,
+            &member.identity,
+            &member.epoch_keys,
+            &fake_transports("genesis"),
+            false,
+        )
+        .await
+        .unwrap();
+        member
+    }
+
+    /// An object of `kind` that `victim` can't verify, claiming `created_at_ms`.
+    /// A fresh random sender or invitation each call keeps CIDs distinct.
+    fn forged(kind: Kind, victim: &Member, created_at_ms: i64) -> Vec<u8> {
+        let stranger = Intruder::new();
+        let (recovery_ed25519, recovery_x25519) =
+            victim.database.recovery_public_keys().unwrap().unwrap();
+        match kind {
+            Kind::Redemption => encode_signed_invitation_redemption(
+                &sign_invitation_redemption(
+                    &invite_ed25519_signing_key(&random_id().repeat(2).try_into().unwrap()),
+                    &stranger.signing_key,
+                    InvitationRedemption {
+                        invitation_cid: compute_cid(&random_id()),
+                        device_id: stranger.device_id,
+                        ed25519_public: ByteBuf::from(
+                            stranger.signing_key.verifying_key().to_bytes().to_vec(),
+                        ),
+                        x25519_public: ByteBuf::from(vec![4u8; 32]),
+                        device_name: "Planted".to_string(),
+                        created_at_ms,
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            Kind::Rotation => encode_signed_key_rotation(&stranger.forge_successor(
+                1,
+                vec![],
+                (recovery_ed25519, recovery_x25519),
+                created_at_ms,
+            ))
+            .unwrap(),
+            Kind::Grant => encode_signed_enrollment_grant(
+                &sign_enrollment_grant(
+                    &stranger.signing_key,
+                    EnrollmentGrant {
+                        request_id: RequestId::from_bytes(random_id()),
+                        approver_device_id: stranger.device_id,
+                        signed_by_recovery: false,
+                        key_epoch: 7,
+                        sealed_epoch_key: ByteBuf::from(seal_to_x25519(
+                            &x25519_public_bytes(&victim.identity.x25519_secret),
+                            &[0x42; 32],
+                        )),
+                        roster: vec![],
+                        recovery_ed25519_public: ByteBuf::from(recovery_ed25519.to_vec()),
+                        recovery_x25519_public: ByteBuf::from(recovery_x25519.to_vec()),
+                        created_at_ms,
+                        earlier_epoch_keys: vec![],
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            Kind::Rejection => encode_signed_enrollment_rejection(
+                &sign_enrollment_rejection(
+                    &stranger.signing_key,
+                    EnrollmentRejection {
+                        request_id: RequestId::from_bytes(random_id()),
+                        rejector_device_id: stranger.device_id,
+                        rejector_ed25519_public: ByteBuf::from(
+                            stranger.signing_key.verifying_key().to_bytes().to_vec(),
+                        ),
+                        rejected_at_ms: created_at_ms,
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        }
+    }
+
+    async fn sweep_at(
+        member: &Member,
+        transport: &Arc<Counting>,
+        now_ms: i64,
+        policy: &RetryPolicy,
+    ) {
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![transport.clone()];
+        run_enrollment_sweep_with(
+            &member.database,
+            &member.identity,
+            &member.epoch_keys,
+            &transports,
+            now_ms,
+            policy,
+        )
+        .await
+        .unwrap();
+    }
+
+    fn tracked(member: &Member) -> usize {
+        member
+            .database
+            .deferred_control_objects
+            .lock()
+            .unwrap()
+            .len()
+    }
+
+    #[tokio::test]
+    async fn a_planted_object_is_fetched_a_bounded_number_of_times_then_ignored_for_good() {
+        let policy = RetryPolicy::DEFAULT;
+        for kind in KINDS {
+            let victim = enrolled().await;
+            let transport = Counting::new("bucket");
+            let start = now_ms();
+            let cid = transport.plant(&forged(kind, &victim, start)).await;
+
+            let mut now = start;
+            let mut pending_seen = false;
+            while now < start + EIGHT_DAYS_MS {
+                sweep_at(&victim, &transport, now, &policy).await;
+                // Only the CID and retry state are kept between sweeps.
+                if !victim.database.seen_control_object(&cid).unwrap() {
+                    assert_eq!(tracked(&victim), 1, "{kind:?}");
+                    pending_seen = true;
+                }
+                now += 10 * MINUTE_MS;
+            }
+            assert!(pending_seen, "{kind:?} is retried at first");
+            assert!(
+                victim.database.seen_control_object(&cid).unwrap(),
+                "{kind:?} is ignored once the horizon passes"
+            );
+            assert_eq!(tracked(&victim), 0, "{kind:?}");
+            let fetched = transport.gets_of(&cid);
+            assert!(
+                (2..=40).contains(&fetched),
+                "{kind:?} was fetched {fetched} times"
+            );
+
+            // Ignored for good: never fetched again, even much later.
+            for step in 0..20 {
+                sweep_at(&victim, &transport, now + step * 60 * MINUTE_MS, &policy).await;
+            }
+            assert_eq!(transport.gets_of(&cid), fetched, "{kind:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_retry_waits_out_its_backoff_before_fetching_again() {
+        let victim = enrolled().await;
+        let transport = Counting::new("bucket");
+        let policy = RetryPolicy::DEFAULT;
+        let start = now_ms();
+        let cid = transport
+            .plant(&forged(Kind::Rotation, &victim, start))
+            .await;
+
+        sweep_at(&victim, &transport, start, &policy).await;
+        assert_eq!(transport.gets_of(&cid), 1);
+        sweep_at(
+            &victim,
+            &transport,
+            start + policy.base_backoff_ms - 1,
+            &policy,
+        )
+        .await;
+        assert_eq!(transport.gets_of(&cid), 1, "not due yet");
+        sweep_at(&victim, &transport, start + policy.base_backoff_ms, &policy).await;
+        assert_eq!(transport.gets_of(&cid), 2, "due");
+        sweep_at(
+            &victim,
+            &transport,
+            start + 2 * policy.base_backoff_ms,
+            &policy,
+        )
+        .await;
+        assert_eq!(transport.gets_of(&cid), 2, "the delay doubles");
+        sweep_at(
+            &victim,
+            &transport,
+            start + 3 * policy.base_backoff_ms,
+            &policy,
+        )
+        .await;
+        assert_eq!(transport.gets_of(&cid), 3);
+    }
+
+    #[tokio::test]
+    async fn an_object_dated_in_the_future_is_ignored_on_first_sight() {
+        let policy = RetryPolicy::DEFAULT;
+        for kind in KINDS {
+            for created_at_ms in [i64::MAX, now_ms() + 24 * 60 * MINUTE_MS] {
+                let victim = enrolled().await;
+                let transport = Counting::new("bucket");
+                let cid = transport.plant(&forged(kind, &victim, created_at_ms)).await;
+                sweep_at(&victim, &transport, now_ms(), &policy).await;
+                assert!(
+                    victim.database.seen_control_object(&cid).unwrap(),
+                    "{kind:?} at {created_at_ms}"
+                );
+                assert_eq!(tracked(&victim), 0);
+                assert_eq!(transport.gets_of(&cid), 1, "{kind:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_clock_skew_allowance_is_inclusive() {
+        let policy = RetryPolicy::DEFAULT;
+        let victim = enrolled().await;
+        let transport = Counting::new("bucket");
+        let now = now_ms();
+        let at_limit = transport
+            .plant(&forged(
+                Kind::Rotation,
+                &victim,
+                now + policy.future_skew_ms,
+            ))
+            .await;
+        let past_limit = transport
+            .plant(&forged(
+                Kind::Rotation,
+                &victim,
+                now + policy.future_skew_ms + 1,
+            ))
+            .await;
+        let below_limit = transport
+            .plant(&forged(
+                Kind::Rotation,
+                &victim,
+                now + policy.future_skew_ms - 1,
+            ))
+            .await;
+        sweep_at(&victim, &transport, now, &policy).await;
+        assert!(!victim.database.seen_control_object(&at_limit).unwrap());
+        assert!(!victim.database.seen_control_object(&below_limit).unwrap());
+        assert!(victim.database.seen_control_object(&past_limit).unwrap());
+    }
+
+    #[tokio::test]
+    async fn the_number_of_tracked_objects_is_capped() {
+        let policy = RetryPolicy {
+            max_tracked: 3,
+            ..RetryPolicy::DEFAULT
+        };
+        let victim = enrolled().await;
+        let transport = Counting::new("bucket");
+        let now = now_ms();
+        let mut cids = Vec::new();
+        for _ in 0..5 {
+            cids.push(transport.plant(&forged(Kind::Rotation, &victim, now)).await);
+        }
+        sweep_at(&victim, &transport, now, &policy).await;
+        assert_eq!(tracked(&victim), 3);
+        let ignored = cids
+            .iter()
+            .filter(|cid| victim.database.seen_control_object(cid).unwrap())
+            .count();
+        assert_eq!(ignored, 2, "the overflow is ignored, not tracked");
+
+        // More planted objects never grow the set.
+        for _ in 0..10 {
+            transport.plant(&forged(Kind::Grant, &victim, now)).await;
+        }
+        sweep_at(&victim, &transport, now + MINUTE_MS, &policy).await;
+        assert_eq!(tracked(&victim), 3);
+    }
+
+    /// A member that joined while this device was away signs a rotation
+    /// before this device has heard of it. The announcement arrives later,
+    /// within the horizon, and the rotation then applies.
+    #[tokio::test]
+    async fn a_rotation_from_a_member_announced_later_still_applies_within_the_horizon() {
+        let policy = RetryPolicy::DEFAULT;
+        let shared = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &shared, false)
+            .await
+            .unwrap();
+        let c = Member::new();
+        join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &shared)
+            .await
+            .unwrap();
+        a.sweep(&shared).await;
+        let b = Member::new();
+        join_with_recovery_phrase(&b.database, &b.identity, &b.epoch_keys, &phrase, &shared)
+            .await
+            .unwrap();
+        b.sweep(&shared).await;
+        b.rotate(&shared).await;
+
+        // C is told of B's rotation first and B's announcement much later.
+        let (_, rotation) = rotation_at(&shared[0], 1).await;
+        assert_eq!(rotation.rotation.initiator_device_id, b.identity.device_id);
+        let announcement = recovery_announcement_of(&shared[0], &b.identity).await;
+        let rotation_only = Counting::new("rotation-only");
+        let rotation_cid = rotation_only
+            .plant(&encode_signed_key_rotation(&rotation).unwrap())
+            .await;
+        let announcement_only = Counting::new("announcement-only");
+        announcement_only
+            .plant(&encode_signed_enrollment_grant(&announcement).unwrap())
+            .await;
+
+        let start = now_ms();
+        sweep_at(&c, &rotation_only, start, &policy).await;
+        assert_eq!(c.active_epoch(), 0);
+        assert!(!c.database.seen_control_object(&rotation_cid).unwrap());
+        sweep_at(&c, &rotation_only, start + 3 * 60 * MINUTE_MS, &policy).await;
+        assert_eq!(c.active_epoch(), 0, "still waiting for the announcement");
+
+        // Two days on, the announcement shows up beside the rotation.
+        let later = start + 2 * 24 * 60 * MINUTE_MS;
+        let transports: Vec<Arc<dyn SyncTransport>> =
+            vec![rotation_only.clone(), announcement_only.clone()];
+        run_enrollment_sweep_with(
+            &c.database,
+            &c.identity,
+            &c.epoch_keys,
+            &transports,
+            later,
+            &policy,
+        )
+        .await
+        .unwrap();
+        assert_eq!(c.active_epoch(), 1);
+        assert!(c.database.seen_control_object(&rotation_cid).unwrap());
+        assert_eq!(tracked(&c), 0);
+    }
+}

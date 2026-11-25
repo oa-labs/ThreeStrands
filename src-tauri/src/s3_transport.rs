@@ -45,11 +45,9 @@ use threestrands_sync_transport::{
 };
 
 use crate::endpoint_origin::{is_loopback_host, EndpointOrigin};
+use crate::transport_limits::{read_capped, read_error_body, MAX_OBJECT_BYTES};
 
 const CORPUS_DIR_NAME: &str = "threestrands-sync";
-/// Same defensive ceiling as the folder adapter: far above any real
-/// envelope chunk, only here to bound a corrupted or hostile response.
-const MAX_OBJECT_BYTES: u64 = 8 * 1024 * 1024;
 const SCAN_PAGE_SIZE: usize = 500;
 /// Long enough for an 8 MiB upload to start on a slow link; S3 checks
 /// expiry when a request begins, not when its body finishes.
@@ -470,7 +468,7 @@ impl S3Transport {
 
     async fn error_from(response: reqwest::Response) -> TransportError {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = read_error_body(response).await;
         map_status_error(status, &body)
     }
 
@@ -513,30 +511,13 @@ impl S3Transport {
         let mut response = self.send(reqwest::Method::GET, url, &[], None).await?;
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
+            let body = read_error_body(response).await;
             if is_not_found(status, &body) {
                 return Err(TransportError::NotFound);
             }
             return Err(map_status_error(status, &body));
         }
-        if response
-            .content_length()
-            .is_some_and(|length| length > MAX_OBJECT_BYTES)
-        {
-            return Err(TransportError::Corruption(
-                "stored object exceeds the size limit".to_string(),
-            ));
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(map_reqwest_error)? {
-            if (bytes.len() + chunk.len()) as u64 > MAX_OBJECT_BYTES {
-                return Err(TransportError::Corruption(
-                    "stored object exceeds the size limit".to_string(),
-                ));
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(bytes)
+        read_capped(&mut response, MAX_OBJECT_BYTES, "stored object").await
     }
 
     async fn delete_key(&self, key: &str) -> Result<(), TransportError> {
@@ -549,7 +530,7 @@ impl S3Transport {
         if status.is_success() {
             return Ok(());
         }
-        let body = response.text().await.unwrap_or_default();
+        let body = read_error_body(response).await;
         // S3 itself answers 204 for an absent key; some compatible services
         // answer 404. Either way the key is gone.
         if is_not_found(status, &body) {

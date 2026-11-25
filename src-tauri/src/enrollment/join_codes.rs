@@ -721,6 +721,7 @@ pub(super) fn apply_incoming_invitation(
         return Ok(());
     };
     if verify_invitation(inviter_key, &signed).is_err() {
+        log::debug!(target: "replicated_sync", "ignoring invitation {cid}: invalid signature");
         return Ok(());
     }
     database.record_observed_invitation(
@@ -770,6 +771,7 @@ pub(super) fn apply_incoming_redemption(
         return Ok(JoinObjectOutcome::Done);
     };
     if verify_invitation_redemption(&invite_key, &signed).is_err() {
+        log::debug!(target: "replicated_sync", "ignoring redemption {cid}: invalid signature");
         return Ok(JoinObjectOutcome::Done);
     }
     let state = if direction == "outgoing" {

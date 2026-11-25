@@ -24,6 +24,7 @@
 //!   which only members hold. See [`join_with_recovery_phrase`].
 
 mod crypto;
+mod deferred;
 mod error;
 mod join_codes;
 mod service;
@@ -33,6 +34,7 @@ pub(crate) mod test_support;
 mod tests;
 
 pub(crate) use crypto::{roster_entry_x25519, KeychainEpochKeyStore};
+pub(crate) use deferred::DeferredControlObjects;
 pub(crate) use error::{EnrollmentError, EnrollmentResult};
 pub(crate) use join_codes::{
     cancel_join_code, create_join_code, join_with_code, preview_join_code, process_join_codes,

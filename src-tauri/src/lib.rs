@@ -46,6 +46,7 @@ mod proposed_times;
 mod scheduled_send;
 mod signatures;
 mod system_contacts;
+mod transport_limits;
 mod transport_validation;
 // Mail parsing and text handling live in their own crates; these keep `crate::mime::…` and the
 // other module paths the app already uses.
