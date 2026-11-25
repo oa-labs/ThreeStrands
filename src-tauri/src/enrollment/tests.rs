@@ -5148,4 +5148,188 @@ mod unverifiable_control_objects {
         assert!(c.database.seen_control_object(&rotation_cid).unwrap());
         assert_eq!(tracked(&c), 0);
     }
+    /// C, who has not heard of B; B's rotation alone on one transport; and
+    /// B's announcement alone on another.
+    async fn c_with_a_rotation_from_an_unannounced_member(
+    ) -> (Member, Member, Arc<Counting>, Arc<Counting>, String) {
+        let shared = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &shared, false)
+            .await
+            .unwrap();
+        let c = Member::new();
+        join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &shared)
+            .await
+            .unwrap();
+        a.sweep(&shared).await;
+        let b = Member::new();
+        join_with_recovery_phrase(&b.database, &b.identity, &b.epoch_keys, &phrase, &shared)
+            .await
+            .unwrap();
+        b.sweep(&shared).await;
+        b.rotate(&shared).await;
+        let (_, rotation) = rotation_at(&shared[0], 1).await;
+        let announcement = recovery_announcement_of(&shared[0], &b.identity).await;
+        let rotation_only = Counting::new("rotation-only");
+        let rotation_cid = rotation_only
+            .plant(&encode_signed_key_rotation(&rotation).unwrap())
+            .await;
+        let announcement_only = Counting::new("announcement-only");
+        announcement_only
+            .plant(&encode_signed_enrollment_grant(&announcement).unwrap())
+            .await;
+        (c, b, rotation_only, announcement_only, rotation_cid)
+    }
+
+    async fn sweep_all(
+        member: &Member,
+        transports: &[Arc<Counting>],
+        now_ms: i64,
+        policy: &RetryPolicy,
+    ) {
+        let transports: Vec<Arc<dyn SyncTransport>> = transports
+            .iter()
+            .map(|transport| transport.clone() as Arc<dyn SyncTransport>)
+            .collect();
+        run_enrollment_sweep_with(
+            &member.database,
+            &member.identity,
+            &member.epoch_keys,
+            &transports,
+            now_ms,
+            policy,
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Giving up is not final: a flood that fills the cap, then a rotation
+    /// from a member not yet announced, must not cost this device that
+    /// rotation (and its roster) for good.
+    #[tokio::test]
+    async fn a_rotation_ignored_while_the_cap_was_full_applies_once_its_member_is_announced() {
+        let policy = RetryPolicy {
+            max_tracked: 3,
+            ..RetryPolicy::DEFAULT
+        };
+        let (c, b, rotation_only, announcement_only, rotation_cid) =
+            c_with_a_rotation_from_an_unannounced_member().await;
+        let junk = Counting::new("junk");
+        let start = now_ms();
+        let mut junk_cids = Vec::new();
+        for _ in 0..5 {
+            junk_cids.push(junk.plant(&forged(Kind::Rotation, &c, start)).await);
+        }
+        sweep_all(&c, &[junk.clone()], start, &policy).await;
+        assert_eq!(tracked(&c), 3, "the cap is full of junk");
+        assert_eq!(c.database.ignored_control_object_count().unwrap(), 2);
+
+        sweep_all(
+            &c,
+            &[junk.clone(), rotation_only.clone()],
+            start + MINUTE_MS,
+            &policy,
+        )
+        .await;
+        assert!(c.database.seen_control_object(&rotation_cid).unwrap());
+        assert_eq!(c.active_epoch(), 0);
+
+        // Nothing changes for the roster: ignored junk is never fetched again.
+        let ignored_junk: Vec<_> = junk_cids
+            .iter()
+            .filter(|cid| c.database.seen_control_object(cid).unwrap())
+            .cloned()
+            .collect();
+        assert_eq!(ignored_junk.len(), 2);
+        let fetched: Vec<_> = ignored_junk.iter().map(|cid| junk.gets_of(cid)).collect();
+        let ignored_before = c.database.ignored_control_object_count().unwrap();
+        for step in 2..30 {
+            sweep_all(
+                &c,
+                &[junk.clone(), rotation_only.clone()],
+                start + step * 60 * MINUTE_MS,
+                &policy,
+            )
+            .await;
+        }
+        assert_eq!(
+            ignored_junk
+                .iter()
+                .map(|cid| junk.gets_of(cid))
+                .collect::<Vec<_>>(),
+            fetched
+        );
+        assert_eq!(
+            c.database.ignored_control_object_count().unwrap(),
+            ignored_before,
+            "a sweep that applies nothing new clears nothing"
+        );
+        assert!(c.database.seen_control_object(&rotation_cid).unwrap());
+
+        // B's announcement applies; the rotation is then looked at again.
+        let later = start + 40 * 60 * MINUTE_MS;
+        let all = [
+            junk.clone(),
+            rotation_only.clone(),
+            announcement_only.clone(),
+        ];
+        sweep_all(&c, &all, later, &policy).await;
+        assert!(!c.database.seen_control_object(&rotation_cid).unwrap());
+        sweep_all(&c, &all, later + MINUTE_MS, &policy).await;
+        assert_eq!(c.active_epoch(), 1);
+        assert!(c.database.seen_control_object(&rotation_cid).unwrap());
+        assert!(c
+            .database
+            .known_device_roster()
+            .unwrap()
+            .iter()
+            .any(|(device_id, _)| *device_id == b.identity.device_id));
+    }
+
+    #[tokio::test]
+    async fn a_rotation_ignored_past_the_horizon_applies_once_its_member_is_announced() {
+        let policy = RetryPolicy::DEFAULT;
+        let (c, _b, rotation_only, announcement_only, rotation_cid) =
+            c_with_a_rotation_from_an_unannounced_member().await;
+        let start = now_ms();
+        sweep_all(&c, &[rotation_only.clone()], start, &policy).await;
+        assert!(!c.database.seen_control_object(&rotation_cid).unwrap());
+        sweep_all(&c, &[rotation_only.clone()], start + EIGHT_DAYS_MS, &policy).await;
+        assert!(c.database.seen_control_object(&rotation_cid).unwrap());
+        assert_eq!(c.active_epoch(), 0);
+
+        let all = [rotation_only.clone(), announcement_only.clone()];
+        let later = start + EIGHT_DAYS_MS + MINUTE_MS;
+        sweep_all(&c, &all, later, &policy).await;
+        sweep_all(&c, &all, later + MINUTE_MS, &policy).await;
+        assert_eq!(c.active_epoch(), 1);
+    }
+
+    #[tokio::test]
+    async fn re_confirming_existing_trust_does_not_revive_ignored_objects() {
+        let policy = RetryPolicy::DEFAULT;
+        let victim = enrolled().await;
+        let transport = Counting::new("bucket");
+        let now = now_ms();
+        let cid = transport
+            .plant(&forged(Kind::Rotation, &victim, i64::MAX))
+            .await;
+        sweep_at(&victim, &transport, now, &policy).await;
+        assert!(victim.database.seen_control_object(&cid).unwrap());
+        // Writing the same trusted device again changes nothing.
+        let digest = victim.database.trust_state_digest().unwrap();
+        let (device, key) = victim.database.known_device_roster().unwrap().remove(0);
+        victim
+            .database
+            .trust_device_keys(
+                device.as_bytes(),
+                &key,
+                &x25519_public_bytes(&victim.identity.x25519_secret),
+            )
+            .unwrap();
+        assert_eq!(victim.database.trust_state_digest().unwrap(), digest);
+        sweep_at(&victim, &transport, now + MINUTE_MS, &policy).await;
+        assert!(victim.database.seen_control_object(&cid).unwrap());
+        assert_eq!(transport.gets_of(&cid), 1);
+    }
 }

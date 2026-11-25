@@ -9,6 +9,19 @@
 //!
 //! This state is in memory only. A restart forgets it and costs, at worst,
 //! one extra download per tracked object per launch.
+//!
+//! Giving up is not final. An object is marked seen as `ignored` when it is
+//! past the horizon, dated in the future, or squeezed out by the cap, and
+//! each of those can hit a legitimate object (a flood filling the cap, a new
+//! member with a fast clock, a member announced more than a week late).
+//! Ignoring it for good would also lose the rotation's roster, including
+//! revocations. So `ignored` rows are cleared, and this state reset, whenever
+//! the set of trusted devices or known invitations actually changes (see
+//! `trust_state_digest`): that change is exactly what can make such an object
+//! verifiable, and someone who can only write to the bucket cannot cause one.
+//! A write that re-confirms existing state leaves the digest unchanged and
+//! clears nothing. Junk is therefore not fetched again until the roster
+//! changes or the app restarts.
 
 use std::collections::HashMap;
 
@@ -88,6 +101,9 @@ pub(crate) enum Deferral {
 #[derive(Debug, Default)]
 pub(crate) struct DeferredControlObjects {
     entries: HashMap<String, Entry>,
+    /// Digest of the trusted devices and known invitations when `ignored`
+    /// rows were last reconciled. `None` before the first sweep of a launch.
+    pub(crate) trust_digest: Option<u64>,
 }
 
 impl DeferredControlObjects {
@@ -142,6 +158,11 @@ impl DeferredControlObjects {
             },
         );
         Deferral::Retry
+    }
+
+    /// Drops all retry state, so every object is evaluated afresh.
+    pub(crate) fn reset(&mut self) {
+        self.entries.clear();
     }
 
     pub(crate) fn forget(&mut self, cid: &str) {

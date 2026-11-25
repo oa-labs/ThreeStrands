@@ -447,6 +447,13 @@ pub async fn run_enrollment_sweep(
 /// are not fetched again until due. After the policy's horizon, or if their
 /// own timestamp is in the future, or if too many are already tracked, they
 /// are marked seen as ignored.
+///
+/// "Ignored" lasts only while this device's trusted devices and known
+/// invitations stay the same. When they change (checked before and after
+/// each sweep, and on the first sweep of a launch) the ignored rows and the
+/// retry state are cleared, so an object given up on for want of context is
+/// evaluated again once that context exists. An attacker who can only write
+/// to the bucket cannot trigger that.
 pub(crate) async fn run_enrollment_sweep_with(
     database: &Database,
     identity: &DeviceIdentity,
@@ -455,6 +462,7 @@ pub(crate) async fn run_enrollment_sweep_with(
     now_ms: i64,
     policy: &RetryPolicy,
 ) -> EnrollmentResult<bool> {
+    reevaluate_if_trust_changed(database)?;
     for cid in lock_deferred(database).take_expired(now_ms, policy) {
         log::debug!(target: "replicated_sync", "giving up on control object {cid}: retry horizon passed");
         database.mark_control_object_seen(&cid, "ignored")?;
@@ -541,7 +549,24 @@ pub(crate) async fn run_enrollment_sweep_with(
             }
         }
     }
+    reevaluate_if_trust_changed(database)?;
     Ok(must_rotate)
+}
+
+/// The one place that revives ignored control objects: when the digest of
+/// trusted devices and known invitations differs from the last one seen
+/// (or none has been, as on a fresh launch), clears the `ignored` rows and
+/// the in-memory retry state.
+fn reevaluate_if_trust_changed(database: &Database) -> EnrollmentResult<()> {
+    let digest = database.trust_state_digest()?;
+    let mut deferred = lock_deferred(database);
+    if deferred.trust_digest == Some(digest) {
+        return Ok(());
+    }
+    deferred.trust_digest = Some(digest);
+    deferred.reset();
+    database.clear_ignored_control_objects()?;
+    Ok(())
 }
 
 fn lock_deferred(database: &Database) -> std::sync::MutexGuard<'_, DeferredControlObjects> {
