@@ -1264,7 +1264,7 @@ async fn ingest_snoozed_threads(
     Ok(())
 }
 
-async fn ingest_threads(
+pub(crate) async fn ingest_threads(
     database: &Database,
     account_id: &str,
     provider: &(impl MailSync + ?Sized),
@@ -1277,18 +1277,29 @@ async fn ingest_threads(
     for id in ids {
         let messages = match provider.fetch_thread(&id).await {
             Ok(messages) => messages,
-            // A thread fetch's only variable is the id, so a permanent
-            // invalid-operation rejection — Gmail answers 400 "Invalid id
-            // value" for ids it could never have minted, such as a locally
-            // seeded fixture thread adopted onto a real account — means the
-            // id is unusable forever, not momentarily failing. Treat it like
-            // a thread the server no longer has: drop the local copy and
-            // keep syncing. Aborting here instead would wedge every full
-            // sync on the same id and the account would never record a
-            // successful sync. Unknown or retryable errors still abort the
-            // round so they are retried and surfaced.
-            Err(ProviderError::NotFound | ProviderError::InvalidOperation(_)) => {
+            // Only definite evidence the thread is gone deletes the local
+            // copy: the provider says `NotFound` for a 404, an id it reports
+            // as invalid (Gmail's 400 "Invalid id value" for a locally seeded
+            // fixture thread adopted onto a real account), or every message
+            // expunged. A thread that exists but cannot be fetched is kept.
+            Err(ProviderError::NotFound) => {
                 deleted.push(id);
+                continue;
+            }
+            // Known but unfetchable (for example every message over the size
+            // limit): keep the local copy, record the set-aside messages, and
+            // let a later round retry. It must not abort the round.
+            Err(ProviderError::ThreadUnfetchable { reason, messages }) => {
+                log::warn!("sync: thread {id} could not be fetched, keeping it: {reason}");
+                ingested_threads.push((id, Vec::new(), messages));
+                continue;
+            }
+            // A permanent rejection that does not say the thread is gone
+            // (any other 400, an IMAP BAD): skip this thread for the round
+            // and log it, so one bad thread cannot wedge every sync, but
+            // never delete it. Later rounds ask for it again.
+            Err(ProviderError::InvalidOperation(reason)) => {
+                log::warn!("sync: thread {id} could not be fetched, keeping it: {reason}");
                 continue;
             }
             Err(error) => {
@@ -3411,6 +3422,9 @@ mod tests {
         /// Thread ids this provider rejects the way Gmail answers a locally
         /// minted id: a permanent 400 "Invalid id value".
         invalid_thread_ids: Vec<String>,
+        /// Thread ids Gmail rejects with a 400 that doesn't say the id is
+        /// invalid, such as `failedPrecondition`.
+        rejected_thread_ids: Vec<String>,
     }
 
     #[async_trait]
@@ -3430,8 +3444,13 @@ mod tests {
 
         async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
             if self.invalid_thread_ids.iter().any(|invalid| invalid == id) {
+                // Gmail's structured invalid-id answer is reported as NotFound
+                // by the provider (`is_invalid_identifier`).
+                return Err(ProviderError::NotFound);
+            }
+            if self.rejected_thread_ids.iter().any(|thread| thread == id) {
                 return Err(ProviderError::InvalidOperation(
-                    "400 Bad Request: Invalid id value".into(),
+                    "400 Bad Request: Precondition check failed (failedPrecondition)".into(),
                 ));
             }
             let mut fail_thread = self.fail_thread_once.lock().unwrap();
@@ -3577,6 +3596,7 @@ mod tests {
             list_calls: AtomicUsize::new(0),
             fail_thread_once: StdMutex::new(None),
             invalid_thread_ids: vec![],
+            rejected_thread_ids: vec![],
         };
 
         reconcile_inbox(&database, account, &provider)
@@ -3626,6 +3646,7 @@ mod tests {
             list_calls: AtomicUsize::new(0),
             fail_thread_once: StdMutex::new(None),
             invalid_thread_ids: vec![],
+            rejected_thread_ids: vec![],
         };
         reconcile_inbox(&database, account, &provider)
             .await
@@ -3674,6 +3695,7 @@ mod tests {
             list_calls: AtomicUsize::new(0),
             fail_thread_once: StdMutex::new(Some("retry-thread".into())),
             invalid_thread_ids: vec![],
+            rejected_thread_ids: vec![],
         };
 
         assert!(reconcile_and_mark(&database, account, &provider)
@@ -3780,6 +3802,7 @@ mod tests {
             list_calls: AtomicUsize::new(0),
             fail_thread_once: StdMutex::new(None),
             invalid_thread_ids: vec![],
+            rejected_thread_ids: vec![],
         };
 
         sync_with(&database, account, &provider).await.unwrap();
@@ -3828,6 +3851,7 @@ mod tests {
             list_calls: AtomicUsize::new(0),
             fail_thread_once: StdMutex::new(Some("resume-thread".into())),
             invalid_thread_ids: vec![],
+            rejected_thread_ids: vec![],
         };
 
         assert!(matches!(
@@ -3888,6 +3912,7 @@ mod tests {
             list_calls: AtomicUsize::new(0),
             fail_thread_once: StdMutex::new(None),
             invalid_thread_ids: vec!["demo-welcome".into()],
+            rejected_thread_ids: vec![],
         };
 
         sync_with(&database, account, &provider).await.unwrap();
@@ -3910,6 +3935,54 @@ mod tests {
             database.cursor(account).unwrap().as_deref(),
             Some("resynced")
         );
+        assert!(database
+            .sync_status(account)
+            .unwrap()
+            .last_successful_sync
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn a_thread_the_provider_rejects_without_calling_it_gone_is_kept_and_does_not_wedge() {
+        // A 400 that isn't Gmail's invalid-id answer says nothing about
+        // whether the thread exists. The local copy stays, the rest of the
+        // round is ingested, and the round still records success.
+        let account = "acct-rejected-thread";
+        let database = Database::open_memory();
+        database
+            .test_connection()
+            .unwrap()
+            .execute("INSERT INTO sync_state(account_id) VALUES (?1)", [account])
+            .unwrap();
+        let mut existing = ContractProvider::message();
+        existing.id = "kept-message".into();
+        existing.thread_id = "kept-thread".into();
+        database
+            .upsert_thread(account, &[crate::mime::normalize(&existing).unwrap()])
+            .unwrap();
+        let mut real = ContractProvider::message();
+        real.id = "real-message".into();
+        real.thread_id = "real-thread".into();
+        let provider = ReconcileProvider {
+            inbox_ids: vec!["real-thread".into()],
+            threads: [("real-thread".to_string(), real)].into_iter().collect(),
+            list_calls: AtomicUsize::new(0),
+            fail_thread_once: StdMutex::new(None),
+            invalid_thread_ids: vec![],
+            rejected_thread_ids: vec!["kept-thread".into()],
+        };
+
+        sync_with(&database, account, &provider).await.unwrap();
+
+        let threads = database.list_all_mail(Some(account)).unwrap();
+        for id in ["kept-thread", "real-thread"] {
+            assert!(
+                threads
+                    .iter()
+                    .any(|thread| thread.id == format!("{account}:{id}")),
+                "{id} must be present"
+            );
+        }
         assert!(database
             .sync_status(account)
             .unwrap()

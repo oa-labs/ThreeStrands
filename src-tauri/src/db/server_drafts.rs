@@ -40,20 +40,21 @@ impl Database {
         draft: &Draft,
         at: i64,
     ) -> DbResult<()> {
-        let existing: Option<(String, Option<String>, Option<i64>, String)> = tx
+        let existing: Option<(String, Option<String>, Option<i64>, String, Option<String>)> = tx
             .query_row(
-                "SELECT account, server_id, pending_since, state FROM draft_server_links WHERE draft_id=?1",
+                "SELECT account, server_id, pending_since, state, sender FROM draft_server_links WHERE draft_id=?1",
                 [&draft.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .optional()?;
-        if let Some((account, server_id, _, _)) = &existing {
+        if let Some((account, server_id, _, _, sender)) = &existing {
             if *account != draft.account {
                 Self::queue_server_draft_deletion(
                     tx,
                     account,
                     server_id.as_deref(),
                     &draft.id,
+                    sender.as_deref(),
                     at,
                 )?;
                 tx.execute(
@@ -68,12 +69,12 @@ impl Database {
         let existing = existing.filter(|(account, ..)| *account == draft.account);
         let pending_since = existing
             .as_ref()
-            .and_then(|(_, _, since, _)| *since)
+            .and_then(|(_, _, since, _, _)| *since)
             .unwrap_or(at);
         let due = (at + DRAFT_PUSH_DELAY_MS).min(pending_since + DRAFT_PUSH_MAX_WAIT_MS);
         match existing {
             // A temporary failure keeps its backoff; editing doesn't hammer the server.
-            Some((_, _, _, state)) if state == "retrying" => {
+            Some((_, _, _, state, _)) if state == "retrying" => {
                 tx.execute(
                     "UPDATE draft_server_links SET pending_since=?2, due_at=MAX(COALESCE(due_at, ?3), ?3) WHERE draft_id=?1",
                     params![draft.id, pending_since, due],
@@ -100,11 +101,12 @@ impl Database {
         account: &str,
         server_id: Option<&str>,
         draft_id: &str,
+        sender: Option<&str>,
         at: i64,
     ) -> DbResult<()> {
         tx.execute(
-            "INSERT INTO draft_server_deletions(account, server_id, message_id, due_at) VALUES (?1, ?2, ?3, ?4)",
-            params![account, server_id, server_message_local_part(draft_id), at],
+            "INSERT INTO draft_server_deletions(account, server_id, message_id, sender, due_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![account, server_id, server_message_local_part(draft_id), sender, at],
         )?;
         Ok(())
     }
@@ -190,7 +192,7 @@ impl Database {
         self.with_connection(|connection| {
             // A conflict waits for the user, not the clock.
             let mut query = connection.prepare(
-                "SELECT draft_id, account, server_id, server_version, pushed_revision, attempts FROM draft_server_links WHERE due_at IS NOT NULL AND due_at<=?1 AND conflict IS NULL ORDER BY due_at",
+                "SELECT draft_id, account, server_id, server_version, pushed_revision, attempts, sender FROM draft_server_links WHERE due_at IS NOT NULL AND due_at<=?1 AND conflict IS NULL ORDER BY due_at",
             )?;
             let rows = query.query_map([at], link_from_row)?;
             Ok(rows.collect::<Result<_, _>>()?)
@@ -200,7 +202,7 @@ impl Database {
     pub(crate) fn account_draft_links(&self, account: &str) -> DbResult<Vec<Link>> {
         self.with_connection(|connection| {
             let mut query = connection.prepare(
-                "SELECT draft_id, account, server_id, server_version, pushed_revision, attempts FROM draft_server_links WHERE account=?1",
+                "SELECT draft_id, account, server_id, server_version, pushed_revision, attempts, sender FROM draft_server_links WHERE account=?1",
             )?;
             let rows = query.query_map([account], link_from_row)?;
             Ok(rows.collect::<Result<_, _>>()?)
@@ -210,7 +212,7 @@ impl Database {
     pub(crate) fn due_draft_deletions(&self, at: i64) -> DbResult<Vec<Deletion>> {
         self.with_connection(|connection| {
             let mut query = connection.prepare(
-                "SELECT id, account, server_id, message_id, attempts FROM draft_server_deletions WHERE due_at<=?1 ORDER BY id",
+                "SELECT id, account, server_id, message_id, attempts, sender FROM draft_server_deletions WHERE due_at<=?1 ORDER BY id",
             )?;
             let rows = query.query_map([at], |row| {
                 Ok(Deletion {
@@ -219,6 +221,7 @@ impl Database {
                     server_id: row.get(2)?,
                     message_id: row.get(3)?,
                     attempts: row.get(4)?,
+                    sender: row.get(5)?,
                 })
             })?;
             Ok(rows.collect::<Result<_, _>>()?)
@@ -273,11 +276,24 @@ impl Database {
                 &link.account,
                 link.server_id.as_deref(),
                 &link.draft_id,
+                link.sender.as_deref(),
                 at,
             )?;
             tx.execute(
                 "DELETE FROM draft_server_links WHERE draft_id=?1",
                 [&link.draft_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Remembers the sender address a draft's server copy is being pushed
+    /// with, for rebuilding its Message-ID when the copy is deleted.
+    pub(crate) fn record_draft_sender(&self, draft_id: &str, sender: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "UPDATE draft_server_links SET sender=?2 WHERE draft_id=?1 AND sender IS NOT ?2",
+                params![draft_id, sender],
             )?;
             Ok(())
         })
@@ -361,6 +377,7 @@ fn link_from_row(row: &rusqlite::Row) -> rusqlite::Result<Link> {
         server_version: row.get(3)?,
         pushed_revision: row.get(4)?,
         attempts: row.get(5)?,
+        sender: row.get(6)?,
     })
 }
 

@@ -66,6 +66,7 @@ const MIGRATIONS: &[Migration] = &[
     (119, to_v119),
     (120, to_v120),
     (121, to_v121),
+    (122, to_v122),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1600,6 +1601,40 @@ fn to_v120(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v122(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // A draft's server copy carries a Message-ID whose domain comes from the
+    // sender address the draft was pushed with, which can be an alias on
+    // another domain. Remember that sender on the link and on a queued
+    // deletion so the copy can be found again. Rows from before this version
+    // have none and fall back to the account address.
+    for table in ["draft_server_links", "draft_server_deletions"] {
+        let table_exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [table],
+                |row| row.get(0),
+            )
+            .map_err(error)?;
+        if !table_exists {
+            continue;
+        }
+        let exists: bool = tx
+            .query_row(
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name='sender')"
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .map_err(error)?;
+        if !exists {
+            tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN sender TEXT;"))
+                .map_err(error)?;
+        }
+    }
+    Ok(())
+}
+
 fn to_v121(tx: &rusqlite::Transaction) -> Result<(), String> {
     // Replicated-sync protocol version 4: key rotations carry a recovery
     // anchor (genesis) or an epoch link (every later epoch), so a
@@ -2875,6 +2910,51 @@ mod tests {
         assert!(connection
             .execute("INSERT INTO draft_server_links(draft_id, account, state) VALUES ('d', 'a', 'pushing')", [])
             .is_err(), "only known push states are stored");
+    }
+
+    #[test]
+    fn a_v121_database_gains_draft_senders_and_keeps_its_queued_deletions() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE draft_server_links DROP COLUMN sender;
+                 ALTER TABLE draft_server_deletions DROP COLUMN sender;
+                 INSERT INTO draft_server_links(draft_id, account, state) VALUES ('d', 'a@example.com', 'saved');
+                 INSERT INTO draft_server_deletions(account, server_id, message_id, due_at)
+                     VALUES ('a@example.com', NULL, 'draft-d', 1);",
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 121).unwrap();
+        super::migrate(&mut connection).unwrap();
+
+        let sender = |table: &str| -> Option<String> {
+            connection
+                .query_row(&format!("SELECT sender FROM {table}"), [], |row| row.get(0))
+                .unwrap()
+        };
+        assert_eq!(sender("draft_server_links"), None);
+        assert_eq!(
+            sender("draft_server_deletions"),
+            None,
+            "a row queued before the upgrade keeps the account lookup"
+        );
+        connection
+            .execute(
+                "UPDATE draft_server_deletions SET sender='alias@other.example'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            sender("draft_server_deletions").as_deref(),
+            Some("alias@other.example")
+        );
+        // Running the step again over a database that has the columns is a no-op.
+        connection.pragma_update(None, "user_version", 121).unwrap();
+        super::migrate(&mut connection).unwrap();
     }
 
     #[test]

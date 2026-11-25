@@ -27,8 +27,20 @@ pub enum ProviderError {
     /// to a full resynchronization.
     #[error("the sync cursor is invalid or expired")]
     InvalidCursor,
+    /// The server has definitively no such object: a 404, an invalid
+    /// identifier, or every message of a thread expunged. This is the only
+    /// fetch outcome that lets sync delete the local copy.
     #[error("the requested object was not found")]
     NotFound,
+    /// The thread exists, but none of its messages could be fetched under
+    /// ThreeStrands' limits (for example an oversize body). Sync keeps the
+    /// local copy, records `messages` (message id and reason) as set aside,
+    /// and tries again on a later round.
+    #[error("none of the thread's messages could be fetched: {reason}")]
+    ThreadUnfetchable {
+        reason: String,
+        messages: Vec<(String, String)>,
+    },
     #[error("temporary transport failure: {0}")]
     TransientTransport(String),
     /// Park a label mutation while this account verifies the current binding.

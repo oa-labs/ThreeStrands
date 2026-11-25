@@ -45,6 +45,8 @@ struct FakeFolder {
     /// `UID SEARCH` in this folder never answers, and the server stops
     /// serving the connection (a stalled server). Search-deadline tests.
     search_stalls: bool,
+    /// Whole-body fetches answer this tagged `NO` text instead of the body.
+    body_fetch_no: Option<String>,
 }
 
 impl FakeFolder {
@@ -56,6 +58,7 @@ impl FakeFolder {
             fail_after_body_fetches: None,
             examine_fails: false,
             search_stalls: false,
+            body_fetch_no: None,
         }
     }
     fn add_sized(&mut self, flags: &[&str], raw: &str, advertised_size: Option<usize>) -> u32 {
@@ -271,6 +274,10 @@ fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<
                     }
                 }
                 if wants_body {
+                    if let Some(text) = &folder.body_fetch_no {
+                        reply(&mut server, &format!("{tag} NO {text}\r\n")).await;
+                        continue;
+                    }
                     if let Some(limit) = folder.fail_after_body_fetches {
                         if body_fetches >= limit {
                             let uid = parse_uid_set(rest, folder).first().copied().unwrap_or(0);
@@ -772,6 +779,189 @@ async fn fetch_thread_of_an_empty_thread_is_not_found() {
     let (provider, _store) = provider_with(Arc::new(Mutex::new(mb)));
     let err = provider.fetch_thread("imap:t:gone").await.unwrap_err();
     assert!(matches!(err, ProviderError::NotFound));
+}
+
+/// Seeds one message with a location in INBOX and `body` cached, assigned to
+/// `thread`, as the alias test does.
+fn seed_cached_message(
+    provider: &ImapProvider,
+    store: &ImapStateStore,
+    message_id: &str,
+    uid: i64,
+    thread: &str,
+    body: &[u8],
+) {
+    store
+        .upsert_location(&ImapLocation {
+            mailbox: "INBOX".into(),
+            uidvalidity: 1,
+            uid,
+            message_id: message_id.into(),
+            flags_json: "[]".into(),
+            modseq: None,
+        })
+        .unwrap();
+    provider.cache.put(message_id, body, 1).unwrap();
+    store
+        .commit_sync_round(&SyncRoundWrite {
+            thread_assignments: vec![(message_id.into(), thread.into())],
+            changed_threads: vec![thread.into()],
+            ..Default::default()
+        })
+        .unwrap();
+}
+
+/// A message whose MIME tree is over the part-count limit, so
+/// `to_raw_message` refuses it.
+fn over_the_mime_part_limit() -> Vec<u8> {
+    let mut raw = String::from(
+        "Message-ID: <big@x>\r\nSubject: Big\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n",
+    );
+    for _ in 0..=crate::provider::imap::policy::MAX_MIME_PART_COUNT {
+        raw.push_str("--b\r\nContent-Type: text/plain\r\n\r\nx\r\n");
+    }
+    raw.push_str("--b--\r\n");
+    raw.into_bytes()
+}
+
+#[tokio::test]
+async fn a_thread_whose_only_message_is_refused_for_size_is_unfetchable_not_gone() {
+    let (provider, store) = provider_with(Arc::new(Mutex::new(FakeMailbox::new(100))));
+    seed_cached_message(
+        &provider,
+        &store,
+        "imap:me@example.com:big",
+        1,
+        "imap:t:big",
+        &over_the_mime_part_limit(),
+    );
+    match provider.fetch_thread("imap:t:big").await.unwrap_err() {
+        ProviderError::ThreadUnfetchable { messages, .. } => {
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].0, "imap:me@example.com:big");
+        }
+        other => panic!("expected ThreadUnfetchable, got {other:?}"),
+    }
+    // Its location is untouched, so a later round can fetch it again.
+    assert_eq!(
+        store
+            .locations_for_message("imap:me@example.com:big")
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn an_unfetchable_thread_stays_local_through_a_sync_and_is_retried() {
+    let (provider, store) = provider_with(Arc::new(Mutex::new(FakeMailbox::new(100))));
+    let database = store.database().clone();
+    let fine = message("<big@x>", "Was fine", "");
+    seed_cached_message(
+        &provider,
+        &store,
+        "imap:me@example.com:big",
+        1,
+        "imap:t:big",
+        fine.as_bytes(),
+    );
+    seed_cached_message(
+        &provider,
+        &store,
+        "imap:me@example.com:ok",
+        2,
+        "imap:t:ok",
+        message("<ok@x>", "Fine", "").as_bytes(),
+    );
+    let ids = vec!["imap:t:big".to_string(), "imap:t:ok".to_string()];
+    crate::sync::ingest_threads(&database, "me@example.com", &provider, ids.clone())
+        .await
+        .unwrap();
+    let local = |database: &Database, suffix: &str| {
+        database
+            .list_all_mail(Some("me@example.com"))
+            .unwrap()
+            .iter()
+            .any(|thread| thread.id.ends_with(suffix))
+    };
+    assert!(local(&database, "imap:t:big") && local(&database, "imap:t:ok"));
+
+    // The big thread's only message is now refused under the size limits.
+    provider
+        .cache
+        .put("imap:me@example.com:big", &over_the_mime_part_limit(), 2)
+        .unwrap();
+    for round in 0..2 {
+        crate::sync::ingest_threads(&database, "me@example.com", &provider, ids.clone())
+            .await
+            .unwrap();
+        assert!(
+            local(&database, "imap:t:big"),
+            "round {round}: the unfetchable thread is kept"
+        );
+        assert!(
+            local(&database, "imap:t:ok"),
+            "round {round}: the rest of the round still applies"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_thread_with_every_message_expunged_is_still_not_found() {
+    let (provider, store) = provider_with(Arc::new(Mutex::new(FakeMailbox::new(100))));
+    seed_cached_message(
+        &provider,
+        &store,
+        "imap:me@example.com:gone",
+        1,
+        "imap:t:gone",
+        message("<gone@x>", "Gone", "").as_bytes(),
+    );
+    store.delete_location("INBOX", 1, 1).unwrap();
+    let err = provider.fetch_thread("imap:t:gone").await.unwrap_err();
+    assert!(matches!(err, ProviderError::NotFound), "{err:?}");
+}
+
+#[tokio::test]
+async fn an_uncoded_no_during_a_body_fetch_keeps_the_thread_instead_of_deleting_it() {
+    let mut mb = FakeMailbox::new(100);
+    mb.add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "Trashed", ""));
+    let mailbox = Arc::new(Mutex::new(mb));
+    let (provider, store) = provider_with(mailbox.clone());
+    let db = store.database();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+        .await
+        .unwrap();
+    let message_id = store.locations_in_mailbox("Trash").unwrap()[0]
+        .message_id
+        .clone();
+    let thread_id = store.thread_of_message(&message_id).unwrap().unwrap();
+    mailbox
+        .lock()
+        .unwrap()
+        .folders
+        .get_mut("Trash")
+        .unwrap()
+        .body_fetch_no = Some("Some messages could not be FETCHed".into());
+
+    // async-imap discards a tagged NO to a FETCH, so the fetch looks empty.
+    // That must not read as "expunged": the location is still recorded.
+    let err = provider.fetch_thread(&thread_id).await.unwrap_err();
+    assert!(
+        matches!(err, ProviderError::ThreadUnfetchable { .. }),
+        "{err:?}"
+    );
+    assert_eq!(store.locations_for_message(&message_id).unwrap().len(), 1);
+
+    // Once the server serves the body again, the next round fetches it.
+    mailbox
+        .lock()
+        .unwrap()
+        .folders
+        .get_mut("Trash")
+        .unwrap()
+        .body_fetch_no = None;
+    assert_eq!(provider.fetch_thread(&thread_id).await.unwrap().len(), 1);
 }
 
 #[tokio::test]
