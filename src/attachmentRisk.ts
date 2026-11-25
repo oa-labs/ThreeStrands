@@ -12,10 +12,10 @@ export const RISKY_EXTENSIONS: Record<Exclude<AttachmentRisk["kind"], "disguised
   // Opened directly, these run code or install software.
   program: [
     "action", "app", "appimage", "appref-ms", "appx", "application", "bat", "bash", "cab", "chm", "cmd", "com",
-    "command", "cpl", "csh", "deb", "desktop", "dll", "exe", "fish", "gadget", "hlp", "hta", "inf", "jar", "js",
-    "jse", "jnlp", "ksh", "library-ms", "lnk", "msc", "msi", "msix", "msp", "pkg", "pl", "ps1", "psm1", "py", "rb",
-    "reg", "rpm", "scf", "scpt", "scr", "settingcontent-ms", "sh", "terminal", "url", "vb", "vbe", "vbs", "workflow",
-    "wsf", "wsh", "xll", "zsh",
+    "command", "cpl", "csh", "deb", "desktop", "dll", "exe", "fileloc", "fish", "gadget", "hlp", "hta", "inetloc",
+    "inf", "jar", "js", "jse", "jnlp", "ksh", "library-ms", "lnk", "msc", "msi", "msix", "msp", "pkg", "pl", "ps1",
+    "psm1", "py", "rb", "rdp", "reg", "rpm", "scf", "scpt", "scr", "searchconnector-ms", "settingcontent-ms", "sh",
+    "terminal", "theme", "url", "vb", "vbe", "vbs", "webloc", "website", "workflow", "wsf", "wsh", "xll", "zsh",
   ],
   macro: [
     "doc", "docm", "dot", "dotm", "pot", "potm", "ppam", "pps", "ppsm", "ppt", "pptm", "sldm",

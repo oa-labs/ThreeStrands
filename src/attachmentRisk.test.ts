@@ -23,6 +23,18 @@ describe("attachmentRisk", () => {
   it("flags programs, macro documents, disk images and web pages by extension, in any case", () => {
     expect(attachmentRisk("setup.EXE")?.kind).toBe("program");
     expect(attachmentRisk("run.command")?.kind).toBe("program");
+    for (const name of [
+      "bookmark.webloc",
+      "bookmark.WebLoc",
+      "mail.inetloc",
+      "file.fileloc",
+      "desktop.rdp",
+      "query.searchConnector-ms",
+      "look.theme",
+      "link.website",
+    ]) {
+      expect(attachmentRisk(name)?.kind, name).toBe("program");
+    }
     expect(attachmentRisk("budget.xlsm")?.kind).toBe("macro");
     expect(attachmentRisk("Letter.doc")?.kind).toBe("macro");
     expect(attachmentRisk("installer.iso")?.kind).toBe("diskImage");

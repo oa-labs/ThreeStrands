@@ -29,6 +29,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CONCURRENT_REQUESTS: usize = 4;
+const MAX_REDIRECTS: usize = 5;
 // CDN bot filters (Akamai, for one) answer 403 to image requests that don't
 // look like a browser's: a non-browser User-Agent, or a browser one missing
 // the Accept, Accept-Language, Accept-Encoding, and Sec-Fetch-* headers a
@@ -78,7 +79,7 @@ impl ImageCache {
         }
         let client = crate::http_client::builder()
             .dns_resolver(net_safety::dns_resolver())
-            .redirect(Policy::limited(5))
+            .redirect(image_redirect_policy())
             .user_agent(IMAGE_PROXY_USER_AGENT)
             .default_headers(headers)
             // Bot filters also expect Accept-Encoding. Turning decoding on
@@ -145,11 +146,29 @@ fn append_bounded(bytes: &mut Vec<u8>, chunk: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn redirect_policy_with(
+    max_redirects: usize,
+    check_target: fn(&Url) -> Result<(), String>,
+) -> Policy {
+    Policy::custom(move |attempt| {
+        if attempt.previous().len() > max_redirects {
+            attempt.error("Image request redirected too many times")
+        } else if let Err(reason) = check_target(attempt.url()) {
+            attempt.error(reason)
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+fn image_redirect_policy() -> Policy {
+    redirect_policy_with(MAX_REDIRECTS, check_public_image_url)
+}
+
 /// Same shape as `SafeMessage.tsx`'s own `safeImageSrc`: only plain http(s)
 /// URLs are eligible. `data:` URIs never reach this far since the frontend
 /// only proxies URLs it marked as blocked, and it never blocks `data:`.
-fn validate_public_image_url(value: &str) -> Result<Url, String> {
-    let url = Url::parse(value).map_err(|_| "Invalid image URL".to_string())?;
+fn check_public_image_url(url: &Url) -> Result<(), String> {
     let scheme = url.scheme();
     if !(scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
         || url.host_str().is_none()
@@ -158,9 +177,15 @@ fn validate_public_image_url(value: &str) -> Result<Url, String> {
     {
         return Err("Image URL must be a plain http(s) URL".to_string());
     }
-    if is_disallowed_url_host(&url) {
+    if is_disallowed_url_host(url) {
         return Err("Image URL points to a local or private host".to_string());
     }
+    Ok(())
+}
+
+fn validate_public_image_url(value: &str) -> Result<Url, String> {
+    let url = Url::parse(value).map_err(|_| "Invalid image URL".to_string())?;
+    check_public_image_url(&url)?;
     Ok(url)
 }
 
@@ -805,6 +830,142 @@ mod tests {
 
         cache.insert_with_limit("too-large".into(), "123456789012".into(), 20);
         assert!(!cache.entries.contains_key("too-large"));
+    }
+
+    #[tokio::test]
+    async fn refuses_redirects_to_local_private_and_non_http_targets() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let target_v4 = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_v4_port = target_v4.local_addr().unwrap().port();
+        let target_v6 = tokio::net::TcpListener::bind("[::1]:0").await.ok();
+        let target_v6_port = target_v6
+            .as_ref()
+            .map(|listener| listener.local_addr().unwrap().port());
+
+        let mut locations = vec![
+            format!("http://127.0.0.1:{target_v4_port}/secret.png"),
+            "http://169.254.169.254/latest/meta-data/".to_string(),
+            "http://100.64.0.1/internal.png".to_string(),
+            "http://198.18.0.1/bench.png".to_string(),
+            "http://[64:ff9b::127.0.0.1]/secret.png".to_string(),
+            "http://[2002:7f00:1::1]/secret.png".to_string(),
+            "http://[::127.0.0.1]/secret.png".to_string(),
+            format!("http://localhost:{target_v4_port}/secret.png"),
+            "file:///etc/passwd".to_string(),
+            "https://user:pass@example.com/x.png".to_string(),
+        ];
+        if let Some(port) = target_v6_port {
+            locations.push(format!("http://[::1]:{port}/secret.png"));
+        }
+
+        let cache = ImageCache::new().unwrap();
+        for location in locations {
+            let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin_port = origin.local_addr().unwrap().port();
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .into_bytes();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = origin.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let read = stream.read(&mut buffer).await.unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                }
+                stream.write_all(&response).await.unwrap();
+            });
+
+            let origin_url =
+                Url::parse(&format!("http://127.0.0.1:{origin_port}/img.png")).unwrap();
+            let error = download(origin_url, &cache).await.unwrap_err();
+            server.await.unwrap();
+            if location.starts_with("http://") || location.starts_with("https://") {
+                assert!(
+                    error.starts_with("Image request failed:"),
+                    "{location}: {error}"
+                );
+            } else {
+                assert_eq!(
+                    error, "Image endpoint returned HTTP 302 Found",
+                    "{location}: {error}"
+                );
+            }
+            assert!(
+                tokio::time::timeout(Duration::from_millis(25), target_v4.accept())
+                    .await
+                    .is_err(),
+                "redirect target {location} must never be contacted"
+            );
+            if let Some(listener) = &target_v6 {
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(25), listener.accept())
+                        .await
+                        .is_err(),
+                    "IPv6 redirect target {location} must never be contacted"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn follows_up_to_max_redirects_and_refuses_one_more() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        async fn run_redirect_chain(redirects: usize) -> Result<reqwest::Response, reqwest::Error> {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                for hop in 0..=redirects.min(MAX_REDIRECTS) {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::new();
+                    let mut buffer = [0; 1024];
+                    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        let read = stream.read(&mut buffer).await.unwrap();
+                        if read == 0 {
+                            break;
+                        }
+                        request.extend_from_slice(&buffer[..read]);
+                    }
+                    let response = if hop < redirects {
+                        format!(
+                            "HTTP/1.1 302 Found\r\nLocation: /hop-{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            hop + 1
+                        )
+                    } else {
+                        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                            .to_string()
+                    };
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                }
+            });
+
+            let client = crate::http_client::builder()
+                .redirect(redirect_policy_with(MAX_REDIRECTS, |_| Ok(())))
+                .build()
+                .unwrap();
+            let result = client
+                .get(format!("http://127.0.0.1:{port}/start"))
+                .send()
+                .await;
+            server.await.unwrap();
+            result
+        }
+
+        let ok = run_redirect_chain(MAX_REDIRECTS).await.unwrap();
+        assert_eq!(ok.status(), reqwest::StatusCode::OK);
+
+        let err = run_redirect_chain(MAX_REDIRECTS + 1).await.unwrap_err();
+        assert!(err.is_redirect(), "{err:?}");
+        assert!(
+            format!("{err:?}").contains("Image request redirected too many times"),
+            "{err:?}"
+        );
     }
 }
 

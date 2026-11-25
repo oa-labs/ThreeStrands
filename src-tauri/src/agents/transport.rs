@@ -28,43 +28,7 @@ pub(crate) type Result<T> = std::result::Result<T, Failure>;
 fn invalid() -> Failure {
     Failure::Fail("response_invalid")
 }
-pub(crate) fn public_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v) => {
-            let n = u32::from(v);
-            ![
-                (0, 8),
-                (0x0a000000, 8),
-                (0x64400000, 10),
-                (0x7f000000, 8),
-                (0xa9fe0000, 16),
-                (0xac100000, 12),
-                (0xc0000000, 24),
-                (0xc0000200, 24),
-                (0xc0586300, 24),
-                (0xc0a80000, 16),
-                (0xc6120000, 15),
-                (0xc6336400, 24),
-                (0xcb007100, 24),
-                (0xe0000000, 3),
-            ]
-            .iter()
-            .any(|(base, bits)| n >> (32 - bits) == base >> (32 - bits))
-        }
-        IpAddr::V6(v) => {
-            let n = u128::from(v);
-            n >> 125 == 1
-                && ![
-                    (0x2001u128 << 112, 23),
-                    (0x20010db8u128 << 96, 32),
-                    (0x2002u128 << 112, 16),
-                    (0x3fffu128 << 112, 20),
-                ]
-                .iter()
-                .any(|(base, bits)| n >> (128 - bits) == base >> (128 - bits))
-        }
-    }
-}
+pub(crate) use crate::net_safety::is_public_ip as public_ip;
 pub(crate) fn validate_url(value: &str) -> Result<Url> {
     if value.len() > MAX_URL {
         return Err(Failure::Fail("unsafe_url"));

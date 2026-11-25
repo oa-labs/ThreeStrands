@@ -25,6 +25,7 @@ const DANGEROUS_EXTENSIONS: &[&str] = &[
     "dll",
     "dmg",
     "exe",
+    "fileloc",
     "fish",
     "gadget",
     "hlp",
@@ -32,6 +33,7 @@ const DANGEROUS_EXTENSIONS: &[&str] = &[
     "htm",
     "html",
     "img",
+    "inetloc",
     "inf",
     "iso",
     "jar",
@@ -53,21 +55,26 @@ const DANGEROUS_EXTENSIONS: &[&str] = &[
     "psm1",
     "py",
     "rb",
+    "rdp",
     "reg",
     "rpm",
     "scf",
     "scpt",
     "scr",
+    "searchconnector-ms",
     "settingcontent-ms",
     "sh",
     "svg",
     "terminal",
+    "theme",
     "url",
     "vb",
     "vbe",
     "vbs",
     "vhd",
     "vhdx",
+    "webloc",
+    "website",
     "workflow",
     "wsf",
     "wsh",
@@ -318,6 +325,28 @@ mod tests {
     #[test]
     fn flags_dangerous_and_macro_enabled_extensions() {
         assert!(!opening_warnings("invoice.exe", b"MZ...").is_empty());
+        for filename in [
+            "bookmark.webloc",
+            "bookmark.WebLoc",
+            "mail.inetloc",
+            "file.fileloc",
+            "desktop.rdp",
+            "search.searchConnector-ms",
+            "look.theme",
+            "link.website",
+        ] {
+            let warnings = opening_warnings(filename, b"");
+            assert!(
+                warnings
+                    .iter()
+                    .any(|warning| warning.contains("can run code or install software")),
+                "{filename} should trigger dangerous-extension warning"
+            );
+            assert!(
+                opening_confirmation(filename, b"").is_some(),
+                "{filename} should require opening confirmation"
+            );
+        }
         assert!(opening_warnings("forecast.xlsm", b"PK\x03\x04...")
             .iter()
             .any(|warning| warning.contains("Office macros")));
