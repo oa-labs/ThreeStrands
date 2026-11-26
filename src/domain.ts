@@ -1814,6 +1814,7 @@ export type ProposalPayload = {
   suggestSaveToNote?: boolean;
   resolvedByKind?: string;
   resolvedById?: string;
+  taskCompletionSource?: "user" | "reply" | "external";
   expiredDate?: string;
   messageId?: string;
   replyDraft?: string;

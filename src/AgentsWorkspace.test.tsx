@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentsWorkspace } from "./AgentsWorkspace";
+import { formatFullDate } from "./dateFormatting";
 import type { Account, InboxAgentsSnapshot } from "./domain";
 import type { InboxAgentsController } from "./useInboxAgents";
 
@@ -134,8 +135,8 @@ function makeSnapshot(overrides?: Partial<InboxAgentsSnapshot>): InboxAgentsSnap
         kind: "archive_as_resolved",
         state: "pending",
         headline: "Completed task \"Send invoice\"",
-        reason: "Task marked completed.",
-        payload: { resolvedByKind: "task", resolvedById: "task-1" },
+        reason: "You marked the linked task \"Send invoice\" done after this email arrived.",
+        payload: { resolvedByKind: "task", resolvedById: "task-1", taskCompletionSource: "user" },
         evidence: [{ kind: "task", id: "task-1", label: "Send invoice", excerpt: null }],
         createdAt: 98,
         updatedAt: 98,
@@ -184,6 +185,7 @@ describe("AgentsWorkspace", () => {
         onArchiveBatch={onArchiveBatch}
         onSaveToNoteAndArchive={onSaveToNoteAndArchive}
         onCreateTask={vi.fn()}
+        onReopenTask={vi.fn()}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
       />,
@@ -249,6 +251,7 @@ describe("AgentsWorkspace", () => {
         onArchiveBatch={vi.fn()}
         onSaveToNoteAndArchive={vi.fn()}
         onCreateTask={vi.fn()}
+        onReopenTask={vi.fn()}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
       />,
@@ -323,6 +326,7 @@ describe("AgentsWorkspace", () => {
         onArchiveBatch={vi.fn()}
         onSaveToNoteAndArchive={vi.fn()}
         onCreateTask={onCreateTask}
+        onReopenTask={vi.fn()}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
       />,
@@ -378,6 +382,7 @@ describe("AgentsWorkspace", () => {
         onArchiveBatch={vi.fn()}
         onSaveToNoteAndArchive={vi.fn()}
         onCreateTask={vi.fn()}
+        onReopenTask={vi.fn()}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
       />,
@@ -395,10 +400,147 @@ describe("AgentsWorkspace", () => {
         onArchiveBatch={vi.fn()}
         onSaveToNoteAndArchive={vi.fn()}
         onCreateTask={vi.fn()}
+        onReopenTask={vi.fn()}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
       />,
     );
     expect(within(screen.getByRole("article", { name: "Engineering Weekly" })).queryByText("you@example.com")).not.toBeInTheDocument();
+  });
+
+  it("formats task completion evidence, offers Reopen Task or Create Task appropriately, and guards Archive All Safe", () => {
+    const onReopenTask = vi.fn();
+    const onCreateTask = vi.fn();
+    const onArchiveBatch = vi.fn();
+    const completedIso = "2026-11-16T18:17:01.778288+00:00";
+    const expectedDone = `Marked done ${formatFullDate(new Date(completedIso))}`;
+
+    const snapshot = makeSnapshot({
+      proposals: [
+        {
+          id: "p-task",
+          agentId: "resolved_and_expired",
+          accountId: "you@example.com",
+          threadId: "t-task",
+          threadRevision: "2026-11-15T00:00:00Z",
+          threadSubject: "Re: Data Quality Resources",
+          threadSender: "Carolyn Casavan <carolyn@example.com>",
+          threadLastReceivedAt: "2026-11-15T00:00:00Z",
+          threadSnippet: "Guidance attached",
+          threadUnread: true,
+          threadStarred: false,
+          kind: "archive_as_resolved",
+          state: "pending",
+          headline: "Completed task \"Review links\"",
+          reason: "You marked the linked task \"Review links\" done after this email arrived.",
+          payload: { resolvedByKind: "task", resolvedById: "task-99", taskCompletionSource: "user" },
+          evidence: [{ kind: "task", id: "task-99", label: "Review links", excerpt: `Completed ${completedIso}` }],
+          createdAt: 102,
+          updatedAt: 102,
+        },
+        {
+          id: "p-thread-resolved",
+          agentId: "resolved_and_expired",
+          accountId: "you@example.com",
+          threadId: "t-other",
+          threadRevision: "2026-11-14T00:00:00Z",
+          threadSubject: "Water system quote",
+          threadSender: "vendor@example.com",
+          threadLastReceivedAt: "2026-11-14T00:00:00Z",
+          threadSnippet: "Quote details",
+          threadUnread: false,
+          threadStarred: false,
+          kind: "archive_as_resolved",
+          state: "pending",
+          headline: "Handled in another thread",
+          reason: "Replied elsewhere.",
+          payload: { resolvedByKind: "thread", resolvedById: "t-reply-2" },
+          evidence: [{ kind: "thread", id: "t-reply-2", label: "Re: Quote", excerpt: "Confirmed" }],
+          createdAt: 101,
+          updatedAt: 101,
+        },
+        {
+          id: "p-legacy-task",
+          agentId: "resolved_and_expired",
+          accountId: "you@example.com",
+          threadId: "t-legacy",
+          threadRevision: "2026-11-13T00:00:00Z",
+          threadSubject: "Legacy item",
+          threadSender: "legacy@example.com",
+          threadLastReceivedAt: "2026-11-13T00:00:00Z",
+          threadSnippet: "Legacy",
+          threadUnread: false,
+          threadStarred: false,
+          kind: "archive_as_resolved",
+          state: "pending",
+          headline: "Completed task \"Old item\"",
+          reason: "Legacy proposal without source metadata.",
+          payload: { resolvedByKind: "task", resolvedById: "task-old" },
+          evidence: [{ kind: "task", id: "task-old", label: "Old item", excerpt: null }],
+          createdAt: 100,
+          updatedAt: 100,
+        },
+        {
+          id: "p-expired",
+          agentId: "resolved_and_expired",
+          accountId: "you@example.com",
+          threadId: "t-exp",
+          threadRevision: "2026-11-01T00:00:00Z",
+          threadSubject: "Past workshop",
+          threadSender: "events@example.com",
+          threadLastReceivedAt: "2026-11-01T00:00:00Z",
+          threadSnippet: "Workshop ended",
+          threadUnread: false,
+          threadStarred: false,
+          kind: "archive_as_expired",
+          state: "pending",
+          headline: "Workshop already passed",
+          reason: "Event date passed.",
+          payload: { expiredDate: "2026-11-05" },
+          evidence: [],
+          createdAt: 99,
+          updatedAt: 99,
+        },
+      ],
+    });
+
+    render(
+      <AgentsWorkspace
+        controller={makeController(snapshot)}
+        accounts={ACCOUNTS}
+        accountId={null}
+        onOpenThread={vi.fn()}
+        onOpenTask={vi.fn()}
+        onArchiveProposal={vi.fn()}
+        onArchiveBatch={onArchiveBatch}
+        onSaveToNoteAndArchive={vi.fn()}
+        onCreateTask={onCreateTask}
+        onReopenTask={onReopenTask}
+        onReviewDraft={vi.fn()}
+        onOpenAiSettings={vi.fn()}
+      />,
+    );
+
+    // Task-linked card formats completion timestamp cleanly and offers Reopen Task (not duplicate Create Task).
+    const taskCard = screen.getByRole("article", { name: "Re: Data Quality Resources" });
+    expect(within(taskCard).getByText(expectedDone)).toBeInTheDocument();
+    expect(within(taskCard).queryByText(/T18:17:01/)).not.toBeInTheDocument();
+    expect(within(taskCard).queryByRole("button", { name: "Create Task" })).not.toBeInTheDocument();
+    fireEvent.click(within(taskCard).getByRole("button", { name: "Reopen Task" }));
+    expect(onReopenTask).toHaveBeenCalledWith(expect.objectContaining({ id: "p-task" }), "task-99");
+
+    // Non-task cards offer Create Task.
+    const threadCard = screen.getByRole("article", { name: "Water system quote" });
+    fireEvent.click(within(threadCard).getByRole("button", { name: "Create Task" }));
+    expect(onCreateTask).toHaveBeenCalledWith(expect.objectContaining({ id: "p-thread-resolved" }));
+
+    const expiredCard = screen.getByRole("article", { name: "Past workshop" });
+    fireEvent.click(within(expiredCard).getByRole("button", { name: "Create Task" }));
+    expect(onCreateTask).toHaveBeenCalledWith(expect.objectContaining({ id: "p-expired" }));
+
+    // Batch safe archive includes only user-completed task + expired (excludes thread-resolved and legacy unknown source).
+    fireEvent.click(screen.getByRole("button", { name: "Archive All 2 Safe" }));
+    expect(onArchiveBatch).toHaveBeenCalledTimes(1);
+    expect(onArchiveBatch.mock.calls[0][0].map((p: { id: string }) => p.id)).toEqual(["p-task", "p-expired"]);
   });
 });

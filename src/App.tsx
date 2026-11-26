@@ -986,15 +986,38 @@ export function App() {
         kind: "new",
         thread,
         initial: {
-          title: proposal.headline || proposal.threadSubject,
+          title:
+            proposal.kind === "archive_with_summary"
+              ? (proposal.headline || proposal.threadSubject)
+              : (proposal.threadSubject || proposal.headline),
           notes: formatProposalNoteBody(proposal),
         },
-        onSaved: () => { void inboxAgents.resolveProposal(proposal.id, "accepted"); },
+        onSaved: () => {
+          void inboxAgents.resolveProposal(
+            proposal.id,
+            proposal.kind === "archive_with_summary" ? "accepted" : "dismissed",
+          );
+        },
       });
     } catch (reason) {
       setNotice({ message: errorMessage(reason) });
     }
   }, [inboxAgents, setNotice, setTaskEditor]);
+
+  const reopenAssistantTask = useCallback(async (proposal: InboxAgentProposal, taskId: string) => {
+    try {
+      await mailClient.setTaskStatus(taskId, "open", "user");
+      setTaskRevision((current) => current + 1);
+      await refreshTaskIndicators();
+      await inboxAgents.resolveProposal(proposal.id, "dismissed");
+      setNotice({
+        message: "Task reopened",
+        action: { label: "Open Task", run: () => openAssistantTask(taskId) },
+      });
+    } catch (reason) {
+      setNotice({ message: errorMessage(reason) });
+    }
+  }, [inboxAgents, openAssistantTask, refreshTaskIndicators, setNotice, setTaskRevision]);
 
   const reviewProposalDraft = useCallback(async (proposal: InboxAgentProposal, draftText: string) => {
     try {
@@ -1990,6 +2013,7 @@ export function App() {
               onArchive={(p) => { void archiveAssistantProposals([p]); }}
               onSaveToNoteAndArchive={(p) => { void saveProposalToNoteAndArchive(p); }}
               onCreateTask={(p) => { void createTaskFromProposal(p); }}
+              onReopenTask={(p, taskId) => { void reopenAssistantTask(p, taskId); }}
               onReviewDraft={(p, text) => { void reviewProposalDraft(p, text); }}
               onOpenEvidenceThread={jumpToThread}
               onOpenEvidenceTask={openAssistantTask}
@@ -2174,7 +2198,7 @@ export function App() {
         onEventCreated={() => void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"))}
         onOpenContact={contactCardActions.onOpenContact}
       /></Suspense></ErrorBoundary> : null}
-      {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Inbox Assistants…</p>}><AgentsWorkspace controller={inboxAgents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAssistantTask} onArchiveProposal={(p) => { void archiveAssistantProposals([p]); }} onArchiveBatch={(ps) => { void archiveAssistantProposals(ps); }} onSaveToNoteAndArchive={(p) => { void saveProposalToNoteAndArchive(p); }} onCreateTask={(p) => { void createTaskFromProposal(p); }} onReviewDraft={(p, text) => { void reviewProposalDraft(p, text); }} onOpenAiSettings={() => openSettingsAt("ai")} /></Suspense></ErrorBoundary> : null}
+      {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Inbox Assistants…</p>}><AgentsWorkspace controller={inboxAgents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAssistantTask} onArchiveProposal={(p) => { void archiveAssistantProposals([p]); }} onArchiveBatch={(ps) => { void archiveAssistantProposals(ps); }} onSaveToNoteAndArchive={(p) => { void saveProposalToNoteAndArchive(p); }} onCreateTask={(p) => { void createTaskFromProposal(p); }} onReopenTask={(p, taskId) => { void reopenAssistantTask(p, taskId); }} onReviewDraft={(p, text) => { void reviewProposalDraft(p, text); }} onOpenAiSettings={() => openSettingsAt("ai")} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "notes" ? <ErrorBoundary area="Notes" variant="side"><Suspense fallback={null}><NotesWorkspace request={notesRequest} onRequestConsumed={consumeNotesRequest} refreshKey={syncStatus?.lastSuccessfulSync ?? ""} onOpenContact={contactCardActions.onOpenContact} onOpenEntity={openEntityReference} onReturn={notesReturnMail ? () => { setRightWorkspace(null); setNotesReturnMail(false); } : undefined}
         meetingPreparation={notePreparation} onMeetingPreparationChange={setNotePreparation} onPreparationVisibilityChange={setNotePreparationVisible}
         renderMeetingPreparation={(event, close, noteId) => renderPreparation("notes", noteId)(event, close)}
