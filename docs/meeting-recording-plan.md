@@ -1,6 +1,8 @@
 # Meeting recording and transcription
 
-**Status:** Proposed. Nothing built.
+**Status:** Proposed. Stage 0 (the spike) ran in the VM on 2026-11-26; see
+[the findings](archive/meeting-recording-spike-findings.md). Its host
+measurements are still open.
 **Baseline:** 0.211.0, reviewed 2026-11-26.
 **Builds on:** [Meeting preparation and follow-through](meeting-preparation-design.md)
 (stages 1–3 built) and [Meeting notes](notes-design.md#meeting-notes-proposal)
@@ -75,10 +77,11 @@ A new settings page, off by default:
 - **Record Meetings**: the main switch. Turning it on asks for microphone
   permission and system audio permission (on macOS) at that moment, not at
   first launch.
-- **Transcription Model**: **Fast** (about 200 MB), **Accurate** (about 550 MB),
-  with **Download** and progress. The model is downloaded only when the user
-  presses **Download**, and its SHA-256 is checked against a hash pinned in the
-  policy module.
+- **Transcription Model**: **Fast** (`small.en` q5_1, 190 MB, English only)
+  or **Accurate** (`large-v3-turbo` q5_0, 574 MB, multilingual), with
+  **Download** and progress. The model is downloaded only when the user
+  presses **Download**, and its SHA-256 is checked against a hash pinned in
+  the policy module. The spike recorded the hashes.
 - **Keep Audio**: 7 days (default), 30 days, Until Deleted, or Until Transcribed.
 - **Offer to Record Meetings**: on by default. Shows the upcoming meeting in the
   tray menu, and adds a tray badge when another app starts using the microphone
@@ -193,7 +196,7 @@ synthetic PCM.
 
 | Platform | Microphone | System audio |
 | --- | --- | --- |
-| macOS at or above the tap floor | `cpal` (Core Audio) on the default input device, following device changes. ThreeStrands' own tap device is left out of the device list. | A Core Audio process tap: a mono `CATapDescription` global tap that excludes ThreeStrands' own process, `AudioHardwareCreateProcessTap`, and a private aggregate device whose tap list holds the tap. Bindings come from `objc2-core-audio`, in the objc2 0.3 family already in the tree. Both references use `cidre` instead, which is the fallback if objc2 lacks the tap API. It needs `NSAudioCaptureUsageDescription` and no Screen Recording permission. |
+| macOS at or above the tap floor | `cpal` (Core Audio) on the default input device, following device changes. ThreeStrands' own tap device is left out of the device list. | A Core Audio process tap: a mono `CATapDescription` global tap that excludes ThreeStrands' own process, `AudioHardwareCreateProcessTap`, and a private aggregate device whose tap list holds the tap. Bindings come from `objc2-core-audio` 0.3, in the objc2 family already in the tree. The spike confirmed it exposes everything the tap needs, so `cidre` (used by both references) isn't needed. It needs `NSAudioCaptureUsageDescription` and no Screen Recording permission. |
 | macOS below the tap floor | `cpal` | None. The recording has only the microphone track. It also picks up other people's voices from the speakers, so the transcript has no speaker labels, and the recap treats every action's owner as unclear rather than as the user's. |
 | Windows | `cpal` (WASAPI) | WASAPI loopback (`cpal` input streams on output devices, as meetily does, or the `wasapi` crate, as anarlog does). The source follows the endpoint another process is actually playing through. It switches only after two polls agree, and skips ThreeStrands' own process. |
 | Linux | `cpal` | The PulseAudio monitor source of the default sink through `libpulse-binding`. PipeWire answers it through its Pulse compatibility layer. ALSA is avoided: meetily crashed after about 30 minutes of concurrent ALSA calls. |
@@ -215,6 +218,12 @@ Processing:
   other. Device changes come from Core Audio's default-device and device-list
   listeners, debounced, rather than from polling.
 - **Writes** are flushed to disk about once a second.
+- **Aligning the tracks.** The tap delivers nothing until some app first plays
+  audio; in the spike, the first callback came 5 seconds after the tap
+  started. So each track stores the host time of its first callback
+  (`AudioTimeStamp.mHostTime`), and the merge places it on the recording's
+  clock from that time. Counting frames from Start is not enough.
+- **The IOProc** writes into a preallocated ring buffer and never allocates.
 - **Segment files.** Each track is written in 60-second files whose headers are
   finalized when the file closes. A crash or power loss costs at most the open
   minute. On the next launch, an unfinished recording is marked **Interrupted**,
@@ -241,16 +250,24 @@ Processing:
   protocol: the parent passes segment paths, and the worker writes framed JSON
   segments (`track`, `startMs`, `endMs`, `text`) and progress to stdout.
 - **Voice activity detection** runs first, using Silero, so silence produces
-  no "Thank you." hallucinations and long quiet stretches cost nothing. Start
-  from meetily's tuning:
+  no "Thank you." hallucinations and long quiet stretches cost nothing. It runs
+  as a separate step: `WhisperVadContext`, then whisper on each speech span.
+  whisper-rs's `FullParams::enable_vad` is silently ignored, because
+  `WhisperState::full` calls `whisper_full_with_state`, which skips VAD. In
+  the spike, Silero took 0.12 s for 94 s of audio. Start from meetily's
+  tuning:
   - speech thresholds 0.50 to start and 0.35 to continue;
   - 300 ms before and 400 ms after speech;
   - a minimum speech length, because whisper rejects 40 ms fragments;
   - a maximum segment length (about 30 s, set in the policy module), because
     continuous system audio otherwise held a segment open indefinitely.
-- **Timestamps come from the segment boundaries.** whisper's own timestamp
-  tokens are turned off, because they made whisper.cpp drop segments
-  (meetily). Flash attention is off on macOS, where it crashes (anarlog). A
+- **Timestamp tokens stay on.** This departs from meetily. Each span is 30
+  seconds or shorter, where the tokens drop nothing: the spike measured 1.9%
+  WER with them on or off. They also split spans into sentences, which the
+  echo merge needs. meetily's dropped segments happen on longer inputs: 44%
+  WER without VAD and tokens off. Segment times are the span's start plus
+  whisper's offsets. Flash attention is off on macOS, where it crashes
+  (anarlog). A
   post-filter removes repeated lines and known hallucinations. Distribution
   builds set `GGML_NATIVE=OFF`, so one build runs on every CPU of an
   architecture.
@@ -260,10 +277,14 @@ Processing:
 - **Merging tracks.** Segments are ordered by start time. When every output is
   headphones, the microphone hears only the user, so nothing is dropped.
   anarlog uses the same headphones test to switch its echo canceller off.
-  Otherwise the microphone picks up the room's speakers. When a microphone
-  segment overlaps a system segment in time and its text is a near match
-  (normalized token similarity above a threshold set in the policy module),
-  the microphone copy is dropped. This is pure, testable code. Two kinds of
+  Otherwise the microphone picks up the room's speakers. The merge works
+  sentence by sentence. A microphone sentence is dropped when at least half of
+  its words (0.5, in the policy module) also appear in system sentences that
+  overlap it in time, ±1 second. In the spike's simulated echo (−16 dB,
+  60 ms), this dropped all 13 echo sentences (scores 0.70–1.00). It kept the
+  user's line spoken over the remote speaker (0.25) and the user's line alone
+  (0.00). Comparing whole 30-second spans instead lost the line spoken over
+  the remote speaker. This is pure, testable code. Two kinds of
   echo cancellation are ruled out for v1:
   - Apple's voice-processing I/O, because it lowers all other audio by about
     8 dB, the call included, with no public way to stop it (anarlog measured
@@ -370,7 +391,11 @@ The webview side adds domain types in `src/domain.ts`, the client in
 Each stage works without the ones after it. Add a user-facing changelog entry
 in the first stage users can see (stage 2), and extend it in later stages.
 
-0. **Spike (throwaway `examples/`, as with the IMAP spike).** Record a call
+0. **Spike.** *Ran 2026-11-26 in the VM.* See the
+   [findings](archive/meeting-recording-spike-findings.md) and the throwaway
+   crate in `spikes/meeting-recording/`. Still open: the host run (a real call
+   on speakers and on headphones, Metal speed, the permission prompt) and the
+   tap on macOS 14.2 and 14.4. Parakeet is deferred. The original scope: record a call
    through a macOS process tap and the microphone to WAV. Build `whisper-rs` with
    Metal in CI. Measure realtime factor, memory, battery, and echo duplication
    with and without headphones. Also settle three questions:

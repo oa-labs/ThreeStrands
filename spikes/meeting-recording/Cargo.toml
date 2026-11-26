@@ -1,0 +1,25 @@
+# THROWAWAY spike for docs/meeting-recording-plan.md stage 0. Its own
+# workspace and lockfile, so nothing here enters the app's dependency graph,
+# cargo vet, or CI. Not shipped. See README.md.
+[workspace]
+
+[package]
+name = "meeting-recording-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1"
+cpal = "0.18"
+hound = "3.5"
+rubato = "5.0"
+whisper-rs = { version = "0.16", features = ["metal"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["std", "NSArray", "NSString", "NSUUID", "NSValue", "NSDictionary"] }
+objc2-core-foundation = { version = "0.3", features = ["std", "CFString", "CFDictionary", "CFArray", "CFNumber", "CFBase"] }
+objc2-core-audio = { version = "0.3", features = ["std", "AudioHardware", "objc2", "objc2-foundation", "objc2-core-audio-types", "block2"] }
+objc2-core-audio-types = "0.3"

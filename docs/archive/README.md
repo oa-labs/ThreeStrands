@@ -11,6 +11,7 @@ current reference.
 | [db-recovery-plan.md](db-recovery-plan.md) | Durability pragmas, checkpoints, backups, and startup recovery, implemented 2026-09-17. |
 | [db-modularization-plan.md](db-modularization-plan.md) | Split of `db.rs` into `db/` modules, implemented in 0.86.2. |
 | [imap-spike-findings.md](imap-spike-findings.md) | The `async-imap` 0.12 gate for IMAP phase 2, passed 2026-10-09. |
+| [meeting-recording-spike-findings.md](meeting-recording-spike-findings.md) | Stage 0 of [meeting recording](../meeting-recording-plan.md): capture, VAD, whisper, the echo merge, and supply chain, measured 2026-11-26 in the VM; the host measurements are still open. |
 | [workspace-context-and-files-plan.md](workspace-context-and-files-plan.md) | Task and calendar context rails, then the Files workspace, implemented in 0.111.0. Current behavior is in [features.md](../features.md). |
 | [db-layer-plan.md](db-layer-plan.md) | Moving SQL back into `db/` and making the compiler enforce that boundary, completed in 0.173.8. |
 | [co-recipient-suggestions-plan.md](co-recipient-suggestions-plan.md) | Co-recipient contact suggestions in the composer and Groups member picker, implemented in 0.194.0. |
