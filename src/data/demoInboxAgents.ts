@@ -171,9 +171,11 @@ export function createDemoInboxAgents(readState: () => DemoState) {
           threadStarred: t.starred,
           kind: "archive_with_summary",
           state: "pending",
-          headline: `Summary ready: ${t.subject}`,
+          headline: t.subject,
           reason: "Older informational message ready to skim and archive.",
           payload: {
+            takeaways: [t.snippet],
+            deadline: null,
             summary: `• ${t.snippet}`,
             noteTitle: t.subject,
             suggestSaveToNote: true,

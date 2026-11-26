@@ -1800,6 +1800,8 @@ export type AssistantProposalEvidence = {
 
 export type ProposalPayload = {
   summary?: string;
+  takeaways?: string[];
+  deadline?: string | null;
   noteTitle?: string;
   suggestSaveToNote?: boolean;
   resolvedByKind?: string;

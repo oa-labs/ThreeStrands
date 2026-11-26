@@ -1,19 +1,14 @@
 import { Bot } from "lucide-react";
 import type { InboxAgentProposal } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
-
-const KIND_LABELS: Record<InboxAgentProposal["kind"], string> = {
-  archive_with_summary: "Stale Read Summary",
-  archive_as_resolved: "Already Handled",
-  archive_as_expired: "Expired",
-  draft_reply: "Suggested Reply",
-};
+import { ASSISTANT_KIND_LABELS, proposalTakeaways } from "./inboxAssistantCard";
 
 export function InboxAssistantBanner({
   proposals,
   busy,
   onArchive,
   onSaveToNoteAndArchive,
+  onCreateTask,
   onReviewDraft,
   onOpenEvidenceThread,
   onOpenEvidenceTask,
@@ -23,6 +18,7 @@ export function InboxAssistantBanner({
   busy: boolean;
   onArchive(proposal: InboxAgentProposal): void;
   onSaveToNoteAndArchive(proposal: InboxAgentProposal): void;
+  onCreateTask(proposal: InboxAgentProposal): void;
   onReviewDraft(proposal: InboxAgentProposal, text: string): void;
   onOpenEvidenceThread(threadId: string): void;
   onOpenEvidenceTask(taskId: string): void;
@@ -39,17 +35,28 @@ export function InboxAssistantBanner({
       {proposals.map((proposal) => {
         const linkedThread = proposal.evidence.find((e) => e.kind === "thread");
         const linkedTask = proposal.evidence.find((e) => e.kind === "task");
+        const isSummary = proposal.kind === "archive_with_summary";
+        const takeaways = isSummary ? proposalTakeaways(proposal) : [];
+        const deadline = proposal.payload.deadline?.trim();
         return (
           <div className="assistant-context-card" key={proposal.id}>
             <div className="assistant-card-meta">
               <Bot size={ICON_SIZE.xs} aria-hidden="true" />
-              <span>{KIND_LABELS[proposal.kind]}</span>
+              <span>{ASSISTANT_KIND_LABELS[proposal.kind]}</span>
+              {deadline ? <span className="assistant-deadline-badge">Deadline: {deadline}</span> : null}
             </div>
             <strong className="assistant-card-headline">{proposal.headline}</strong>
-            <p className="assistant-card-reason">{proposal.reason}</p>
-            {proposal.payload.summary ? (
-              <div className="assistant-card-preview">{proposal.payload.summary}</div>
-            ) : null}
+            {isSummary ? (
+              takeaways.length > 0 ? (
+                <ul className="assistant-takeaways">
+                  {takeaways.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))}
+                </ul>
+              ) : null
+            ) : (
+              <p className="assistant-card-reason">{proposal.reason}</p>
+            )}
             {proposal.payload.replyDraft ? (
               <div className="assistant-card-preview">{proposal.payload.replyDraft}</div>
             ) : null}
@@ -59,8 +66,13 @@ export function InboxAssistantBanner({
                   <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => onArchive(proposal)}>
                     Archive
                   </button>
-                  <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onSaveToNoteAndArchive(proposal)}>
-                    Save to Notes &amp; Archive
+                  {proposal.payload.suggestSaveToNote === true ? (
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onSaveToNoteAndArchive(proposal)}>
+                      Save to Notes &amp; Archive
+                    </button>
+                  ) : null}
+                  <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onCreateTask(proposal)}>
+                    Create Task
                   </button>
                 </>
               ) : null}
@@ -103,7 +115,7 @@ export function InboxAssistantBanner({
                   ) : null}
                 </>
               ) : null}
-              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onDismiss(proposal)}>
+              <button type="button" className="btn-link assistant-dismiss-btn" disabled={busy} onClick={() => onDismiss(proposal)}>
                 Dismiss
               </button>
             </div>

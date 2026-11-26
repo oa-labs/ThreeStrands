@@ -5,16 +5,15 @@ import { isEditableTarget } from "./commands";
 import { formatDateTime } from "./dateFormatting";
 import type { Account, InboxAgentConfig, InboxAgentId, InboxAgentProposal } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
+import {
+  ASSISTANT_KIND_LABELS,
+  formatProposalSender,
+  proposalTakeaways,
+  shouldShowSubjectSubline,
+} from "./inboxAssistantCard";
 import { InboxAgentConfigModal } from "./InboxAgentConfigModal";
 import { readCurrentAiRunConfig, type InboxAgentsController } from "./useInboxAgents";
 import { useWorkspaceCommands } from "./workspaceCommands";
-
-const KIND_LABELS: Record<InboxAgentProposal["kind"], string> = {
-  archive_with_summary: "Stale Read Summary",
-  archive_as_resolved: "Already Handled",
-  archive_as_expired: "Expired",
-  draft_reply: "Suggested Reply",
-};
 
 function formatAgeDays(iso: string): string {
   const ts = Date.parse(iso);
@@ -34,6 +33,7 @@ export function AgentsWorkspace({
   onArchiveProposal,
   onArchiveBatch,
   onSaveToNoteAndArchive,
+  onCreateTask,
   onReviewDraft,
   onOpenAiSettings,
 }: {
@@ -45,6 +45,7 @@ export function AgentsWorkspace({
   onArchiveProposal(proposal: InboxAgentProposal): void;
   onArchiveBatch(proposals: InboxAgentProposal[]): void;
   onSaveToNoteAndArchive(proposal: InboxAgentProposal): void;
+  onCreateTask(proposal: InboxAgentProposal): void;
   onReviewDraft(proposal: InboxAgentProposal, draftText: string): void;
   onOpenAiSettings(): void;
 }) {
@@ -77,6 +78,7 @@ export function AgentsWorkspace({
   const aiConfigured = Boolean(readCurrentAiRunConfig());
   const anyEnabled = snapshot.agents.some((a) => a.enabled);
   const anyRunning = snapshot.activeRuns.length > 0;
+  const showAccount = accountId === null && accounts.filter((a) => a.onThisDevice !== false).length > 1;
 
   return (
     <section
@@ -301,28 +303,57 @@ export function AgentsWorkspace({
                 const linkedThread = proposal.evidence.find((e) => e.kind === "thread");
                 const linkedTask = proposal.evidence.find((e) => e.kind === "task");
                 const evidenceExcerpt = proposal.evidence.find((e) => e.excerpt)?.excerpt;
+                const isSummary = proposal.kind === "archive_with_summary";
+                const sender = formatProposalSender(proposal.threadSender);
+                const ageLabel = formatAgeDays(proposal.threadLastReceivedAt);
+                const deadline = proposal.payload.deadline?.trim();
+                const takeaways = isSummary ? proposalTakeaways(proposal) : [];
+                const primaryHeading = proposal.headline || proposal.threadSubject || "(No subject)";
                 return (
                   <article
                     key={proposal.id}
                     className={`assistant-proposal-card ${isSelected ? "selected" : ""}`}
-                    aria-label={proposal.threadSubject}
+                    aria-label={proposal.threadSubject || primaryHeading}
                     onClick={() => setSelectedId(proposal.id)}
                   >
                     <header className="assistant-proposal-header">
-                      <span className="assistant-kind-badge">{KIND_LABELS[proposal.kind]}</span>
-                      <span className="assistant-age-label">{formatAgeDays(proposal.threadLastReceivedAt)}</span>
-                      <span className="assistant-account-label">{proposal.accountId}</span>
+                      <span className="assistant-kind-badge">{ASSISTANT_KIND_LABELS[proposal.kind]}</span>
+                      <span className="assistant-meta-sep" aria-hidden="true">·</span>
+                      <span className="assistant-sender-label" title={sender.title}>{sender.label}</span>
+                      {ageLabel ? (
+                        <>
+                          <span className="assistant-meta-sep" aria-hidden="true">·</span>
+                          <span className="assistant-age-label">{ageLabel}</span>
+                        </>
+                      ) : null}
+                      {showAccount ? (
+                        <>
+                          <span className="assistant-meta-sep" aria-hidden="true">·</span>
+                          <span className="assistant-account-label">{proposal.accountId}</span>
+                        </>
+                      ) : null}
+                      {deadline ? <span className="assistant-deadline-badge">Deadline: {deadline}</span> : null}
                     </header>
-                    <h3 className="assistant-proposal-subject">{proposal.threadSubject || "(No subject)"}</h3>
-                    <p className="assistant-proposal-sender">{proposal.threadSender}</p>
-                    <strong className="assistant-card-headline">{proposal.headline}</strong>
-                    <p className="assistant-card-reason">{proposal.reason}</p>
-                    {evidenceExcerpt ? (
-                      <blockquote className="assistant-evidence-quote">{evidenceExcerpt}</blockquote>
+                    <h3 className="assistant-proposal-subject">{primaryHeading}</h3>
+                    {shouldShowSubjectSubline(proposal.headline, proposal.threadSubject) ? (
+                      <p className="assistant-proposal-subline">{proposal.threadSubject}</p>
                     ) : null}
-                    {proposal.payload.summary ? (
-                      <div className="assistant-card-preview">{proposal.payload.summary}</div>
-                    ) : null}
+                    {isSummary ? (
+                      takeaways.length > 0 ? (
+                        <ul className="assistant-takeaways">
+                          {takeaways.map((item, idx) => (
+                            <li key={idx}>{item}</li>
+                          ))}
+                        </ul>
+                      ) : null
+                    ) : (
+                      <>
+                        <p className="assistant-card-reason">{proposal.reason}</p>
+                        {evidenceExcerpt ? (
+                          <blockquote className="assistant-evidence-quote">{evidenceExcerpt}</blockquote>
+                        ) : null}
+                      </>
+                    )}
                     {proposal.payload.replyDraft ? (
                       <div className="assistant-card-preview">
                         <span className="assistant-preview-label">Suggested reply:</span>
@@ -335,8 +366,13 @@ export function AgentsWorkspace({
                           <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => onArchiveProposal(proposal)}>
                             Archive
                           </button>
-                          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onSaveToNoteAndArchive(proposal)}>
-                            Save to Notes &amp; Archive
+                          {proposal.payload.suggestSaveToNote === true ? (
+                            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onSaveToNoteAndArchive(proposal)}>
+                              Save to Notes &amp; Archive
+                            </button>
+                          ) : null}
+                          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onCreateTask(proposal)}>
+                            Create Task
                           </button>
                         </>
                       ) : null}
@@ -387,7 +423,7 @@ export function AgentsWorkspace({
                       </button>
                       <button
                         type="button"
-                        className="btn btn-sm"
+                        className="btn-link assistant-dismiss-btn"
                         disabled={busy}
                         onClick={() => void controller.resolveProposal(proposal.id, "dismissed")}
                       >

@@ -16,7 +16,7 @@ type TaskEditorWaiter = { onSaved?(task: ThreadTask): void; onCancelled?(): void
 export type TaskFormRequest = { kind: "conversation"; threadId: string; accountId: string } | { kind: "goal"; goalId: string; accountId: string };
 
 type TaskEditorState =
-  | ({ kind: "new"; thread: ThreadDetail } & TaskEditorWaiter)
+  | ({ kind: "new"; thread: ThreadDetail; initial?: { title?: string; notes?: string | null } } & TaskEditorWaiter)
   | ({ kind: "goal"; accountId: string; goalId: string } & TaskEditorWaiter)
   | { kind: "edit"; task: ThreadTask }
   | {

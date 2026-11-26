@@ -76,6 +76,11 @@ describe("demo inbox assistants", () => {
     const afterReplies = await client.runInboxAgent("aging_replies");
     expect(afterReplies.proposals.some((p) => p.kind === "draft_reply")).toBe(true);
 
+    // Stale reads emits structured takeaway bullets.
+    const afterStale = await client.runInboxAgent("stale_reads");
+    const staleProposal = afterStale.proposals.find((p) => p.kind === "archive_with_summary");
+    expect(staleProposal?.payload.takeaways?.length).toBeGreaterThan(0);
+
     const firstReply = afterReplies.proposals.find((p) => p.kind === "draft_reply")!;
     await client.mutateThread({ kind: "archive", threadId: firstReply.threadId, value: true });
     const afterArchive = await client.getInboxAgentsSnapshot();
