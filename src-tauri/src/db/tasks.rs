@@ -404,9 +404,23 @@ impl Database {
         };
         self.with_transaction(|connection| {
             let changed = connection.execute(
-                "UPDATE tasks SET status=?1, completion_source=?2, completed_at=?3, updated_at=?4,
-                        completed_by_email=CASE WHEN ?1 IN ('open', 'in_progress') THEN NULL ELSE completed_by_email END
-                 WHERE id=?5 AND (?6 IS NULL OR updated_at=?6)",
+                "UPDATE tasks
+                    SET status = ?1,
+                        completion_source = ?2,
+                        completed_at = ?3,
+                        updated_at = ?4,
+                        completed_by_email = CASE WHEN ?1 IN ('open', 'in_progress') THEN NULL ELSE completed_by_email END,
+                        wait_after = CASE
+                            WHEN ?1 IN ('open', 'in_progress')
+                                 AND status NOT IN ('open', 'in_progress')
+                                 AND kind = 'waiting_for'
+                            THEN COALESCE(
+                                (SELECT last_received_at FROM threads WHERE threads.id = tasks.thread_id),
+                                wait_after
+                            )
+                            ELSE wait_after
+                        END
+                  WHERE id = ?5 AND (?6 IS NULL OR updated_at = ?6)",
                 params![status, completion_source, completed_at, now, id, expected],
             )?;
             if changed == 0 && expected.is_some() {
@@ -419,7 +433,14 @@ impl Database {
                 [id],
                 task_from_row,
             )?;
-            let fields = ["status", "completionSource", "completedAt", "completedByEmail", "updatedAt"]
+            let fields = [
+                "status",
+                "completionSource",
+                "completedAt",
+                "completedByEmail",
+                "waitAfter",
+                "updatedAt",
+            ]
                 .into_iter()
                 .map(str::to_owned)
                 .collect();
@@ -1122,5 +1143,54 @@ mod tests {
 
         let next = database.record_follow_up(&updated.id).unwrap();
         assert_eq!(next.due_value.as_deref(), Some("2026-10-02"));
+    }
+
+    #[test]
+    fn reopening_reply_completed_waiting_task_advances_wait_after() {
+        let database = database_with_thread();
+        let task = database
+            .create_task(&CreateTaskRequest {
+                account_id: "account@example.com".into(),
+                thread_id: Some("account:thread".into()),
+                source_message_id: None,
+                subject_snapshot: Some("Planning".into()),
+                title: "Waiting on Carolyn".into(),
+                notes: None,
+                kind: "waiting_for".into(),
+                due_kind: "none".into(),
+                due_value: None,
+                time_zone: None,
+                repeat_interval_days: None,
+                evidence_text: None,
+                goal_id: None,
+            })
+            .unwrap();
+
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE threads SET last_received_at='2026-09-20T10:00:00Z' WHERE id='account:thread'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(database.reconcile_waiting_tasks().unwrap(), 1);
+
+        let reopened = database.set_task_status(&task.id, "open", "user").unwrap();
+        assert_eq!(reopened.status, "open");
+        assert_eq!(reopened.wait_after.as_deref(), Some("2026-09-20T10:00:00Z"));
+        // Reopened task stays open on subsequent reconciliations until a new reply arrives.
+        assert_eq!(database.reconcile_waiting_tasks().unwrap(), 0);
+        assert_eq!(database.list_tasks(None, Some("open")).unwrap().len(), 1);
+
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE threads SET last_received_at='2026-09-21T10:00:00Z' WHERE id='account:thread'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(database.reconcile_waiting_tasks().unwrap(), 1);
     }
 }

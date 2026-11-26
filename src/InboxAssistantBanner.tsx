@@ -9,6 +9,7 @@ export function InboxAssistantBanner({
   onArchive,
   onSaveToNoteAndArchive,
   onCreateTask,
+  onReopenTask,
   onReviewDraft,
   onOpenEvidenceThread,
   onOpenEvidenceTask,
@@ -19,6 +20,7 @@ export function InboxAssistantBanner({
   onArchive(proposal: InboxAgentProposal): void;
   onSaveToNoteAndArchive(proposal: InboxAgentProposal): void;
   onCreateTask(proposal: InboxAgentProposal): void;
+  onReopenTask(proposal: InboxAgentProposal, taskId: string): void;
   onReviewDraft(proposal: InboxAgentProposal, text: string): void;
   onOpenEvidenceThread(threadId: string): void;
   onOpenEvidenceTask(taskId: string): void;
@@ -87,10 +89,19 @@ export function InboxAssistantBanner({
                     </button>
                   ) : null}
                   {linkedTask ? (
-                    <button type="button" className="btn btn-sm" onClick={() => onOpenEvidenceTask(linkedTask.id)}>
-                      View Completed Task
+                    <>
+                      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onReopenTask(proposal, linkedTask.id)}>
+                        Reopen Task
+                      </button>
+                      <button type="button" className="btn btn-sm" onClick={() => onOpenEvidenceTask(linkedTask.id)}>
+                        View Completed Task
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onCreateTask(proposal)}>
+                      Create Task
                     </button>
-                  ) : null}
+                  )}
                 </>
               ) : null}
               {proposal.kind === "draft_reply" && proposal.payload.replyDraft ? (

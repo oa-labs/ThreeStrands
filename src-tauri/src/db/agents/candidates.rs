@@ -219,15 +219,29 @@ fn completed_task_for_thread(
     thread_id: &str,
     last_received_at: &str,
 ) -> DbResult<Option<(String, String, String)>> {
+    let has_active_task: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM tasks
+             WHERE thread_id = ?1
+               AND status IN ('open', 'in_progress')
+         )",
+        params![thread_id],
+        |row| row.get(0),
+    )?;
+    if has_active_task {
+        return Ok(None);
+    }
+
     let row = conn.query_row(
-        "SELECT id, title, updated_at
+        "SELECT id, title, COALESCE(completed_at, updated_at) AS done_at
          FROM tasks
          WHERE thread_id = ?1
            AND status = 'completed'
-           AND updated_at >= ?2
-         ORDER BY updated_at DESC
+           AND completion_source = 'user'
+           AND completed_by_email IS NULL
+         ORDER BY done_at DESC
          LIMIT 1",
-        params![thread_id, last_received_at],
+        params![thread_id],
         |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -236,10 +250,23 @@ fn completed_task_for_thread(
             ))
         },
     );
-    match row {
-        Ok(found) => Ok(Some(found)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
+    let found = match row {
+        Ok(found) => found,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+
+    let completed_after = match (
+        DateTime::parse_from_rfc3339(&found.2),
+        DateTime::parse_from_rfc3339(last_received_at),
+    ) {
+        (Ok(done_dt), Ok(received_dt)) => done_dt > received_dt,
+        _ => found.2.as_str() > last_received_at,
+    };
+    if completed_after {
+        Ok(Some(found))
+    } else {
+        Ok(None)
     }
 }
 
@@ -461,18 +488,19 @@ pub(super) fn select_candidates(
                         kind: ProposalKind::ArchiveAsResolved,
                         headline: format!("Completed task \"{task_title}\""),
                         reason: format!(
-                            "The linked task \"{task_title}\" was marked completed after this email arrived."
+                            "You marked the linked task \"{task_title}\" done after this email arrived."
                         ),
                         payload: ProposalPayload {
                             resolved_by_kind: Some("task".into()),
                             resolved_by_id: Some(task_id.clone()),
+                            task_completion_source: Some("user".into()),
                             ..Default::default()
                         },
                         evidence: vec![ProposalEvidence {
                             kind: "task".into(),
                             id: task_id,
                             label: task_title,
-                            excerpt: Some(format!("Completed {completed_at}")),
+                            excerpt: Some(format!("Marked done {completed_at}")),
                         }],
                     });
                     continue;

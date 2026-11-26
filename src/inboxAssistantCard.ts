@@ -1,3 +1,4 @@
+import { formatFullDate } from "./dateFormatting";
 import type { InboxAgentProposal } from "./domain";
 import { formatDisplayName, parseAddress } from "./emailAddress";
 
@@ -56,4 +57,25 @@ export function formatProposalNoteBody(proposal: InboxAgentProposal): string {
     if (fallback) sections.push(fallback);
   }
   return sections.join("\n\n");
+}
+
+const TIMESTAMP_EVIDENCE = /^(Completed|Marked done)\s+(\d{4}-\d{2}-\d{2}T\S+)$/i;
+
+/** Formats deterministic task completion ISO timestamps cleanly for user display. */
+export function formatEvidenceExcerpt(excerpt: string): string {
+  const match = TIMESTAMP_EVIDENCE.exec(excerpt.trim());
+  if (!match) return excerpt;
+  const parsed = new Date(match[2]);
+  if (!Number.isFinite(parsed.getTime())) return excerpt;
+  return `Marked done ${formatFullDate(parsed)}`;
+}
+
+/** Limits one-click bulk archive to expired items or tasks explicitly marked done by the user. */
+export function isSafeForBatchArchive(proposal: InboxAgentProposal): boolean {
+  if (proposal.kind === "archive_as_expired") return true;
+  return (
+    proposal.kind === "archive_as_resolved" &&
+    proposal.payload.resolvedByKind === "task" &&
+    proposal.payload.taskCompletionSource === "user"
+  );
 }

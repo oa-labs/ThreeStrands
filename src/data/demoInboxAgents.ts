@@ -125,7 +125,18 @@ export function createDemoInboxAgents(readState: () => DemoState) {
       if (already) continue;
 
       if (agentId === "resolved_and_expired") {
-        const doneTask = tasks.find((task) => task.threadId === t.id && task.status === "completed");
+        const hasActiveTask = tasks.some(
+          (task) => task.threadId === t.id && (task.status === "open" || task.status === "in_progress"),
+        );
+        const doneTask = hasActiveTask
+          ? undefined
+          : tasks.find(
+              (task) =>
+                task.threadId === t.id &&
+                task.status === "completed" &&
+                task.completionSource === "user" &&
+                !task.completedByEmail,
+            );
         if (doneTask) {
           scanned++;
           proposed++;
@@ -144,9 +155,14 @@ export function createDemoInboxAgents(readState: () => DemoState) {
             kind: "archive_as_resolved",
             state: "pending",
             headline: `Completed task "${doneTask.title}"`,
-            reason: `The linked task "${doneTask.title}" was marked completed after this email arrived.`,
-            payload: { resolvedByKind: "task", resolvedById: doneTask.id },
-            evidence: [{ kind: "task", id: doneTask.id, label: doneTask.title, excerpt: null }],
+            reason: `You marked the linked task "${doneTask.title}" done after this email arrived.`,
+            payload: { resolvedByKind: "task", resolvedById: doneTask.id, taskCompletionSource: "user" },
+            evidence: [{
+              kind: "task",
+              id: doneTask.id,
+              label: doneTask.title,
+              excerpt: doneTask.completedAt ? `Marked done ${doneTask.completedAt}` : null,
+            }],
             createdAt: now,
             updatedAt: now,
           });

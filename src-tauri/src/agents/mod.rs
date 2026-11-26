@@ -250,10 +250,12 @@ pub(crate) struct ProposalPayload {
     pub note_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggest_save_to_note: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_by_kind: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_by_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_completion_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expired_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -7,7 +7,9 @@ import type { Account, InboxAgentConfig, InboxAgentId, InboxAgentProposal } from
 import { ICON_SIZE } from "./iconSizes";
 import {
   ASSISTANT_KIND_LABELS,
+  formatEvidenceExcerpt,
   formatProposalSender,
+  isSafeForBatchArchive,
   proposalTakeaways,
   shouldShowSubjectSubline,
 } from "./inboxAssistantCard";
@@ -34,6 +36,7 @@ export function AgentsWorkspace({
   onArchiveBatch,
   onSaveToNoteAndArchive,
   onCreateTask,
+  onReopenTask,
   onReviewDraft,
   onOpenAiSettings,
 }: {
@@ -46,6 +49,7 @@ export function AgentsWorkspace({
   onArchiveBatch(proposals: InboxAgentProposal[]): void;
   onSaveToNoteAndArchive(proposal: InboxAgentProposal): void;
   onCreateTask(proposal: InboxAgentProposal): void;
+  onReopenTask(proposal: InboxAgentProposal, taskId: string): void;
   onReviewDraft(proposal: InboxAgentProposal, draftText: string): void;
   onOpenAiSettings(): void;
 }) {
@@ -57,9 +61,7 @@ export function AgentsWorkspace({
   const visibleProposals = snapshot.proposals.filter(
     (p) => filterAgent === "all" || p.agentId === filterAgent,
   );
-  const safeBatch = visibleProposals.filter(
-    (p) => p.kind === "archive_as_expired" || p.kind === "archive_as_resolved",
-  );
+  const safeBatch = visibleProposals.filter(isSafeForBatchArchive);
   const activeProposal =
     visibleProposals.find((p) => p.id === selectedId) ?? visibleProposals[0] ?? null;
 
@@ -354,7 +356,7 @@ export function AgentsWorkspace({
                       <>
                         <p className="assistant-card-reason">{proposal.reason}</p>
                         {evidenceExcerpt ? (
-                          <blockquote className="assistant-evidence-quote">{evidenceExcerpt}</blockquote>
+                          <blockquote className="assistant-evidence-quote">{formatEvidenceExcerpt(evidenceExcerpt)}</blockquote>
                         ) : null}
                       </>
                     )}
@@ -391,10 +393,19 @@ export function AgentsWorkspace({
                             </button>
                           ) : null}
                           {linkedTask ? (
-                            <button type="button" className="btn btn-sm" onClick={() => onOpenTask(linkedTask.id)}>
-                              View Completed Task
+                            <>
+                              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onReopenTask(proposal, linkedTask.id)}>
+                                Reopen Task
+                              </button>
+                              <button type="button" className="btn btn-sm" onClick={() => onOpenTask(linkedTask.id)}>
+                                View Completed Task
+                              </button>
+                            </>
+                          ) : (
+                            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onCreateTask(proposal)}>
+                              Create Task
                             </button>
-                          ) : null}
+                          )}
                         </>
                       ) : null}
                       {proposal.kind === "draft_reply" && proposal.payload.replyDraft ? (

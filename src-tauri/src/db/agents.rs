@@ -964,8 +964,8 @@ mod tests {
         db.connection()
             .unwrap()
             .execute(
-                "INSERT INTO tasks(id, account_id, thread_id, title, kind, due_kind, status, created_at, updated_at)
-                 VALUES ('task-1', 'me@example.com', 't-task', 'Submit tax receipt', 'action', 'none', 'completed', '2026-11-02T10:00:00Z', '2026-11-03T10:00:00Z')",
+                "INSERT INTO tasks(id, account_id, thread_id, title, kind, due_kind, status, completion_source, created_at, updated_at, completed_at)
+                 VALUES ('task-1', 'me@example.com', 't-task', 'Submit tax receipt', 'action', 'none', 'completed', 'user', '2026-11-02T10:00:00Z', '2026-11-03T10:00:00Z', '2026-11-03T10:00:00Z')",
                 [],
             )
             .unwrap();
@@ -1001,6 +1001,13 @@ mod tests {
             resolved_batch.deterministic[0].kind,
             ProposalKind::ArchiveAsResolved
         );
+        assert_eq!(
+            resolved_batch.deterministic[0]
+                .payload
+                .task_completion_source
+                .as_deref(),
+            Some("user")
+        );
 
         let mut reply_cfg = db.get_inbox_agent_config(AgentId::AgingReplies).unwrap();
         reply_cfg.account_id = Some("me@example.com".into());
@@ -1011,6 +1018,105 @@ mod tests {
             .map(|c| c.thread_id.as_str())
             .collect();
         assert_eq!(reply_ids, vec!["t-human"]);
+    }
+
+    #[test]
+    fn completed_task_sweeper_requires_strict_user_completion_and_no_active_tasks() {
+        let db = Database::open_memory();
+        db.adopt_mail_account("me@example.com", MailProviderKind::Gmail)
+            .unwrap();
+        db.connection()
+            .unwrap()
+            .execute("DELETE FROM threads WHERE id = 'welcome'", [])
+            .unwrap();
+
+        seed_thread(
+            &db,
+            "t-reply-closed",
+            "Waiting thread",
+            "sam@example.com",
+            "2026-11-01T10:00:00Z",
+            "Will get back to you.",
+            "[\"INBOX\"]",
+            None,
+        );
+        seed_thread(
+            &db,
+            "t-sent-closed",
+            "Data Quality Resources",
+            "carolyn@example.com",
+            "2026-11-01T10:00:00Z",
+            "Here are some resource links.",
+            "[\"INBOX\"]",
+            None,
+        );
+        seed_thread(
+            &db,
+            "t-has-open",
+            "Dual task thread",
+            "pat@example.com",
+            "2026-11-01T10:00:00Z",
+            "Please do two things.",
+            "[\"INBOX\"]",
+            None,
+        );
+        seed_thread(
+            &db,
+            "t-stale-done",
+            "Old completion",
+            "kim@example.com",
+            "2026-11-10T10:00:00Z",
+            "Following up on Nov 10.",
+            "[\"INBOX\"]",
+            None,
+        );
+
+        let conn = db.connection().unwrap();
+        // 1) completion_source='reply' must not trigger deterministic archive.
+        conn.execute(
+            "INSERT INTO tasks(id, account_id, thread_id, title, kind, due_kind, status, completion_source, created_at, updated_at, completed_at)
+             VALUES ('task-reply', 'me@example.com', 't-reply-closed', 'Waiting on Sam', 'waiting_for', 'none', 'completed', 'reply', '2026-11-01T09:00:00Z', '2026-11-05T10:00:00Z', '2026-11-05T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+        // 2) completed_by_email set (even with completion_source='user') must not trigger deterministic archive.
+        conn.execute(
+            "INSERT INTO tasks(id, account_id, thread_id, title, kind, due_kind, status, completion_source, completed_by_email, created_at, updated_at, completed_at)
+             VALUES ('task-email', 'me@example.com', 't-sent-closed', 'Review Carolyn links', 'follow_up', 'none', 'completed', 'user', '{\"accountId\":\"me@example.com\"}', '2026-11-01T09:00:00Z', '2026-11-05T10:00:00Z', '2026-11-05T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+        // 3) User-completed task alongside an active open task must not trigger deterministic archive.
+        conn.execute(
+            "INSERT INTO tasks(id, account_id, thread_id, title, kind, due_kind, status, completion_source, created_at, updated_at, completed_at)
+             VALUES ('task-done-1', 'me@example.com', 't-has-open', 'Part 1', 'action', 'none', 'completed', 'user', '2026-11-01T09:00:00Z', '2026-11-05T10:00:00Z', '2026-11-05T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks(id, account_id, thread_id, title, kind, due_kind, status, created_at, updated_at)
+             VALUES ('task-open-2', 'me@example.com', 't-has-open', 'Part 2', 'action', 'none', 'open', '2026-11-01T09:00:00Z', '2026-11-05T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+        // 4) User-completed task whose completed_at <= last_received_at must not trigger deterministic archive.
+        conn.execute(
+            "INSERT INTO tasks(id, account_id, thread_id, title, kind, due_kind, status, completion_source, created_at, updated_at, completed_at)
+             VALUES ('task-old', 'me@example.com', 't-stale-done', 'Older step', 'action', 'none', 'completed', 'user', '2026-11-01T09:00:00Z', '2026-11-12T10:00:00Z', '2026-11-05T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-25T10:00:00Z")
+            .unwrap()
+            .timestamp();
+        let mut resolved_cfg = db
+            .get_inbox_agent_config(AgentId::ResolvedAndExpired)
+            .unwrap();
+        resolved_cfg.account_id = Some("me@example.com".into());
+        let resolved_batch = db.with_inbox_agent_candidates(&resolved_cfg, now).unwrap();
+        assert!(resolved_batch.deterministic.is_empty());
     }
 
     #[test]

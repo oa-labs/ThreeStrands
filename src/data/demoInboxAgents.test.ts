@@ -66,6 +66,7 @@ describe("demo inbox assistants", () => {
     expect(afterSweeper.proposals).toHaveLength(1);
     expect(afterSweeper.proposals[0].kind).toBe("archive_as_resolved");
     expect(afterSweeper.proposals[0].threadId).toBe("welcome");
+    expect(afterSweeper.proposals[0].payload.taskCompletionSource).toBe("user");
 
     // Dismissing hides it and prevents re-proposing for the same revision.
     await client.resolveInboxAgentProposal(afterSweeper.proposals[0].id, "dismissed");
@@ -85,5 +86,67 @@ describe("demo inbox assistants", () => {
     await client.mutateThread({ kind: "archive", threadId: firstReply.threadId, value: true });
     const afterArchive = await client.getInboxAgentsSnapshot();
     expect(afterArchive.proposals.some((p) => p.id === firstReply.id)).toBe(false);
+  });
+
+  it("sweeper ignores reply-closed, email-closed, and active-task threads", async () => {
+    const dataset = defaultDemoDataset();
+    dataset.tasks.push(
+      {
+        id: "task-email-closed",
+        accountId: DEMO_ACCOUNT_ID,
+        threadId: "welcome",
+        sourceMessageId: null,
+        subjectSnapshot: "Welcome to ThreeStrands",
+        title: "Email closed follow-up",
+        notes: null,
+        kind: "follow_up",
+        dueKind: "none",
+        dueValue: null,
+        timeZone: null,
+        repeatIntervalDays: null,
+        goalId: null,
+        status: "completed",
+        completionSource: "user",
+        evidenceText: null,
+        waitAfter: null,
+        completedByEmail: {
+          accountId: DEMO_ACCOUNT_ID,
+          subject: "Re: Welcome",
+          sentAt: 1772730000,
+          messageId: null,
+          threadId: "welcome",
+          recipients: [],
+        },
+        createdAt: "2026-03-05T17:00:00Z",
+        updatedAt: "2026-03-05T17:00:00Z",
+        completedAt: "2026-03-05T17:00:00Z",
+      },
+      {
+        id: "task-reply-closed",
+        accountId: DEMO_ACCOUNT_ID,
+        threadId: "welcome",
+        sourceMessageId: null,
+        subjectSnapshot: "Welcome to ThreeStrands",
+        title: "Reply closed wait",
+        notes: null,
+        kind: "waiting_for",
+        dueKind: "none",
+        dueValue: null,
+        timeZone: null,
+        repeatIntervalDays: null,
+        goalId: null,
+        status: "completed",
+        completionSource: "reply",
+        evidenceText: null,
+        waitAfter: null,
+        completedByEmail: null,
+        createdAt: "2026-03-05T17:00:00Z",
+        updatedAt: "2026-03-05T17:00:00Z",
+        completedAt: "2026-03-05T17:00:00Z",
+      },
+    );
+    const client = createDemoClient(dataset);
+    const swept = await client.runInboxAgent("resolved_and_expired");
+    expect(swept.proposals).toHaveLength(0);
   });
 });
