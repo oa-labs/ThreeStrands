@@ -318,6 +318,7 @@ const MESSAGES: DailyInsertMessages = DailyInsertMessages {
 impl Database {
     /// The plan in `date`'s daily note, with each item's current state, for a
     /// day starting at UTC midnight; see [`Self::daily_plan_from`].
+    #[cfg(test)]
     pub fn daily_plan(&self, date: &str) -> DbResult<DailyPlan> {
         self.daily_plan_from(date, None)
     }
