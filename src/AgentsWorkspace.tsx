@@ -121,28 +121,32 @@ export function AgentsWorkspace({
       }}
     >
       <header className="agents-toolbar">
-        <h1>Inbox Assistants</h1>
-        <AccountScopeChip accountId={accountId} />
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={busy || !snapshot.runnerEnabled || !anyEnabled}
-          onClick={() => void controller.runEnabled()}
-        >
-          <Play size={ICON_SIZE.sm} aria-hidden="true" />
-          {anyRunning ? "Running…" : "Run Enabled"}
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy}
-          onClick={() => void controller.toggleRunner(!snapshot.runnerEnabled)}
-        >
-          {snapshot.runnerEnabled ? "Pause All" : "Resume All"}
-        </button>
-        <button type="button" className="btn" disabled={busy} onClick={() => void controller.refresh()}>
-          Refresh
-        </button>
+        <div className="agents-toolbar-title">
+          <h1>Inbox Assistants</h1>
+          <AccountScopeChip accountId={accountId} />
+        </div>
+        <div className="agents-toolbar-actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || !snapshot.runnerEnabled || !anyEnabled}
+            onClick={() => void controller.runEnabled()}
+          >
+            <Play size={ICON_SIZE.sm} aria-hidden="true" />
+            {anyRunning ? "Running…" : "Run Enabled"}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => void controller.toggleRunner(!snapshot.runnerEnabled)}
+          >
+            {snapshot.runnerEnabled ? "Pause All" : "Resume All"}
+          </button>
+          <button type="button" className="btn" disabled={busy} onClick={() => void controller.refresh()}>
+            Refresh
+          </button>
+        </div>
       </header>
 
       {!snapshot.runnerEnabled ? (

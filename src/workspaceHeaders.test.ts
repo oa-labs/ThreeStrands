@@ -141,6 +141,20 @@ describe("primary workspace headers", () => {
       expect(lastDeclaration(".settings-page-header h2", property)).toBe(lastDeclaration(".contacts-header h1", property));
     }
   });
+
+  it("matches eyebrow and Inbox Assistants account badge spacing and alignment to Mail", () => {
+    const mailGap = lastDeclaration(".mailbox-heading-context", "gap");
+    expect(lastDeclaration(".eyebrow:has(.account-scope-chip)", "display")).toBe("flex");
+    expect(lastDeclaration(".eyebrow:has(.account-scope-chip)", "align-items")).toBe("center");
+    expect(lastDeclaration(".eyebrow:has(.account-scope-chip)", "gap")).toBe(mailGap);
+    expect(lastDeclaration(".eyebrow:has(.account-scope-chip)", "min-width")).toBe("0");
+
+    expect(lastDeclaration(".agents-toolbar", "justify-content")).toBe("space-between");
+    expect(lastDeclaration(".agents-toolbar-title", "display")).toBe("flex");
+    expect(lastDeclaration(".agents-toolbar-title", "align-items")).toBe("center");
+    expect(lastDeclaration(".agents-toolbar-title", "gap")).toBe(mailGap);
+    expect(lastDeclaration(".agents-toolbar h1", "margin")).toBe("0");
+  });
 });
 
 describe("primary workspace header buttons", () => {

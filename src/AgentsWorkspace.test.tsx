@@ -189,7 +189,18 @@ describe("AgentsWorkspace", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Inbox Assistants" })).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { name: "Inbox Assistants" });
+    expect(heading).toBeInTheDocument();
+    const titleGroup = heading.closest(".agents-toolbar-title");
+    expect(titleGroup).not.toBeNull();
+    expect(titleGroup?.querySelector(".account-scope-chip")).not.toBeNull();
+    const actionsGroup = titleGroup?.parentElement?.querySelector(".agents-toolbar-actions");
+    expect(actionsGroup).not.toBeNull();
+    for (const label of ["Run Enabled", "Pause All", "Refresh"]) {
+      const btn = screen.getByRole("button", { name: label });
+      expect(actionsGroup).toContainElement(btn);
+      expect(titleGroup).not.toContainElement(btn);
+    }
     expect(screen.getByRole("button", { name: "Archive All 2 Safe" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Archive All 2 Safe" }));
