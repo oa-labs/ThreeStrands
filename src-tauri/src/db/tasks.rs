@@ -99,6 +99,7 @@ pub(super) fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadT
         completed_by_email: row
             .get::<_, Option<String>>(20)?
             .and_then(|json| serde_json::from_str(&json).ok()),
+        board_rank: row.get(21)?,
     })
 }
 
@@ -106,7 +107,8 @@ pub(super) fn select_sql() -> &'static str {
     "SELECT id, account_id, thread_id, source_message_id, subject_snapshot,
             title, notes, kind, due_kind, due_value, time_zone,
             repeat_interval_days, status, completion_source, evidence_text,
-            wait_after, created_at, updated_at, completed_at, goal_id, completed_by_email
+            wait_after, created_at, updated_at, completed_at, goal_id, completed_by_email,
+            board_rank
      FROM tasks"
 }
 
@@ -121,6 +123,97 @@ pub(super) fn task_by_id(
             task_from_row,
         )
         .optional()?)
+}
+
+/// Writes a status change and what goes with it. A task that changes status
+/// leaves its board column, so it becomes unplaced unless `place` gives it a
+/// rank in the new one; one that keeps its status keeps its rank. Returns
+/// the number of rows written: none when `expected` no longer matches.
+fn write_status(
+    connection: &rusqlite::Connection,
+    id: &str,
+    status: &str,
+    source: &str,
+    now: &str,
+    expected: Option<&str>,
+    place: Option<f64>,
+) -> DbResult<usize> {
+    let completed_at = (status == "completed").then_some(now);
+    let completion_source = if is_active_status(status) {
+        None
+    } else {
+        Some(source)
+    };
+    Ok(connection.execute(
+        "UPDATE tasks SET status=?1, completion_source=?2, completed_at=?3, updated_at=?4,
+                completed_by_email=CASE WHEN ?1 IN ('open', 'in_progress') THEN NULL ELSE completed_by_email END,
+                board_rank=CASE WHEN ?7 IS NOT NULL THEN ?7 WHEN status=?1 THEN board_rank ELSE NULL END
+         WHERE id=?5 AND (?6 IS NULL OR updated_at=?6)",
+        params![status, completion_source, completed_at, now, id, expected, place],
+    )?)
+}
+
+/// Ranks start this far apart, and a task placed at either end of a column
+/// lands this far past its neighbor.
+const BOARD_RANK_STEP: f64 = 1024.0;
+/// Below this gap between neighbors, a midpoint is too close to tell apart
+/// reliably and the column is renumbered instead.
+const MIN_BOARD_RANK_GAP: f64 = 1e-6;
+/// Most tasks one board placement can order.
+const MAX_BOARD_COLUMN: usize = 10_000;
+
+/// The rank writes that make a task board column read in `order`, top to
+/// bottom, once `moved` is placed. `order` lists each task with its current
+/// rank (`None` for unplaced) and includes `moved` exactly once; its other
+/// tasks are already in the column.
+///
+/// Unplaced tasks show above placed ones, so giving only `moved` a rank
+/// keeps the requested order just when every other task is placed and
+/// already reads in that order. Then `moved` goes halfway between its
+/// neighbors, or a step past the one at an edge, and keeps its rank when it
+/// already sits between them. Otherwise, or when the neighbors are too
+/// close to split, every task is renumbered one step apart and only the
+/// ranks that change are returned.
+pub(crate) fn plan_board_ranks(order: &[(&str, Option<f64>)], moved: &str) -> Vec<(String, f64)> {
+    let Some(index) = order.iter().position(|(id, _)| *id == moved) else {
+        return Vec::new();
+    };
+    let others: Option<Vec<f64>> = order
+        .iter()
+        .enumerate()
+        .filter(|(position, _)| *position != index)
+        .map(|(_, (_, rank))| *rank)
+        .collect();
+    if let Some(others) = others.filter(|ranks| ranks.windows(2).all(|pair| pair[0] < pair[1])) {
+        let previous = index.checked_sub(1).map(|position| others[position]);
+        let next = others.get(index).copied();
+        let fits = |rank: f64| {
+            previous.is_none_or(|previous| previous < rank) && next.is_none_or(|next| rank < next)
+        };
+        if order[index].1.is_some_and(fits) {
+            return Vec::new();
+        }
+        let rank = match (previous, next) {
+            (Some(previous), Some(next)) if next - previous > MIN_BOARD_RANK_GAP => {
+                Some(previous + (next - previous) / 2.0)
+            }
+            (Some(_), Some(_)) => None,
+            (Some(previous), None) => Some(previous + BOARD_RANK_STEP),
+            (None, Some(next)) => Some(next - BOARD_RANK_STEP),
+            (None, None) => Some(BOARD_RANK_STEP),
+        };
+        if let Some(rank) = rank.filter(|rank| rank.is_finite() && fits(*rank)) {
+            return vec![(moved.to_owned(), rank)];
+        }
+    }
+    order
+        .iter()
+        .enumerate()
+        .filter_map(|(position, (id, rank))| {
+            let wanted = (position + 1) as f64 * BOARD_RANK_STEP;
+            (*rank != Some(wanted)).then(|| ((*id).to_owned(), wanted))
+        })
+        .collect()
 }
 
 pub(super) fn record_task(
@@ -396,19 +489,13 @@ impl Database {
             return Err(DatabaseError::invalid("Unknown task completion source"));
         }
         let now = Utc::now().to_rfc3339();
-        let completed_at = (status == "completed").then_some(now.as_str());
-        let completion_source = if is_active_status(status) {
-            None
-        } else {
-            Some(source)
-        };
         self.with_transaction(|connection| {
-            let changed = connection.execute(
-                "UPDATE tasks SET status=?1, completion_source=?2, completed_at=?3, updated_at=?4,
-                        completed_by_email=CASE WHEN ?1 IN ('open', 'in_progress') THEN NULL ELSE completed_by_email END
-                 WHERE id=?5 AND (?6 IS NULL OR updated_at=?6)",
-                params![status, completion_source, completed_at, now, id, expected],
-            )?;
+            let before: Option<String> = connection
+                .query_row("SELECT status FROM tasks WHERE id=?1", [id], |row| {
+                    row.get(0)
+                })
+                .optional()?;
+            let changed = write_status(connection, id, status, source, &now, expected, None)?;
             if changed == 0 && expected.is_some() {
                 return Err(DatabaseError::invalid(
                     "This task changed. Refresh Tasks and try again.",
@@ -419,12 +506,136 @@ impl Database {
                 [id],
                 task_from_row,
             )?;
-            let fields = ["status", "completionSource", "completedAt", "completedByEmail", "updatedAt"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect();
+            let mut fields: BTreeSet<String> = [
+                "status",
+                "completionSource",
+                "completedAt",
+                "completedByEmail",
+                "updatedAt",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+            if before.as_deref() != Some(status) {
+                fields.insert("boardRank".to_owned());
+            }
             record_task(connection, &task, Some(fields))?;
             Ok(task)
+        })
+    }
+
+    /// Places a task in a task board column (`open` is To Do, `in_progress`
+    /// is In Progress), moving it there first when it is elsewhere, with the
+    /// same side effects as [`Self::set_task_status`].
+    ///
+    /// `ordered_ids` is the column's intended order after the move, top to
+    /// bottom, and lists `id` exactly once. Ids that are unknown or whose
+    /// task is in another column are ignored, since the caller's list can be
+    /// slightly out of date. Only the moved task gets a rank when that keeps
+    /// the requested order; otherwise the column is renumbered (see
+    /// [`plan_board_ranks`]). Returns the moved task and every task whose
+    /// rank changed, in column order.
+    pub fn place_task_on_board(
+        &self,
+        id: &str,
+        status: &str,
+        ordered_ids: &[String],
+    ) -> DbResult<Vec<ThreadTask>> {
+        if !is_active_status(status) {
+            return Err(DatabaseError::invalid(
+                "A task can only be placed in To Do or In Progress",
+            ));
+        }
+        if ordered_ids.len() > MAX_BOARD_COLUMN {
+            return Err(DatabaseError::invalid(format!(
+                "A task board column can be ordered with at most {MAX_BOARD_COLUMN} tasks"
+            )));
+        }
+        let mut seen = BTreeSet::new();
+        if !ordered_ids
+            .iter()
+            .all(|listed| seen.insert(listed.as_str()))
+        {
+            return Err(DatabaseError::invalid(
+                "A task board order lists a task more than once",
+            ));
+        }
+        if !seen.contains(id) {
+            return Err(DatabaseError::invalid(
+                "A task board order must include the task being placed",
+            ));
+        }
+        self.with_transaction(|connection| {
+            let mut column = Vec::with_capacity(ordered_ids.len());
+            let mut moved_from = None;
+            {
+                let mut statement =
+                    connection.prepare("SELECT status, board_rank FROM tasks WHERE id=?1")?;
+                for listed in ordered_ids {
+                    let row: Option<(String, Option<f64>)> = statement
+                        .query_row([listed], |row| Ok((row.get(0)?, row.get(1)?)))
+                        .optional()?;
+                    let Some((current, rank)) = row else {
+                        continue;
+                    };
+                    if listed == id {
+                        moved_from = Some(current);
+                    } else if current != status {
+                        continue;
+                    }
+                    column.push((listed.as_str(), rank.filter(|rank| rank.is_finite())));
+                }
+            }
+            let moved_from = moved_from.ok_or(DatabaseError::NotFound("Task"))?;
+            let moves = moved_from != status;
+            let ranks = plan_board_ranks(&column, id);
+            let now = Utc::now().to_rfc3339();
+            let mut changed: BTreeSet<&str> =
+                ranks.iter().map(|(ranked, _)| ranked.as_str()).collect();
+            if moves {
+                let rank = ranks
+                    .iter()
+                    .find(|(ranked, _)| ranked == id)
+                    .map(|(_, rank)| *rank)
+                    .or_else(|| column.iter().find(|(listed, _)| *listed == id)?.1);
+                write_status(connection, id, status, "user", &now, None, rank)?;
+                changed.insert(id);
+            }
+            for (ranked, rank) in &ranks {
+                connection.execute(
+                    "UPDATE tasks SET board_rank=?1, updated_at=?2 WHERE id=?3",
+                    params![rank, now, ranked],
+                )?;
+            }
+            let mut placed = Vec::new();
+            for (listed, _) in &column {
+                if *listed != id && !changed.contains(listed) {
+                    continue;
+                }
+                let task =
+                    task_by_id(connection, listed)?.ok_or(DatabaseError::NotFound("Task"))?;
+                if changed.contains(listed) {
+                    let mut fields: BTreeSet<String> = ["boardRank", "updatedAt"]
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect();
+                    if *listed == id && moves {
+                        fields.extend(
+                            [
+                                "status",
+                                "completionSource",
+                                "completedAt",
+                                "completedByEmail",
+                            ]
+                            .into_iter()
+                            .map(str::to_owned),
+                        );
+                    }
+                    record_task(connection, &task, Some(fields))?;
+                }
+                placed.push(task);
+            }
+            Ok(placed)
         })
     }
 
@@ -591,7 +802,8 @@ impl Database {
         };
         let now = Utc::now().to_rfc3339();
         tx.execute(
-            "UPDATE tasks SET status='completed', completion_source='user', completed_at=?1, updated_at=?1, completed_by_email=?2
+            "UPDATE tasks SET status='completed', completion_source='user', completed_at=?1, updated_at=?1, completed_by_email=?2,
+                    board_rank=NULL
              WHERE id=?3 AND status IN ('open', 'in_progress')",
             params![now, serde_json::to_string(&record).map_err(serialization_error)?, id],
         )?;
@@ -605,6 +817,7 @@ impl Database {
             "completionSource",
             "completedAt",
             "completedByEmail",
+            "boardRank",
             "updatedAt",
         ]
         .into_iter()
@@ -613,22 +826,41 @@ impl Database {
         record_task(tx, &done, Some(fields))
     }
 
+    /// Completes waiting-for tasks whose conversation got a reply after the
+    /// wait began, and records each change for sync. Returns how many.
     pub fn reconcile_waiting_tasks(&self) -> DbResult<usize> {
         let now = Utc::now().to_rfc3339();
-        self.with_connection(|connection| {
-            let changed = connection
-                .execute(
-                    "UPDATE tasks SET status='completed', completion_source='reply', completed_at=?1, updated_at=?1
+        self.with_transaction(|connection| {
+            let ids = connection
+                .prepare(
+                    "UPDATE tasks SET status='completed', completion_source='reply', completed_at=?1, updated_at=?1,
+                            board_rank=NULL
                      WHERE status IN ('open', 'in_progress') AND kind = 'waiting_for'
                        AND wait_after IS NOT NULL
                        AND EXISTS (
                          SELECT 1 FROM threads
                          WHERE threads.id = tasks.thread_id
                            AND threads.last_received_at > tasks.wait_after
-                       )",
-                    [&now],
-                )?;
-            Ok(changed)
+                       )
+                     RETURNING id",
+                )?
+                .query_map([&now], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            for id in &ids {
+                let task = task_by_id(connection, id)?.ok_or(DatabaseError::NotFound("Task"))?;
+                let fields = [
+                    "status",
+                    "completionSource",
+                    "completedAt",
+                    "boardRank",
+                    "updatedAt",
+                ]
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+                record_task(connection, &task, Some(fields))?;
+            }
+            Ok(ids.len())
         })
     }
 }
@@ -661,7 +893,7 @@ impl Database {
                 .transpose()
                 .map_err(serialization_error)?;
             connection.execute(
-                "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at,goal_id,completed_by_email) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21) ON CONFLICT(id) DO UPDATE SET goal_id=excluded.goal_id, completed_by_email=excluded.completed_by_email, account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
+                "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at,goal_id,completed_by_email,board_rank) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22) ON CONFLICT(id) DO UPDATE SET goal_id=excluded.goal_id, completed_by_email=excluded.completed_by_email, board_rank=excluded.board_rank, account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
                 params![
                     task.id,
                     task.account_id,
@@ -684,6 +916,7 @@ impl Database {
                     task.completed_at,
                     task.goal_id,
                     completed_by_email,
+                    task.board_rank.filter(|rank| rank.is_finite()),
                 ],
             )?;
             Ok(())
@@ -1122,5 +1355,452 @@ mod tests {
 
         let next = database.record_follow_up(&updated.id).unwrap();
         assert_eq!(next.due_value.as_deref(), Some("2026-10-02"));
+    }
+
+    mod board {
+        use super::*;
+
+        fn plan(order: &[(&str, Option<f64>)], moved: &str) -> Vec<(String, f64)> {
+            plan_board_ranks(order, moved)
+        }
+
+        fn updates(pairs: &[(&str, f64)]) -> Vec<(String, f64)> {
+            pairs
+                .iter()
+                .map(|(id, rank)| ((*id).to_owned(), *rank))
+                .collect()
+        }
+
+        fn standalone(database: &Database, title: &str) -> ThreadTask {
+            database
+                .create_task(
+                    &serde_json::from_value(serde_json::json!({
+                        "accountId": "account@example.com", "title": title, "kind": "action",
+                    }))
+                    .unwrap(),
+                )
+                .unwrap()
+        }
+
+        fn ids(tasks: &[&ThreadTask]) -> Vec<String> {
+            tasks.iter().map(|task| task.id.clone()).collect()
+        }
+
+        fn get(database: &Database, id: &str) -> ThreadTask {
+            database
+                .list_tasks(None, None)
+                .unwrap()
+                .into_iter()
+                .find(|task| task.id == id)
+                .unwrap()
+        }
+
+        /// The board's order for a column: unplaced first, then by rank.
+        fn column(database: &Database, status: &str, unplaced: &[&str]) -> Vec<String> {
+            let mut tasks = database.list_tasks(None, Some(status)).unwrap();
+            tasks.sort_by(|a, b| match (a.board_rank, b.board_rank) {
+                (None, None) => {
+                    let position =
+                        |id: &str| unplaced.iter().position(|candidate| *candidate == id);
+                    position(&a.id).cmp(&position(&b.id))
+                }
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (Some(a), Some(b)) => a.total_cmp(&b),
+            });
+            tasks.into_iter().map(|task| task.id).collect()
+        }
+
+        #[test]
+        fn a_first_placement_in_an_unplaced_column_numbers_every_task() {
+            assert_eq!(
+                plan(&[("a", None), ("m", None), ("b", None)], "m"),
+                updates(&[("a", 1024.0), ("m", 2048.0), ("b", 3072.0)])
+            );
+            assert_eq!(plan(&[("m", None)], "m"), updates(&[("m", 1024.0)]));
+        }
+
+        #[test]
+        fn a_move_among_placed_tasks_ranks_only_the_moved_task() {
+            let placed = [("a", Some(1024.0)), ("b", Some(2048.0))];
+            // To the top, the bottom, and between.
+            assert_eq!(
+                plan(&[("m", Some(4096.0)), placed[0], placed[1]], "m"),
+                updates(&[("m", 0.0)])
+            );
+            assert_eq!(
+                plan(&[placed[0], placed[1], ("m", Some(0.0))], "m"),
+                updates(&[("m", 3072.0)])
+            );
+            assert_eq!(
+                plan(&[placed[0], ("m", Some(4096.0)), placed[1]], "m"),
+                updates(&[("m", 1536.0)])
+            );
+            // An unplaced task placed among placed ones.
+            assert_eq!(
+                plan(&[placed[0], ("m", None), placed[1]], "m"),
+                updates(&[("m", 1536.0)])
+            );
+        }
+
+        #[test]
+        fn a_task_already_in_place_keeps_its_rank() {
+            assert!(plan(
+                &[
+                    ("a", Some(1024.0)),
+                    ("m", Some(1100.0)),
+                    ("b", Some(2048.0))
+                ],
+                "m"
+            )
+            .is_empty());
+            assert!(plan(&[("m", Some(7.0)), ("a", Some(1024.0))], "m").is_empty());
+            assert!(plan(&[("m", Some(7.0))], "m").is_empty());
+        }
+
+        #[test]
+        fn neighbors_too_close_to_split_renumber_the_column() {
+            let close = 1024.0 + 1e-7;
+            assert_eq!(
+                plan(
+                    &[("a", Some(1024.0)), ("m", Some(9000.0)), ("b", Some(close))],
+                    "m"
+                ),
+                updates(&[("m", 2048.0), ("b", 3072.0)])
+            );
+            // Halving the same gap again and again ends in a renumber too.
+            let mut ranks = [("a", Some(1024.0)), ("m", None), ("b", Some(2048.0))];
+            let mut renumbered = false;
+            for _ in 0..64 {
+                let planned = plan(&ranks, "m");
+                if planned.len() > 1 {
+                    renumbered = true;
+                    break;
+                }
+                // Moves to just above b, whose rank becomes the new upper bound.
+                let rank = planned[0].1;
+                ranks = [("a", ranks[0].1), ("m", None), ("b", Some(rank))];
+            }
+            assert!(renumbered);
+        }
+
+        #[test]
+        fn unplaced_tasks_in_the_column_renumber_it() {
+            // An unplaced task shows above placed ones, so a rank for only the
+            // moved task can't keep it below the unplaced task or above one.
+            assert_eq!(
+                plan(&[("u", None), ("m", None), ("p", Some(1024.0))], "m"),
+                updates(&[("u", 1024.0), ("m", 2048.0), ("p", 3072.0)])
+            );
+            assert_eq!(
+                plan(&[("p", Some(1024.0)), ("m", None), ("u", None)], "m"),
+                updates(&[("m", 2048.0), ("u", 3072.0)])
+            );
+            assert_eq!(
+                plan(&[("m", Some(5.0)), ("u", None), ("p", Some(2048.0))], "m"),
+                updates(&[("m", 1024.0), ("u", 2048.0), ("p", 3072.0)])
+            );
+        }
+
+        #[test]
+        fn placed_tasks_out_of_the_requested_order_renumber_the_column() {
+            assert_eq!(
+                plan(
+                    &[("b", Some(2048.0)), ("m", None), ("a", Some(1024.0))],
+                    "m"
+                ),
+                updates(&[("b", 1024.0), ("m", 2048.0), ("a", 3072.0)])
+            );
+        }
+
+        #[test]
+        fn a_task_missing_from_the_order_plans_nothing() {
+            assert!(plan(&[("a", Some(1024.0))], "m").is_empty());
+        }
+
+        #[test]
+        fn placing_tasks_reorders_the_column_and_writes_only_changed_rows() {
+            let database = Database::open_memory();
+            let a = standalone(&database, "A");
+            let b = standalone(&database, "B");
+            let c = standalone(&database, "C");
+
+            // The first placement numbers the whole column.
+            let placed = database
+                .place_task_on_board(&c.id, "open", &ids(&[&c, &a, &b]))
+                .unwrap();
+            assert_eq!(placed.len(), 3);
+            assert_eq!(column(&database, "open", &[]), ids(&[&c, &a, &b]));
+            assert!(placed.iter().all(|task| task.board_rank.is_some()));
+
+            // Moving b between c and a ranks only b.
+            let a_before = get(&database, &a.id);
+            let c_before = get(&database, &c.id);
+            let placed = database
+                .place_task_on_board(&b.id, "open", &ids(&[&c, &b, &a]))
+                .unwrap();
+            assert_eq!(ids(&placed.iter().collect::<Vec<_>>()), vec![b.id.clone()]);
+            assert_eq!(column(&database, "open", &[]), ids(&[&c, &b, &a]));
+            assert_eq!(get(&database, &a.id).updated_at, a_before.updated_at);
+            assert_eq!(get(&database, &c.id).updated_at, c_before.updated_at);
+
+            // To the top and back to the bottom.
+            database
+                .place_task_on_board(&a.id, "open", &ids(&[&a, &c, &b]))
+                .unwrap();
+            assert_eq!(column(&database, "open", &[]), ids(&[&a, &c, &b]));
+            database
+                .place_task_on_board(&a.id, "open", &ids(&[&c, &b, &a]))
+                .unwrap();
+            assert_eq!(column(&database, "open", &[]), ids(&[&c, &b, &a]));
+
+            // Placing a task where it already is changes nothing.
+            let b_before = get(&database, &b.id);
+            let placed = database
+                .place_task_on_board(&b.id, "open", &ids(&[&c, &b, &a]))
+                .unwrap();
+            assert_eq!(placed[0].updated_at, b_before.updated_at);
+            assert_eq!(placed[0].board_rank, b_before.board_rank);
+        }
+
+        #[test]
+        fn a_new_unplaced_task_shows_first_until_the_column_is_renumbered() {
+            let database = Database::open_memory();
+            let a = standalone(&database, "A");
+            let b = standalone(&database, "B");
+            database
+                .place_task_on_board(&b.id, "open", &ids(&[&b, &a]))
+                .unwrap();
+            let new = standalone(&database, "New");
+            assert_eq!(new.board_rank, None);
+            assert_eq!(column(&database, "open", &[]), ids(&[&new, &b, &a]));
+            // Moving a placed task below the unplaced one renumbers the column.
+            let placed = database
+                .place_task_on_board(&a.id, "open", &ids(&[&new, &a, &b]))
+                .unwrap();
+            assert_eq!(placed.len(), 3);
+            assert_eq!(column(&database, "open", &[]), ids(&[&new, &a, &b]));
+        }
+
+        #[test]
+        fn placing_a_task_in_another_column_moves_it_there() {
+            let database = Database::open_memory();
+            let a = standalone(&database, "A");
+            let b = standalone(&database, "B");
+            let moving = standalone(&database, "Moving");
+            database
+                .set_task_status(&a.id, "in_progress", "user")
+                .unwrap();
+            database
+                .set_task_status(&b.id, "in_progress", "user")
+                .unwrap();
+            database
+                .place_task_on_board(&a.id, "in_progress", &ids(&[&a, &b]))
+                .unwrap();
+            database
+                .place_task_on_board(&moving.id, "open", &ids(&[&moving]))
+                .unwrap();
+
+            let placed = database
+                .place_task_on_board(&moving.id, "in_progress", &ids(&[&a, &moving, &b]))
+                .unwrap();
+            assert_eq!(
+                ids(&placed.iter().collect::<Vec<_>>()),
+                vec![moving.id.clone()]
+            );
+            let moved = &placed[0];
+            assert_eq!(moved.status, "in_progress");
+            assert_eq!(moved.board_rank, Some(1536.0));
+            assert_eq!(
+                column(&database, "in_progress", &[]),
+                ids(&[&a, &moving, &b])
+            );
+
+            // From Done: the completion is undone as a status change would.
+            let done = database
+                .set_task_status(&b.id, "completed", "user")
+                .unwrap();
+            assert!(done.completed_at.is_some());
+            let placed = database
+                .place_task_on_board(&b.id, "open", &ids(&[&b]))
+                .unwrap();
+            assert_eq!(placed[0].status, "open");
+            assert_eq!(placed[0].completed_at, None);
+            assert_eq!(placed[0].completion_source, None);
+            assert_eq!(placed[0].board_rank, Some(1024.0));
+        }
+
+        #[test]
+        fn stale_and_unknown_ids_in_the_order_are_ignored() {
+            let database = Database::open_memory();
+            let a = standalone(&database, "A");
+            let b = standalone(&database, "B");
+            let elsewhere = standalone(&database, "Elsewhere");
+            database
+                .set_task_status(&elsewhere.id, "in_progress", "user")
+                .unwrap();
+            let order = vec![
+                "missing".to_owned(),
+                a.id.clone(),
+                elsewhere.id.clone(),
+                b.id.clone(),
+            ];
+            let placed = database.place_task_on_board(&b.id, "open", &order).unwrap();
+            assert_eq!(ids(&placed.iter().collect::<Vec<_>>()), ids(&[&a, &b]));
+            assert_eq!(column(&database, "open", &[]), ids(&[&a, &b]));
+            let untouched = get(&database, &elsewhere.id);
+            assert_eq!(untouched.status, "in_progress");
+            assert_eq!(untouched.board_rank, None);
+        }
+
+        #[test]
+        fn a_placement_is_refused_for_done_or_an_order_that_misstates_the_task() {
+            let database = Database::open_memory();
+            let a = standalone(&database, "A");
+            let b = standalone(&database, "B");
+            for status in ["completed", "cancelled", "blocked"] {
+                assert!(matches!(
+                    database.place_task_on_board(&a.id, status, &ids(&[&a])),
+                    Err(DatabaseError::Validation(_))
+                ));
+            }
+            assert!(matches!(
+                database.place_task_on_board(&a.id, "open", &ids(&[&b])),
+                Err(DatabaseError::Validation(_))
+            ));
+            assert!(matches!(
+                database.place_task_on_board(&a.id, "open", &ids(&[&a, &b, &a])),
+                Err(DatabaseError::Validation(_))
+            ));
+            assert!(matches!(
+                database.place_task_on_board("missing", "open", &["missing".to_owned()]),
+                Err(DatabaseError::NotFound(_))
+            ));
+            assert_eq!(get(&database, &a.id).board_rank, None);
+            assert_eq!(get(&database, &b.id).board_rank, None);
+        }
+
+        #[test]
+        fn changing_column_clears_the_rank_and_other_writes_keep_it() {
+            let database = database_with_thread();
+            let request = serde_json::from_value(serde_json::json!({
+                "accountId": "account@example.com", "threadId": "account:thread",
+                "subjectSnapshot": "Planning", "title": "Waiting on the contract",
+                "kind": "waiting_for",
+            }))
+            .unwrap();
+            let task = database.create_task(&request).unwrap();
+            let place = |status: &str| {
+                database
+                    .place_task_on_board(&task.id, status, std::slice::from_ref(&task.id))
+                    .unwrap()
+                    .remove(0)
+            };
+            assert_eq!(place("open").board_rank, Some(1024.0));
+
+            // Same status, an edit, and a recorded follow-up keep the rank.
+            let same = database.set_task_status(&task.id, "open", "user").unwrap();
+            assert_eq!(same.board_rank, Some(1024.0));
+            let edit: UpdateTaskRequest =
+                serde_json::from_value(serde_json::json!({ "id": task.id, "title": "Renamed" }))
+                    .unwrap();
+            assert_eq!(
+                database.update_task(&edit).unwrap().board_rank,
+                Some(1024.0)
+            );
+
+            // Every status change clears it.
+            for status in [
+                "in_progress",
+                "completed",
+                "open",
+                "cancelled",
+                "in_progress",
+            ] {
+                place(if status == "in_progress" {
+                    "open"
+                } else {
+                    "in_progress"
+                });
+                let changed = database.set_task_status(&task.id, status, "user").unwrap();
+                assert_eq!(changed.board_rank, None, "moving to {status}");
+            }
+            let current = place("in_progress");
+            assert!(current.board_rank.is_some());
+            let checked = database
+                .set_task_status_if_current(
+                    &task.id,
+                    "completed",
+                    "user",
+                    Some(&current.updated_at),
+                )
+                .unwrap();
+            assert_eq!(checked.board_rank, None);
+
+            // A reply that completes a waiting-for task clears it too.
+            database.set_task_status(&task.id, "open", "user").unwrap();
+            assert!(place("open").board_rank.is_some());
+            database
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE threads SET last_received_at='2026-09-20T10:00:00Z' WHERE id='account:thread'",
+                    [],
+                )
+                .unwrap();
+            assert_eq!(database.reconcile_waiting_tasks().unwrap(), 1);
+            let replied = get(&database, &task.id);
+            assert_eq!(replied.status, "completed");
+            assert_eq!(replied.board_rank, None);
+        }
+
+        #[test]
+        fn a_repeating_follow_up_keeps_its_rank_when_recorded() {
+            let database = database_with_thread();
+            let request = serde_json::from_value(serde_json::json!({
+                "accountId": "account@example.com", "threadId": "account:thread",
+                "subjectSnapshot": "Planning", "title": "Check in", "kind": "follow_up",
+                "dueKind": "date", "dueValue": "2026-09-25", "repeatIntervalDays": 7,
+            }))
+            .unwrap();
+            let task = database.create_task(&request).unwrap();
+            database
+                .place_task_on_board(&task.id, "open", std::slice::from_ref(&task.id))
+                .unwrap();
+            let next = database.record_follow_up(&task.id).unwrap();
+            assert_eq!(next.board_rank, Some(1024.0));
+        }
+
+        #[test]
+        fn placements_and_column_changes_are_recorded_for_sync() {
+            use threestrands_sync_protocol::EntityType;
+            let database = Database::open_memory();
+            database.set_beta_features_enabled(true).unwrap();
+            let a = standalone(&database, "A");
+            let b = standalone(&database, "B");
+            database
+                .place_task_on_board(&b.id, "open", &ids(&[&b, &a]))
+                .unwrap();
+            let winner = |id: &str, field: &str| {
+                database
+                    .resolve_field_winner(EntityType::Task, id, field)
+                    .unwrap()
+            };
+            assert_eq!(winner(&b.id, "boardRank"), Some(serde_json::json!(1024.0)));
+            assert_eq!(winner(&a.id, "boardRank"), Some(serde_json::json!(2048.0)));
+
+            // Alone in its new column, the task keeps the rank it had.
+            database
+                .place_task_on_board(&a.id, "in_progress", &ids(&[&a]))
+                .unwrap();
+            assert_eq!(
+                winner(&a.id, "status"),
+                Some(serde_json::json!("in_progress"))
+            );
+            assert_eq!(winner(&a.id, "boardRank"), Some(serde_json::json!(2048.0)));
+
+            database.set_task_status(&a.id, "open", "user").unwrap();
+            assert_eq!(winner(&a.id, "boardRank"), Some(serde_json::Value::Null));
+        }
     }
 }

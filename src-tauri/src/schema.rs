@@ -69,6 +69,7 @@ const MIGRATIONS: &[Migration] = &[
     (122, to_v122),
     (123, to_v123),
     (124, to_v124),
+    (125, to_v125),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1603,6 +1604,23 @@ fn to_v120(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v125(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Where the user placed a task in its task board column. Tasks from
+    // before this version have none and show unplaced.
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tasks') WHERE name='board_rank')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)?;
+    if !exists {
+        tx.execute_batch("ALTER TABLE tasks ADD COLUMN board_rank REAL;")
+            .map_err(error)?;
+    }
+    Ok(())
+}
+
 fn to_v124(tx: &rusqlite::Transaction) -> Result<(), String> {
     tx.execute_batch(
         "DROP TABLE IF EXISTS agent_research;
@@ -2473,6 +2491,38 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kept, ("Hello".to_string(), 1));
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
+        // Running it again changes nothing.
+        super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v125_adds_an_unplaced_board_rank_and_keeps_tasks() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE tasks DROP COLUMN board_rank; PRAGMA user_version=124;
+                 INSERT INTO tasks(id,account_id,title,kind,due_kind,status,created_at,updated_at)
+                 VALUES('t-rank','you@example.com','Plan','action','none','in_progress','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let (title, status, rank): (String, String, Option<f64>) = connection
+            .query_row(
+                "SELECT title,status,board_rank FROM tasks WHERE id='t-rank'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (title.as_str(), status.as_str(), rank),
+            ("Plan", "in_progress", None)
+        );
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();

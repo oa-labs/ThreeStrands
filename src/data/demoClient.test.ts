@@ -559,6 +559,30 @@ describe("demoClient goals", () => {
   });
 });
 
+describe("demoClient task board order", () => {
+  it("places tasks in a column, moves them between columns, and clears the place on a status change", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    const create = (title: string) => client.createTask({ accountId: DEMO_ACCOUNT_ID, threadId: null, subjectSnapshot: null, title, kind: "action" });
+    const first = await create("First");
+    const second = await create("Second");
+    const rankOf = async (id: string) => (await client.listTasks()).find((task) => task.id === id)?.boardRank ?? null;
+
+    const placed = await client.placeTaskOnBoard(second.id, "open", ["stale-id", second.id, first.id]);
+    expect(placed.map((task) => [task.id, task.boardRank])).toEqual([[second.id, 1024], [first.id, 2048]]);
+
+    const moved = await client.placeTaskOnBoard(first.id, "in_progress", [first.id]);
+    expect(moved).toMatchObject([{ id: first.id, status: "in_progress", boardRank: 2048 }]);
+
+    expect((await client.setTaskStatus(second.id, "open")).boardRank).toBe(1024);
+    expect((await client.setTaskStatus(second.id, "completed")).boardRank).toBeNull();
+    expect(await rankOf(second.id)).toBeNull();
+
+    await expect(client.placeTaskOnBoard(first.id, "completed" as "open", [first.id])).rejects.toThrow("To Do or In Progress");
+    await expect(client.placeTaskOnBoard(first.id, "open", [second.id])).rejects.toThrow("must include");
+    await expect(client.placeTaskOnBoard(first.id, "open", [first.id, first.id])).rejects.toThrow("more than once");
+  });
+});
+
 describe("demoClient keep in touch", () => {
   const saved = (name: string, email: string) => ({ id: null, displayName: name, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses: [email], birthday: null });
 

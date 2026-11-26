@@ -154,6 +154,14 @@ impl EntityType {
                 optional_string(object, "notes", 8_000)?;
                 optional_string(object, "evidenceText", 4_000)?;
                 optional_string(object, "goalId", 128)?;
+                // The task's place in its board column: a number, or null
+                // for unplaced; absent from tasks written before it existed.
+                if object
+                    .get("boardRank")
+                    .is_some_and(|rank| !rank.is_null() && !rank.is_number())
+                {
+                    return Err("boardRank is invalid".into());
+                }
                 // A record of the message that finished the task (its subject and up to
                 // twenty recipients): bounded, and
                 // absent from tasks written before it existed.
@@ -1105,6 +1113,35 @@ mod tests {
         assert!(EntityType::Task.validate_payload(&unlinked).is_ok());
         let oversized = json!({ "title": "Draft", "kind": "action", "dueKind": "none", "status": "open", "goalId": "g".repeat(129) });
         assert!(EntityType::Task.validate_payload(&oversized).is_err());
+    }
+
+    #[test]
+    fn accepts_an_optional_numeric_board_rank() {
+        let task = |rank: Option<Value>| {
+            let mut task =
+                json!({ "title": "Draft", "kind": "action", "dueKind": "none", "status": "open" });
+            if let Some(rank) = rank {
+                task["boardRank"] = rank;
+            }
+            task
+        };
+        // Payloads from versions before board ranks have no boardRank at all.
+        assert!(EntityType::Task.validate_payload(&task(None)).is_ok());
+        assert!(EntityType::Task
+            .validate_payload(&task(Some(Value::Null)))
+            .is_ok());
+        assert!(EntityType::Task
+            .validate_payload(&task(Some(json!(1536.5))))
+            .is_ok());
+        assert!(EntityType::Task
+            .validate_payload(&task(Some(json!(-1024))))
+            .is_ok());
+        assert!(EntityType::Task
+            .validate_payload(&task(Some(json!("1024"))))
+            .is_err());
+        assert!(EntityType::Task
+            .validate_payload(&task(Some(json!({ "rank": 1 }))))
+            .is_err());
     }
 
     #[test]

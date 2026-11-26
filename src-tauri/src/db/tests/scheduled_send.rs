@@ -349,11 +349,14 @@ mod linked_tasks {
     fn an_immediate_send_completes_the_linked_task_with_a_record() {
         let db = db();
         let one_off = task(&db, "action", None);
+        db.place_task_on_board(&one_off.id, "open", std::slice::from_ref(&one_off.id))
+            .unwrap();
         let id = immediate(&db, Some(&one_off.id), None);
         assert_eq!(get(&db, &one_off.id).status, "open", "queued is not sent");
         deliver(&db, &id);
         let done = get(&db, &one_off.id);
         assert_eq!(done.status, "completed");
+        assert_eq!(done.board_rank, None, "Done leaves the board column");
         assert_eq!(done.completion_source.as_deref(), Some("user"));
         assert_eq!(done.thread_id, None);
         assert_eq!(

@@ -4,7 +4,7 @@ import type { NoteDocument, NoteTaskRecord, NoteReference, NoteBacklink, AddToNo
 import type { MeetingCapture, MeetingEntry } from "../noteMeetings";
 import type { AiRunConfig, InboxAgentConfig, InboxAgentId, InboxAgentsSnapshot, ProposalState, UpdateInboxAgentConfig } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
-import type { SentInRange, DoneNote, CompletedByEmail, MessageLocation, TaskSuggestion, LinkedSend } from "../domain";
+import type { SentInRange, DoneNote, CompletedByEmail, MessageLocation, TaskSuggestion, LinkedSend, BoardColumnStatus } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import type { AcceptedFollowThrough, FollowThroughSave, FollowThroughUndo, DailyPlan, MeetingAgendaSave, MeetingAgendaUndo, MeetingContext, MeetingPrepBrief, MeetingPrepSelection, MeetingReadiness, MeetingSourcePreview, PlanChanges, PlanSave, PlanSaveResult, PlanSourceKind, PlanSourcePage, PrepReservation } from "../domain";
@@ -566,6 +566,12 @@ export interface MailClient extends CorrespondenceClient {
   createTask(request: CreateTaskRequest): Promise<ThreadTask>;
   updateTask(request: UpdateTaskRequest): Promise<ThreadTask>;
   setTaskStatus(id: string, status: ThreadTask["status"], source?: "user" | "reply" | "external"): Promise<ThreadTask>;
+  /**
+   * Places a task in a task board column, moving it there first when it is in another one.
+   * `orderedIds` is the column's full order after the move, top to bottom, including `id` once; ids that are unknown or now in another column are ignored.
+   * Resolves to the moved task and every task whose rank changed.
+   */
+  placeTaskOnBoard(id: string, status: BoardColumnStatus, orderedIds: string[]): Promise<ThreadTask[]>;
   recordFollowUp(id: string): Promise<ThreadTask>;
   /** The one open task a message just queued probably finishes, or null for none or several. Never rejects for a missing match. */
   suggestTaskForOutbox(outboxId: string): Promise<TaskSuggestion | null>;
@@ -863,6 +869,7 @@ const tauriClient: MailClient = {
   createTask: (request) => complete("create_task", { request }),
   updateTask: (request) => complete("update_task", { request }),
   setTaskStatus: (id, status, source = "user") => complete("set_task_status", { id, status, source }),
+  placeTaskOnBoard: (id, status, orderedIds) => complete("place_task_on_board", { id, status, orderedIds }),
   recordFollowUp: (id) => complete("record_follow_up", { id }),
   suggestTaskForOutbox: (outboxId) => {
     const date = dateInputValue(new Date());
