@@ -12,6 +12,7 @@ import type { WorkspaceFile } from "../domain";
 import { attachmentKind } from "../attachmentKind";
 import { demoCorrespondence } from "./demoCorrespondence";
 import { isActiveTaskStatus } from "../taskViews";
+import { planBoardRanks } from "../taskBoardRank";
 import { goalPeriodMatches, parentCandidates } from "../goals";
 import type { MailClient } from "./client";
 import { DEMO_ACCOUNT_ID, defaultDemoDataset, type DemoDataset } from "./demoDataset";
@@ -1932,9 +1933,45 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         completionSource: isActiveTaskStatus(status) ? null : source,
         completedAt: status === "completed" ? new Date().toISOString() : null,
         updatedAt: new Date().toISOString(),
+        // Another column leaves the task unplaced at the top of it.
+        boardRank: status === current.status ? current.boardRank ?? null : null,
       } satisfies ThreadTask;
       tasks = tasks.map((task) => task.id === id ? next : task);
       return structuredClone(next);
+    },
+    async placeTaskOnBoard(id, status, orderedIds) {
+      if (!isActiveTaskStatus(status)) throw new Error("A task can only be placed in To Do or In Progress");
+      if (new Set(orderedIds).size !== orderedIds.length) throw new Error("A task board order lists a task more than once");
+      if (!orderedIds.includes(id)) throw new Error("A task board order must include the task being placed");
+      const moved = tasks.find((task) => task.id === id);
+      if (!moved) throw new Error("Task not found");
+      const column = orderedIds
+        .map((listed) => tasks.find((task) => task.id === listed))
+        .filter((task): task is ThreadTask => task !== undefined && (task.id === id || task.status === status));
+      const ranks = planBoardRanks(column, id);
+      const now = new Date().toISOString();
+      const moves = moved.status !== status;
+      const changed = new Map<string, ThreadTask>();
+      for (const task of column) {
+        const rank = ranks.get(task.id);
+        if (task.id === id && moves) {
+          changed.set(id, {
+            ...task,
+            status,
+            completionSource: null,
+            completedAt: null,
+            completedByEmail: null,
+            boardRank: rank ?? task.boardRank ?? null,
+            updatedAt: now,
+          });
+        } else if (rank !== undefined) {
+          changed.set(task.id, { ...task, boardRank: rank, updatedAt: now });
+        }
+      }
+      tasks = tasks.map((task) => changed.get(task.id) ?? task);
+      return structuredClone(column
+        .filter((task) => task.id === id || changed.has(task.id))
+        .map((task) => changed.get(task.id) ?? task));
     },
     async findCompletedMessage(record) {
       const message = record.messageId ? findMessage(record.messageId) : undefined;

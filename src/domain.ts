@@ -310,6 +310,8 @@ export type ProposedTimeCheck = {
 
 export type TaskKind = "action" | "follow_up" | "waiting_for";
 export type TaskStatus = "open" | "in_progress" | "completed" | "cancelled";
+/** The task board columns a task can be placed in by hand: To Do and In Progress. Done is never ordered by hand. */
+export type BoardColumnStatus = Extract<TaskStatus, "open" | "in_progress">;
 export type TaskDueKind = "none" | "date" | "datetime";
 
 export type ThreadTask = {
@@ -339,6 +341,12 @@ export type ThreadTask = {
   goalId?: string | null;
   /** The message that finished this task, when sending a draft linked to it did. Shown only while the task is completed. */
   completedByEmail?: CompletedByEmail | null;
+  /**
+   * Where the user placed the task in its task board column (To Do or In Progress); ascending ranks read top to bottom.
+   * `null` or absent is unplaced: the board shows unplaced tasks first, in their automatic order, then placed tasks by rank.
+   * The Done column ignores it. A status change that moves the task to another column clears it.
+   */
+  boardRank?: number | null;
 };
 
 /** `messageId` is the key a conversation uses to match its optimistic copy of a send to the synced one; `null` until the provider reports one. */

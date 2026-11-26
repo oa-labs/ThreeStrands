@@ -931,6 +931,70 @@ mod tests {
     }
 
     #[test]
+    fn board_placements_sync_to_peers_and_a_legacy_task_without_a_rank_is_unplaced() {
+        let db = Database::open_memory();
+        db.set_beta_features_enabled(true).unwrap();
+        let create = |title: &str| {
+            db.create_task(
+                &serde_json::from_value(json!({
+                    "accountId": "you@example.com", "title": title, "kind": "action",
+                }))
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let first = create("First");
+        let second = create("Second");
+        db.place_task_on_board(&second.id, "open", &[second.id.clone(), first.id.clone()])
+            .unwrap();
+        let ranks = |database: &Database| -> Vec<(String, String, Option<f64>)> {
+            let mut tasks: Vec<_> = database
+                .list_tasks(None, None)
+                .unwrap()
+                .into_iter()
+                .map(|task| (task.id, task.status, task.board_rank))
+                .collect();
+            tasks.sort_by(|a, b| a.0.cmp(&b.0));
+            tasks
+        };
+
+        let peer = Database::open_memory();
+        sync_into(&peer, &db);
+        assert_eq!(ranks(&peer), ranks(&db));
+        let synced = peer
+            .list_tasks(None, None)
+            .unwrap()
+            .into_iter()
+            .find(|task| task.id == second.id)
+            .unwrap();
+        assert_eq!(synced.board_rank, Some(1024.0));
+
+        // Changing column on one device leaves the task unplaced on peers.
+        db.set_task_status(&first.id, "in_progress", "user")
+            .unwrap();
+        sync_into(&peer, &db);
+        assert_eq!(ranks(&peer), ranks(&db));
+        assert!(ranks(&peer).iter().any(|(id, status, rank)| *id == first.id
+            && status == "in_progress"
+            && rank.is_none()));
+
+        // A task written by a version from before board ranks carries no
+        // boardRank at all.
+        let mut legacy = serde_json::to_value(&synced).unwrap();
+        legacy.as_object_mut().unwrap().remove("boardRank");
+        legacy["id"] = json!("legacy-task");
+        EntityType::Task.validate_payload(&legacy).unwrap();
+        let decoded: crate::models::ThreadTask = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(decoded.board_rank, None);
+        record_full(&db, EntityType::Task, "legacy-task", legacy);
+        sync_into(&peer, &db);
+        assert!(ranks(&peer)
+            .iter()
+            .any(|(id, _, rank)| id == "legacy-task" && rank.is_none()));
+        assert!(peer.list_frontier_conflicts().unwrap().is_empty());
+    }
+
+    #[test]
     fn a_muted_sender_syncs_to_peers_and_an_unmute_removes_it_there() {
         let db = Database::open_memory();
         db.adopt_account("you@example.com").unwrap();

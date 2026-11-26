@@ -143,6 +143,21 @@ pub(crate) fn set_task_status(
     Ok(task)
 }
 
+/// Places a task in a task board column; see `Database::place_task_on_board`.
+#[tauri::command(async)]
+pub(crate) fn place_task_on_board(
+    id: String,
+    status: String,
+    ordered_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ThreadTask>> {
+    let tasks = state
+        .database
+        .place_task_on_board(&id, &status, &ordered_ids)?;
+    kick_replicated_sync(&state);
+    Ok(tasks)
+}
+
 #[tauri::command(async)]
 pub(crate) fn record_follow_up(id: String, state: State<'_, AppState>) -> AppResult<ThreadTask> {
     let task = state.database.record_follow_up(&id)?;
@@ -201,22 +216,10 @@ pub(crate) fn link_task_to_outbox(
 
 #[tauri::command(async)]
 pub(crate) fn reconcile_tasks(state: State<'_, AppState>) -> AppResult<usize> {
+    // Records each task it completes for sync itself.
     let count = state.database.reconcile_waiting_tasks()?;
     if count > 0 {
-        for task in state.database.list_tasks(None, None)? {
-            record_synced_value(
-                &state,
-                threestrands_sync_protocol::EntityType::Task,
-                &task.id,
-                &task,
-                Some(std::collections::BTreeSet::from([
-                    "status".to_string(),
-                    "completionSource".to_string(),
-                    "completedAt".to_string(),
-                    "updatedAt".to_string(),
-                ])),
-            )?;
-        }
+        kick_replicated_sync(&state);
     }
     Ok(count)
 }

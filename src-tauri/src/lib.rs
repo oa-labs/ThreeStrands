@@ -1804,6 +1804,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::tasks::update_goal,
         commands::tasks::delete_goal,
         commands::tasks::set_task_status,
+        commands::tasks::place_task_on_board,
         commands::tasks::record_follow_up,
         commands::tasks::suggest_task_for_outbox,
         commands::tasks::link_task_to_outbox,

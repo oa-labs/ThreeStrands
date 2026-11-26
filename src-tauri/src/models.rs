@@ -384,6 +384,15 @@ pub struct ThreadTask {
     /// reopens.
     #[serde(default)]
     pub completed_by_email: Option<CompletedByEmail>,
+    /// Where the user placed the task in its task board column (To Do or In
+    /// Progress); ascending ranks read top to bottom. `None` is unplaced: the
+    /// board shows unplaced tasks first, in their automatic order, then
+    /// placed tasks by rank. The Done column ignores it. A status change
+    /// that moves the task to another column clears it, so the task lands
+    /// unplaced at the top of its new column. Absent from tasks written
+    /// before it existed.
+    #[serde(default)]
+    pub board_rank: Option<f64>,
 }
 
 /// Where to find the message that finished a task. `message_id` is the
