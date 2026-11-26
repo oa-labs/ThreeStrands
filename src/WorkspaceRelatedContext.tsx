@@ -26,7 +26,10 @@ export function WorkspaceFileRow({ file, showReason = true, onOpenThread }: { fi
   </>;
 }
 
-export function WorkspaceRelatedContext({ target, accountIds, onOpenThread }: { target: WorkspaceContextTarget; accountIds: string[]; onOpenThread(id: string): void }) {
+/** The conversation a task came from, shown first in Conversations instead of as its own section. */
+export type WorkspaceContextSource = { threadId: string; subject: string | null; excerpt: string | null };
+
+export function WorkspaceRelatedContext({ target, accountIds, onOpenThread, source }: { target: WorkspaceContextTarget; accountIds: string[]; onOpenThread(id: string): void; source?: WorkspaceContextSource }) {
   const [conversations, setConversations] = useState<WorkspaceConversation[]>([]);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -61,13 +64,21 @@ export function WorkspaceRelatedContext({ target, accountIds, onOpenThread }: { 
     return () => { active = false; window.clearTimeout(timer); };
   }, [requestKey, revision, sourceMessage, meeting]);
   const fileReason = sharedReason(files);
-  const conversationReason = sharedReason(conversations);
+  // The source conversation has its own first row, so it is not listed again.
+  const conversationRows = source ? conversations.filter((item) => item.threadId !== source.threadId) : conversations;
+  const conversationReason = sharedReason(conversationRows);
   return <>
     {loading ? <p className="context-status" role="status">Finding related information…</p> : null}
     {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn-link" onClick={() => setRevision((value) => value + 1)}>Try Again</button></p> : null}
     {fileError ? <p className="form-error" role="alert">{fileError}<button type="button" className="btn-link" onClick={() => setRevision((value) => value + 1)}>Try Again</button></p> : null}
     {files.length ? <ContextSection id="workspace-files" title="Files" count={files.length} limit={CONTEXT_POLICY.rows} note={fileReason} rows={files.map((file) => <WorkspaceFileRow key={`${file.messageId}:${file.attachment.id}`} file={file} showReason={!fileReason} onOpenThread={onOpenThread} />)} /> : null}
-    {conversations.length ? <ContextSection id="workspace-conversations" title="Conversations" count={conversations.length} note={conversationReason} rows={conversations.map((item) => <ContextRow key={item.threadId} icon={<MessageSquareText size={ICON_SIZE.sm} />} title={item.subject} date={formatHistoryDate(item.sentAt)} detail={conversationReason || !item.reason ? item.accountId : `${item.reason} · ${item.accountId}`} onActivate={() => onOpenThread(item.threadId)} />)} /> : null}
-    {!loading && !error && !fileError && !conversations.length ? <p className="context-status">No related information found in synchronized mail.</p> : null}
+    {conversations.length || source ? <ContextSection id="workspace-conversations" title="Conversations" count={conversationRows.length + (source ? 1 : 0)} note={conversationReason} rows={[
+      ...(source ? [<div key="source" className="task-source-conversation">
+        <ContextRow icon={<MessageSquareText size={ICON_SIZE.sm} />} title={source.subject || "Source conversation"} detail="Source conversation" onActivate={() => onOpenThread(source.threadId)} />
+        {source.excerpt ? <details><summary>Source excerpt</summary><blockquote>{source.excerpt}</blockquote></details> : null}
+      </div>] : []),
+      ...conversationRows.map((item) => <ContextRow key={item.threadId} icon={<MessageSquareText size={ICON_SIZE.sm} />} title={item.subject} date={formatHistoryDate(item.sentAt)} detail={conversationReason || !item.reason ? item.accountId : `${item.reason} · ${item.accountId}`} onActivate={() => onOpenThread(item.threadId)} />),
+    ]} /> : null}
+    {!loading && !error && !fileError && !conversations.length && !source ? <p className="context-status">No related information found in synchronized mail.</p> : null}
   </>;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { NotebookPen, NotebookText } from "lucide-react";
 import { mailClient } from "./data/client";
 import { ContextRow, ContextSection } from "./ContextSections";
@@ -32,13 +32,13 @@ export function useNoteBacklinks(references: NoteReference[], refreshKey: string
 }
 
 /** The Notes section listing backlinks; opening a row selects its link. */
-export function NoteBacklinkSection({ rows, error, onOpenNote, title = "Notes", id = "entity-note-backlinks" }: { rows: NoteBacklink[]; error: string | null; onOpenNote?: OpenNote; title?: string; id?: string }) {
-  return <>{error ? <p role="alert" className="form-error">{error}</p> : null}{rows.length ? <ContextSection id={id} title={title} count={rows.length} rows={rows.map((row) => <ContextRow key={row.noteId} title={row.title} detail={row.context} icon={<NotebookText size={ICON_SIZE.sm} />} onActivate={() => onOpenNote?.(row.noteId, undefined, row.reference ? noteReferenceHref(row.reference) : undefined)} />)} /> : null}</>;
+export function NoteBacklinkSection({ rows, error, onOpenNote, title = "Notes", id = "entity-note-backlinks", closing }: { rows: NoteBacklink[]; error: string | null; onOpenNote?: OpenNote; title?: string; id?: string; /** An action under the rows, such as Add Note; it keeps the section visible with no notes. */ closing?: ReactNode }) {
+  return <>{error ? <p role="alert" className="form-error">{error}</p> : null}{rows.length || closing ? <ContextSection id={id} title={title} count={rows.length || undefined} closing={closing} rows={rows.map((row) => <ContextRow key={row.noteId} title={row.title} detail={row.context} icon={<NotebookText size={ICON_SIZE.sm} />} onActivate={() => onOpenNote?.(row.noteId, undefined, row.reference ? noteReferenceHref(row.reference) : undefined)} />)} /> : null}</>;
 }
 
-export function NoteBacklinks({ reference, onOpenNote, refreshKey = "", additional }: { reference: NoteReference; onOpenNote?: OpenNote; refreshKey?: string | number; additional?: NoteReference[] }) {
+export function NoteBacklinks({ reference, onOpenNote, refreshKey = "", additional, closing }: { reference: NoteReference; onOpenNote?: OpenNote; refreshKey?: string | number; additional?: NoteReference[]; closing?: ReactNode }) {
   const { rows, error } = useNoteBacklinks([reference, ...additional ?? []], refreshKey);
-  return <NoteBacklinkSection rows={rows} error={error} onOpenNote={onOpenNote} />;
+  return <NoteBacklinkSection rows={rows} error={error} onOpenNote={onOpenNote} closing={closing} />;
 }
 
 /** An event's notes: those about this occurrence, then those about the rest

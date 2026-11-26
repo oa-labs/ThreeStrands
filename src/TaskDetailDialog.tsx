@@ -1,13 +1,11 @@
 import { DoneByEmail } from "./DoneByEmail";
-import { MessageSquare } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
 import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import { isEditableTarget } from "./commands";
 import type { Goal, TaskDueKind, TaskKind, TaskStatus, ThreadTask, UpdateTaskRequest } from "./domain";
 import { errorMessage } from "./errors";
 import { formatPeriod, GOAL_HORIZON_LABELS, GOAL_HORIZONS, goalOptionsForTask } from "./goals";
-import { ICON_SIZE } from "./iconSizes";
 
 /** The longest repeat interval the task store accepts. */
 export const MAX_REPEAT_INTERVAL_DAYS = 365;
@@ -102,6 +100,11 @@ const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
   { value: "completed", label: "Done" },
 ];
 
+const REPEAT_PRESETS = [
+  { value: "1", label: "Daily" }, { value: "7", label: "Weekly" },
+  { value: "14", label: "Every 2 weeks" }, { value: "28", label: "Every 4 weeks" },
+] as const;
+
 /**
  * Every field of one task, saved as the user leaves it. Escape and Cmd+Enter
  * save what is pending and close; outside a field, j/k step to the adjacent
@@ -110,7 +113,6 @@ const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
 export function TaskDetailDialog({
   task,
   goals = [],
-  position,
   onUpdate,
   onSetStatus,
   onNavigate,
@@ -124,7 +126,6 @@ export function TaskDetailDialog({
   task: ThreadTask;
   /** Goals the task may support; only active goals in its account are offered. */
   goals?: readonly Goal[];
-  position?: { index: number; total: number } | null;
   onUpdate(request: Omit<UpdateTaskRequest, "id">): Promise<void>;
   onSetStatus(status: TaskStatus): void;
   onNavigate(direction: -1 | 1): void;
@@ -137,6 +138,9 @@ export function TaskDetailDialog({
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
   const bodyRef = useRef<HTMLDivElement>(null);
+  const saveNoteId = useId();
+  // Which task asked for a custom repeat interval; a stored value that matches no preset is custom without asking.
+  const [customRepeatTaskId, setCustomRepeatTaskId] = useState<string | null>(null);
   const pendingWrites=useRef(0);
   const baseline=useRef(task);
   const latestTask=useRef(task);
@@ -231,6 +235,8 @@ export function TaskDetailDialog({
     }
   };
 
+  const repeatRaw = drafts.repeatIntervalDays.trim();
+  const repeatChoice = customRepeatTaskId === task.id || (repeatRaw !== "" && !REPEAT_PRESETS.some((preset) => preset.value === repeatRaw)) ? "custom" : repeatRaw;
   const goalOptions = goalOptionsForTask(goals, task);
   const messages = [...errors, ...(saveError ? [saveError] : [])];
   const statusOptions = task.status === "cancelled" ? [...STATUS_OPTIONS, { value: "cancelled" as const, label: "Cancelled" }] : STATUS_OPTIONS;
@@ -244,6 +250,7 @@ export function TaskDetailDialog({
             onChange={(event) => change("title", event.target.value)}
             onBlur={() => commit()}
             maxLength={240}
+            aria-describedby={saveNoteId}
             aria-invalid={drafts.title.trim() ? undefined : "true"}
           />
         </label>
@@ -283,26 +290,27 @@ export function TaskDetailDialog({
           <input list="task-detail-timezones" value={drafts.timeZone} onChange={(event) => change("timeZone", event.target.value)} onBlur={() => commit()} placeholder="America/New_York" />
           <datalist id="task-detail-timezones">{timeZones.map((zone) => <option key={zone} value={zone} />)}</datalist>
         </label> : null}
-        {drafts.kind === "follow_up" ? <label>
-          <span>Repeat Every (Days)</span>
-          <input type="number" min="1" max={MAX_REPEAT_INTERVAL_DAYS} value={drafts.repeatIntervalDays} onChange={(event) => change("repeatIntervalDays", event.target.value)} onBlur={() => commit()} placeholder="Optional" />
-        </label> : null}
+        {drafts.kind === "follow_up" ? <div className="task-detail-row">
+          <label><span>Repeat</span><select value={repeatChoice} onChange={(event) => {
+            const choice = event.target.value;
+            if (choice === "custom") setCustomRepeatTaskId(task.id);
+            else { setCustomRepeatTaskId(null); change("repeatIntervalDays", choice, true); }
+          }}>
+            <option value="">Never</option>
+            {REPEAT_PRESETS.map((preset) => <option key={preset.value} value={preset.value}>{preset.label} ({preset.value})</option>)}
+            <option value="custom">Custom…</option>
+          </select></label>
+          {repeatChoice === "custom" ? <label><span>Every N days</span>
+            <input type="number" min="1" max={MAX_REPEAT_INTERVAL_DAYS} value={drafts.repeatIntervalDays} onChange={(event) => change("repeatIntervalDays", event.target.value)} onBlur={() => commit()} />
+          </label> : null}
+        </div> : null}
         <label>
           <span>Description</span>
           <textarea value={drafts.notes} onChange={(event) => change("notes", event.target.value)} onBlur={() => commit()} rows={5} maxLength={8000} placeholder="Add a description" />
         </label>
         {messages.map((message) => <p key={message} className="form-error" role="alert">{message}</p>)}
         <DoneByEmail task={task} onOpen={(threadId) => { close(); onOpenThread(threadId); }} />
-        {task.threadId ? <section className="task-detail-source" aria-label="Source conversation">
-          <h3>Source conversation</h3>
-          {task.subjectSnapshot ? <p>{task.subjectSnapshot}</p> : null}
-          <button type="button" className="btn-link" onClick={() => { close(); onOpenThread(task.threadId!); }}><MessageSquare size={ICON_SIZE.md} /> Open conversation</button>
-          {task.evidenceText ? <details><summary>Source excerpt</summary><blockquote>{task.evidenceText}</blockquote></details> : null}
-        </section> : null}
-        <footer className="task-detail-hints">
-          <span>Changes save automatically</span>
-          <span><kbd>j</kbd>/<kbd>k</kbd> {position ? `${position.index + 1} of ${position.total}` : "next/previous"}{task.threadId ? <> · <kbd>o</kbd> open conversation</> : null} · <kbd>Esc</kbd> close</span>
-        </footer>
+        <p id={saveNoteId} className="task-detail-save-note">Changes save automatically</p>
       </div>
   );
   return embedded ? content : <Modal title="Task Details" className="task-editor-modal task-detail-modal" onClose={close} initialFocusRef={bodyRef}>{content}</Modal>;

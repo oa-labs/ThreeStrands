@@ -1561,7 +1561,8 @@ describe("contextual undo shortcuts", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.keyDown(document.body, { key: "3" });
     await screen.findByText("Undo task", { selector: "strong" });
-    fireEvent.click(screen.getByRole("button", { name: "Move Undo task to Done" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change status of Undo task" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Done" }));
     const undo = await screen.findByRole("button", { name: "Undo" });
     if (method === "toast") fireEvent.click(undo);
     else fireEvent.keyDown(document.body, { key: "z" });

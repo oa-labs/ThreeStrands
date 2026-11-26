@@ -68,3 +68,52 @@ describe("TaskDetailDialog Done by email", () => {
     expect(screen.queryByText("Done by email")).not.toBeInTheDocument();
   });
 });
+
+describe("TaskDetailDialog repeat choice", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  const open = (value: ThreadTask, onUpdate = vi.fn(async () => {})) => {
+    render(<TaskDetailDialog embedded task={value} onUpdate={onUpdate} onSetStatus={vi.fn()} onNavigate={vi.fn()} onOpenThread={vi.fn()} onClose={vi.fn()} />);
+    return onUpdate;
+  };
+
+  it("offers Never and the presets, and saves a preset as days", async () => {
+    const onUpdate = open(task);
+    const repeat = screen.getByRole("combobox", { name: "Repeat" });
+    expect(Array.from((repeat as HTMLSelectElement).options).map((option) => option.textContent)).toEqual(["Never", "Daily (1)", "Weekly (7)", "Every 2 weeks (14)", "Every 4 weeks (28)", "Custom…"]);
+    expect(repeat).toHaveValue("");
+    fireEvent.change(repeat, { target: { value: "14" } });
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith({ repeatIntervalDays: 14 }));
+    expect(screen.queryByRole("spinbutton", { name: "Every N days" })).not.toBeInTheDocument();
+  });
+
+  it("reveals a number field for Custom and saves that value", async () => {
+    const onUpdate = open(task);
+    fireEvent.change(screen.getByRole("combobox", { name: "Repeat" }), { target: { value: "custom" } });
+    const days = screen.getByRole("spinbutton", { name: "Every N days" });
+    expect(days).toHaveAttribute("min", "1");
+    fireEvent.change(days, { target: { value: "10" } });
+    fireEvent.blur(days);
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith({ repeatIntervalDays: 10 }));
+    expect(screen.getByRole("combobox", { name: "Repeat" })).toHaveValue("custom");
+  });
+
+  it("shows a stored non-preset interval as Custom and clears it with Never", async () => {
+    const onUpdate = open({ ...task, repeatIntervalDays: 10 });
+    expect(screen.getByRole("combobox", { name: "Repeat" })).toHaveValue("custom");
+    expect(screen.getByRole("spinbutton", { name: "Every N days" })).toHaveValue(10);
+    fireEvent.change(screen.getByRole("combobox", { name: "Repeat" }), { target: { value: "" } });
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith({ repeatIntervalDays: null }));
+  });
+
+  it("shows a stored preset interval by name", () => {
+    open({ ...task, repeatIntervalDays: 7 });
+    expect(screen.getByRole("combobox", { name: "Repeat" })).toHaveValue("7");
+  });
+
+  it("has no keyboard hint row or source section of its own, and describes autosave on the title", () => {
+    open({ ...task, threadId: "t1", subjectSnapshot: "Launch" });
+    expect(document.querySelector(".task-detail-hints")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Source conversation" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveAccessibleDescription("Changes save automatically");
+  });
+});
