@@ -62,6 +62,22 @@ export function compareTasksForDisplay(a: ThreadTask, b: ThreadTask): number {
   return timestamp(a.createdAt) - timestamp(b.createdAt);
 }
 
+/**
+ * Orders an active board column (To Do or In Progress): tasks never placed by hand first in display order,
+ * then placed tasks by ascending rank. Note tasks are not stored rows, so they always count as unplaced.
+ * Done keeps `compareTasksForDisplay`.
+ */
+export function compareTasksForBoard(a: ThreadTask, b: ThreadTask): number {
+  const rankOf = (task: ThreadTask) => (!task.noteSource && typeof task.boardRank === "number" && Number.isFinite(task.boardRank) && isActiveTaskStatus(task.status) ? task.boardRank : null);
+  if (isActiveTaskStatus(a.status) !== isActiveTaskStatus(b.status)) return compareTasksForDisplay(a, b);
+  const aRank = rankOf(a);
+  const bRank = rankOf(b);
+  if (aRank === null && bRank !== null) return -1;
+  if (aRank !== null && bRank === null) return 1;
+  if (aRank !== null && bRank !== null && aRank !== bRank) return aRank - bRank;
+  return compareTasksForDisplay(a, b);
+}
+
 function localDateKey(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");

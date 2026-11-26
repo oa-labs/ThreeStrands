@@ -76,6 +76,8 @@ export type CommandContext = {
   completeSelectedTask(): void;
   reopenSelectedTask(): void;
   moveSelectedTask(direction: -1 | 1): void;
+  /** Swaps the selected board card with its neighbour above (-1) or below (1) in its column. */
+  moveSelectedTaskInColumn(direction: -1 | 1): void;
   selectAdjacentTaskColumn(direction: -1 | 1): void;
   toggleTaskLayout(): void;
   cycleTaskView(direction: -1 | 1): void;
@@ -403,6 +405,22 @@ export const commands: Command[] = [
     group: "Triage",
     enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus !== null && adjacentTaskStatus(context.selectedTaskStatus, -1) !== null && !context.composerActive,
     run: (context) => complete(() => context.moveSelectedTask(-1)),
+  },
+  {
+    id: "tasks.moveUpInColumn",
+    title: "Move Task Up in Column",
+    keys: ["Alt+ArrowUp"],
+    group: "Triage",
+    enabled: (context) => context.focusedPane === "tasks" && context.taskBoardActive && (context.selectedTaskStatus === "open" || context.selectedTaskStatus === "in_progress") && !context.selectedTaskIsNote && !context.composerActive,
+    run: (context) => complete(() => context.moveSelectedTaskInColumn(-1)),
+  },
+  {
+    id: "tasks.moveDownInColumn",
+    title: "Move Task Down in Column",
+    keys: ["Alt+ArrowDown"],
+    group: "Triage",
+    enabled: (context) => context.focusedPane === "tasks" && context.taskBoardActive && (context.selectedTaskStatus === "open" || context.selectedTaskStatus === "in_progress") && !context.selectedTaskIsNote && !context.composerActive,
+    run: (context) => complete(() => context.moveSelectedTaskInColumn(1)),
   },
   {
     id: "tasks.nextColumn",
@@ -948,6 +966,8 @@ export function showAllAccountsCommand(): Command {
 
 export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   let base = key;
+  const expectsAlt = base.startsWith("Alt+");
+  if (expectsAlt) base = base.slice(4);
   const expectsMod = base.startsWith("Mod+");
   if (expectsMod) base = base.slice(4);
   const expectsShift = base.startsWith("Shift+");
@@ -977,7 +997,7 @@ export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   return baseMatches
     && shiftMatches
     && (event.ctrlKey || event.metaKey) === expectsMod
-    && !event.altKey;
+    && event.altKey === expectsAlt;
 }
 
 export function shortcutSteps(key: string): string[] {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ThreadTask } from "./domain";
-import { adjacentTaskStatus, compareTasksForDisplay, isCompletedToday, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll } from "./taskViews";
+import { adjacentTaskStatus, compareTasksForBoard, compareTasksForDisplay, isCompletedToday, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll } from "./taskViews";
 
 const now = new Date(2026, 8, 25, 12, 0);
 const task = (overrides: Partial<ThreadTask> = {}): ThreadTask => ({
@@ -110,5 +110,40 @@ describe("task display order", () => {
       task({ id: "broken", dueKind: "datetime", dueValue: "not-a-date", createdAt: "2026-09-19T10:00:00Z" }),
       task({ id: "dated", dueKind: "date", dueValue: "2026-09-30" }),
     ])).toEqual(["dated", "broken"]);
+  });
+});
+
+describe("task board order", () => {
+  const ids = (tasks: ThreadTask[]) => [...tasks].sort(compareTasksForBoard).map((entry) => entry.id);
+
+  it("lists unplaced tasks first in display order, then placed tasks by ascending rank", () => {
+    expect(ids([
+      task({ id: "placed-b", boardRank: 2048, createdAt: "2026-09-01T00:00:00Z" }),
+      task({ id: "unplaced-late", createdAt: "2026-09-22T00:00:00Z" }),
+      task({ id: "placed-a", boardRank: 1024, createdAt: "2026-09-21T00:00:00Z" }),
+      task({ id: "unplaced-early", boardRank: null, createdAt: "2026-09-20T00:00:00Z" }),
+    ])).toEqual(["unplaced-early", "unplaced-late", "placed-a", "placed-b"]);
+  });
+
+  it("breaks equal ranks by display order", () => {
+    expect(ids([
+      task({ id: "later", boardRank: 1024, createdAt: "2026-09-22T00:00:00Z" }),
+      task({ id: "earlier", boardRank: 1024, createdAt: "2026-09-20T00:00:00Z" }),
+    ])).toEqual(["earlier", "later"]);
+  });
+
+  it("treats note-derived tasks as unplaced even with a rank", () => {
+    const noteSource = { id: "note:n:m", title: "Note task", completedAt: null, noteId: "n", markerId: "m", noteTitle: "N", checked: false, updatedAt: "v1", conflicted: false };
+    expect(ids([
+      task({ id: "placed", boardRank: 1024 }),
+      task({ id: "note", boardRank: 5, noteSource, createdAt: "2026-09-25T00:00:00Z" }),
+    ])).toEqual(["note", "placed"]);
+  });
+
+  it("ignores rank for finished tasks", () => {
+    expect(ids([
+      task({ id: "older", status: "completed", boardRank: 1, completedAt: "2026-09-21T00:00:00Z" }),
+      task({ id: "newer", status: "completed", boardRank: 9999, completedAt: "2026-09-24T00:00:00Z" }),
+    ])).toEqual(["newer", "older"]);
   });
 });

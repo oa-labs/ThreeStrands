@@ -69,6 +69,7 @@ export const commandContext = (overrides: Partial<CommandContext> = {}): Command
   reopenSelectedTask: vi.fn(),
   selectedTaskStatus: null,
   moveSelectedTask: vi.fn(),
+  moveSelectedTaskInColumn: vi.fn(),
   selectAdjacentTaskColumn: vi.fn(),
   toggleTaskLayout: vi.fn(),
   cycleTaskView: vi.fn(),

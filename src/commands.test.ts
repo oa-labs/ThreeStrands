@@ -65,6 +65,7 @@ function noopContext(): CommandContext {
     reopenSelectedTask: () => {},
     selectedTaskStatus: null,
     moveSelectedTask: () => {},
+    moveSelectedTaskInColumn: () => {},
     selectAdjacentTaskColumn: () => {},
     toggleTaskLayout: () => {},
     cycleTaskView: () => {},
@@ -387,6 +388,29 @@ describe("command registry", () => {
     const moveSelectedTask = vi.fn();
     void commands.find((command) => command.id === "tasks.moveBack")?.run({ ...taskContext, moveSelectedTask });
     expect(moveSelectedTask).toHaveBeenCalledWith(-1);
+  });
+
+  it("moves board cards within a column with Alt+Arrow, only for a selected To Do or In Progress task", () => {
+    const up = commands.find((command) => command.id === "tasks.moveUpInColumn")!;
+    const down = commands.find((command) => command.id === "tasks.moveDownInColumn")!;
+    expect(up.keys).toEqual(["Alt+ArrowUp"]);
+    expect(down.keys).toEqual(["Alt+ArrowDown"]);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true }), "Alt+ArrowUp")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "ArrowUp" }), "Alt+ArrowUp")).toBe(false);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true }), "ArrowUp")).toBe(false);
+    const board = { ...noopContext(), focusedPane: "tasks" as const, taskBoardActive: true, selectedTaskStatus: "open" as const };
+    for (const command of [up, down]) {
+      expect(command.enabled(board)).toBe(true);
+      expect(command.enabled({ ...board, selectedTaskStatus: "in_progress" })).toBe(true);
+      expect(command.enabled({ ...board, selectedTaskStatus: "completed" })).toBe(false);
+      expect(command.enabled({ ...board, selectedTaskIsNote: true })).toBe(false);
+      expect(command.enabled({ ...board, taskBoardActive: false })).toBe(false);
+      expect(command.enabled({ ...board, focusedPane: "mail" as const })).toBe(false);
+    }
+    const moveSelectedTaskInColumn = vi.fn();
+    void up.run({ ...board, moveSelectedTaskInColumn });
+    void down.run({ ...board, moveSelectedTaskInColumn });
+    expect(moveSelectedTaskInColumn.mock.calls).toEqual([[-1], [1]]);
   });
 
   it("disables mail and task arrow-key navigation while the Contacts pane is focused", () => {

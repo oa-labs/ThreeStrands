@@ -182,6 +182,7 @@ export function useAppCommandContext({
     completeSelectedTask: () => taskWorkspaceRef.current?.completeSelected(),
     reopenSelectedTask: () => taskWorkspaceRef.current?.reopenSelected(),
     moveSelectedTask: (direction) => taskWorkspaceRef.current?.moveSelected(direction),
+    moveSelectedTaskInColumn: (direction) => taskWorkspaceRef.current?.moveSelectedInColumn(direction),
     selectAdjacentTaskColumn: (direction) => taskWorkspaceRef.current?.selectAdjacentColumn(direction),
     toggleTaskLayout: () => taskWorkspaceRef.current?.toggleLayout(),
     cycleTaskView: (direction) => taskWorkspaceRef.current?.cycleView(direction),

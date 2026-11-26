@@ -10,8 +10,8 @@ import type { CommandResult } from "./commands";
 import { Check, Circle, CircleCheck, CircleDot, CircleSlash, Clock3, Columns3, List, Mail, Plus, RotateCcw, SquareCheckBig, Target, X } from "lucide-react";
 import { MoreActionsMenu } from "./MoreActionsMenu";
 import { useDrawerDismiss } from "./useDrawerDismiss";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
-import type { Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
+import { Fragment, forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import type { BoardColumnStatus, Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
 import { Modal } from "./AppChrome";
 import { GoalDialog } from "./GoalDialog";
@@ -24,7 +24,8 @@ import { WorkspaceRelatedContext } from "./WorkspaceRelatedContext";
 import { ContextSectionHeader } from "./ContextSections";
 import { TaskDetailDialog, type TaskDetailDrafts } from "./TaskDetailDialog";
 import { errorMessage } from "./errors";
-import { adjacentTaskStatus, compareTasksForDisplay, formatDue, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll, type TaskBoardColumn, type TaskView } from "./taskViews";
+import { planBoardRanks } from "./taskBoardRank";
+import { adjacentTaskStatus, compareTasksForBoard, compareTasksForDisplay, formatDue, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll, type TaskBoardColumn, type TaskView } from "./taskViews";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
@@ -61,11 +62,28 @@ type CardDrag = {
   y: number;
   active: boolean;
   over: TaskBoardColumn | null;
+  /** Where the card would land among the over column's other visible cards, or null when that column has no order. */
+  index: number | null;
 };
 
 function boardColumnAt(x: number, y: number): TaskBoardColumn | null {
   const column = document.elementFromPoint?.(x, y)?.closest<HTMLElement>("[data-board-column]")?.dataset.boardColumn;
   return TASK_BOARD_COLUMNS.find((name) => name === column) ?? null;
+}
+
+/** Where a pointer at `y` would insert among a column's visible cards, not counting the dragged one. */
+function insertionIndexAt(column: TaskBoardColumn, y: number, draggedId: string): number {
+  const section = document.querySelector(`[data-board-column="${column}"]`);
+  const cards = [...(section?.querySelectorAll<HTMLElement>("article.task-card") ?? [])].filter((card) => card.id !== `task-${draggedId}`);
+  return cards.filter((card) => {
+    const rect = card.getBoundingClientRect();
+    return rect.top + rect.height / 2 < y;
+  }).length;
+}
+
+function pointerPlacement(task: ThreadTask | undefined, x: number, y: number, draggedId: string): { over: TaskBoardColumn | null; index: number | null } {
+  const over = boardColumnAt(x, y);
+  return { over, index: over && over !== "Done" && !task?.noteSource ? insertionIndexAt(over, y, draggedId) : null };
 }
 
 const COMPLETED_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
@@ -85,6 +103,8 @@ export type TaskWorkspaceHandle = {
   completeSelected(): void;
   reopenSelected(): void;
   moveSelected(direction: -1 | 1): void;
+  /** Swaps the selected board card with its visible neighbour above (-1) or below (1) in its column. */
+  moveSelectedInColumn(direction: -1 | 1): void;
   selectAdjacentColumn(direction: -1 | 1): void;
   toggleLayout(): void;
   cycleView(direction: -1 | 1): void;
@@ -242,10 +262,11 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       view === "All" ? taskViewForAll(task, now) === name && isActiveTaskStatus(task.status) : name === view && taskMatchesView(task, view, now),
     ) }))
     .filter((group) => group.tasks.length > 0), [now, sortedTasks, view]);
-  const boardColumns = useMemo(() => TASK_BOARD_COLUMNS.map((name) => ({ name, tasks: sortedTasks.filter((task) =>
+  const boardSortedTasks = useMemo(() => [...filteredTasks].sort(compareTasksForBoard), [filteredTasks]);
+  const boardColumns = useMemo(() => TASK_BOARD_COLUMNS.map((name) => ({ name, tasks: boardSortedTasks.filter((task) =>
     taskBoardColumn(task.status) === name
     && (view === "All" ? showOlderDone || !isStaleCompleted(task) : taskMatchesView(task, view, now)),
-  ) })), [now, showOlderDone, sortedTasks, view]);
+  ) })), [now, showOlderDone, boardSortedTasks, view]);
   // A date or Waiting filter narrows open work, so the board drops the Done column rather than show it permanently empty.
   const visibleBoardColumns = view === "All" ? boardColumns : boardColumns.filter((column) => column.name !== "Done");
   const [cardDrag, setCardDrag] = useState<CardDrag | null>(null);
@@ -417,6 +438,49 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     if (next) setSelectedTaskId(next);
   }, [adjacentTaskId]);
 
+  /**
+   * Moves a task to `index` among the other visible cards of an ordered board column, changing its status when the
+   * column differs. The saved order covers the whole column, hidden tasks included, so filters never reshuffle it.
+   */
+  const placeOnBoard = useCallback(async (task: ThreadTask, column: "To Do" | "In Progress", index: number) => {
+    if (task.noteSource) return;
+    const status = taskBoardColumnStatus(column) as BoardColumnStatus;
+    const visible = (boardColumns.find((candidate) => candidate.name === column)?.tasks ?? []).filter((candidate) => candidate.id !== task.id);
+    if (index < 0 || index > visible.length) return;
+    const full = tasks.filter((candidate) => !candidate.noteSource && taskBoardColumn(candidate.status) === column).sort(compareTasksForBoard).map((candidate) => candidate.id);
+    const rest = full.filter((id) => id !== task.id);
+    const above = visible.slice(0, index).reverse().find((candidate) => !candidate.noteSource);
+    const below = visible.slice(index).find((candidate) => !candidate.noteSource);
+    const at = above ? rest.indexOf(above.id) + 1 : below ? rest.indexOf(below.id) : rest.length;
+    const orderedIds = [...rest.slice(0, at), task.id, ...rest.slice(at)];
+    const sameColumn = task.status === status;
+    if (sameColumn && index === (boardColumns.find((candidate) => candidate.name === column)?.tasks ?? []).findIndex((candidate) => candidate.id === task.id)) return;
+    const byId = new Map(tasks.map((candidate) => [candidate.id, candidate]));
+    const ranks = planBoardRanks(orderedIds.map((id) => ({ id, boardRank: id === task.id && !sameColumn ? null : byId.get(id)?.boardRank })), task.id);
+    const before = new Map<string, ThreadTask>();
+    const optimistic = new Map<string, ThreadTask>();
+    for (const id of new Set([task.id, ...ranks.keys()])) {
+      const current = byId.get(id);
+      if (!current) continue;
+      before.set(id, current);
+      optimistic.set(id, { ...current, ...(id === task.id ? { status, completedAt: null } : {}), boardRank: ranks.get(id) ?? (id === task.id ? null : current.boardRank) });
+    }
+    setSelectedTaskId(task.id);
+    setTasks((current) => current.map((candidate) => optimistic.get(candidate.id) ?? candidate));
+    try {
+      const operation = saveQueue.current.then(() => mailClient.placeTaskOnBoard(task.id, status, orderedIds));
+      saveQueue.current = operation.catch(() => undefined);
+      const updated = await operation;
+      const returned = new Map(updated.map((candidate) => [candidate.id, candidate]));
+      setTasks((current) => current.map((candidate) => returned.get(candidate.id) ?? candidate));
+      setAnnouncement(`Moved ${task.title} to position ${index + 1} in ${column}`);
+      onTasksChanged?.();
+    } catch (reason) {
+      setTasks((current) => current.map((candidate) => before.get(candidate.id) ?? candidate));
+      setError(errorMessage(reason));
+    }
+  }, [boardColumns, onTasksChanged, tasks]);
+
   const openDetails = useCallback((taskId: string) => {
     setSelectedTaskId(taskId);
     window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "Task context" }));
@@ -436,8 +500,13 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 
   const dropCard = (drag: CardDrag) => {
     const task = tasks.find((candidate) => candidate.id === drag.taskId);
-    if (!task || !drag.over || drag.over === taskBoardColumn(task.status) || (task.noteSource && (drag.over === "In Progress" || task.noteSource.conflicted))) return;
+    if (!task || !drag.over) return;
     if (!visibleBoardColumns.some((column) => column.name === drag.over)) return;
+    if (drag.over !== "Done" && !task.noteSource && drag.index !== null) {
+      void placeOnBoard(task, drag.over, drag.index);
+      return;
+    }
+    if (drag.over === taskBoardColumn(task.status) || (task.noteSource && (drag.over === "In Progress" || task.noteSource.conflicted))) return;
     setSelectedTaskId(task.id);
     void setStatus(task, taskBoardColumnStatus(drag.over));
   };
@@ -456,6 +525,15 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     moveSelected: (direction) => {
       const next = selectedTask ? selectedTask.noteSource ? direction === 1 && selectedTask.status === "open" ? "completed" : direction === -1 && selectedTask.status === "completed" ? "open" : null : adjacentTaskStatus(selectedTask.status, direction) : null;
       if (selectedTask && next) void setStatus(selectedTask, next);
+    },
+    moveSelectedInColumn: (direction) => {
+      if (!board || !selectedTask || selectedTask.noteSource || !isActiveTaskStatus(selectedTask.status)) return;
+      const column = taskBoardColumn(selectedTask.status) as "To Do" | "In Progress";
+      const visible = boardColumns.find((candidate) => candidate.name === column)?.tasks ?? [];
+      const position = visible.findIndex((candidate) => candidate.id === selectedTask.id);
+      const target = position + direction;
+      if (position === -1 || target < 0 || target >= visible.length) return;
+      void placeOnBoard(selectedTask, column, target);
     },
     selectAdjacentColumn: (direction) => {
       if (!board) return;
@@ -476,7 +554,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       const views: readonly TaskView[] = board ? BOARD_TASK_VIEWS : TASK_VIEWS;
       setView((current) => views[(Math.max(0, views.indexOf(current)) + direction + views.length) % views.length]);
     },
-  }), [board, boardColumns, changeLayout, layout, moveSelection, onOpenThread, openDetails, selectedTask, setStatus, startNew, setView]);
+  }), [board, boardColumns, changeLayout, layout, moveSelection, onOpenThread, openDetails, placeOnBoard, selectedTask, setStatus, startNew, setView]);
 
   const renderCard = (task: ThreadTask) => {
     const active = isActiveTaskStatus(task.status);
@@ -524,7 +602,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           setCardDrag({
             taskId: task.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
             offsetX: rect ? event.clientX - rect.left : 0, offsetY: rect ? event.clientY - rect.top : 0, width: rect?.width ?? 0,
-            x: event.clientX, y: event.clientY, active: false, over: null,
+            x: event.clientX, y: event.clientY, active: false, over: null, index: null,
           });
         } : undefined}
         onPointerMove={board ? (event) => {
@@ -532,7 +610,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           if (!drag || drag.pointerId !== event.pointerId || drag.taskId !== task.id) return;
           if (!drag.active && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < DRAG_THRESHOLD_PX) return;
           if (!drag.active) event.currentTarget.setPointerCapture?.(event.pointerId);
-          setCardDrag({ ...drag, active: true, x: event.clientX, y: event.clientY, over: boardColumnAt(event.clientX, event.clientY) });
+          setCardDrag({ ...drag, active: true, x: event.clientX, y: event.clientY, ...pointerPlacement(tasks.find((candidate) => candidate.id === drag.taskId), event.clientX, event.clientY, drag.taskId) });
         } : undefined}
         onPointerUp={board ? (event) => {
           const drag = cardDrag;
@@ -541,7 +619,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           if (!drag.active) return;
           suppressCardClick.current = true;
           event.currentTarget.releasePointerCapture?.(event.pointerId);
-          dropCard({ ...drag, over: boardColumnAt(event.clientX, event.clientY) });
+          dropCard({ ...drag, ...pointerPlacement(tasks.find((candidate) => candidate.id === drag.taskId), event.clientX, event.clientY, drag.taskId) });
         } : undefined}
         onPointerCancel={board ? () => setCardDrag(null) : undefined}
       >
@@ -596,15 +674,28 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     }
   }, [loading]);
 
+  // The insertion line sits before the card at `line` among the cards other than the dragged one.
+  const renderColumnCards = (columnTasks: ThreadTask[], line: number | null, draggedId: string | null) => {
+    let others = 0;
+    const nodes = columnTasks.map((task) => {
+      // Every card sits in a keyed fragment whether or not a line shows, so starting a drag never remounts the card under the pointer.
+      const before = task.id !== draggedId && line === others ? <div className="task-insertion-line" aria-hidden="true" /> : null;
+      if (task.id !== draggedId) others += 1;
+      return <Fragment key={task.id}>{before}{renderCard(task)}</Fragment>;
+    });
+    if (line !== null && line >= others) nodes.push(<div key="line-end" className="task-insertion-line" aria-hidden="true" />);
+    return nodes;
+  };
   const draggedTask = cardDrag?.active ? tasks.find((task) => task.id === cardDrag.taskId) ?? null : null;
   const taskList = board ? <div className="task-board" style={{ "--task-board-columns": visibleBoardColumns.length } as CSSProperties}>
     {visibleBoardColumns.map((column) => {
       const headingId = `task-column-${column.name.replace(/\s/g, "-")}`;
+      const showLine = Boolean(draggedTask && !draggedTask.noteSource && column.name !== "Done" && cardDrag?.over === column.name && cardDrag.index !== null);
       const dropTarget = draggedTask && !(draggedTask.noteSource && column.name === "In Progress") && cardDrag?.over === column.name && taskBoardColumn(draggedTask.status) !== column.name;
       return <section key={column.name} className={`task-board-column${dropTarget ? " drop-target" : ""}`} aria-labelledby={headingId} data-board-column={column.name}>
         <header><h3 id={headingId}>{column.name}</h3><span className="task-view-count">{column.tasks.length}</span></header>
         <div className="task-board-cards">
-          {column.tasks.length > 0 ? column.tasks.map(renderCard) : olderDoneCount > 0 && column.name === "Done" && !showOlderDone ? null : <p className="task-board-empty">No tasks</p>}
+          {column.tasks.length > 0 || showLine ? renderColumnCards(column.tasks, showLine ? cardDrag!.index : null, draggedTask?.id ?? null) : olderDoneCount > 0 && column.name === "Done" && !showOlderDone ? null : <p className="task-board-empty">No tasks</p>}
           {column.name === "Done" && olderDoneCount > 0 ? <button type="button" className="btn btn-sm btn-ghost task-board-older" aria-expanded={showOlderDone} onClick={() => setShowOlderDone((shown) => !shown)}>
             {showOlderDone ? "Hide older completed" : `Show ${olderDoneCount} older completed`}
           </button> : null}

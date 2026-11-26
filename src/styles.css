@@ -2506,6 +2506,7 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .task-card-main .task-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2-5); width: auto; overflow: visible; }
 .task-card-main .task-card-meta .sr-only { width: 1px; }
 .tasks-workspace .task-board .task-card-main { cursor: grab; }
+.task-insertion-line { height: 2px; margin: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--accent); pointer-events: none; }
 .task-card.dragging { opacity: var(--opacity-dragging); }
 .task-drag-preview { position: fixed; z-index: var(--z-local-popover); padding: var(--space-3) var(--space-4); border: 1px solid var(--accent); border-radius: var(--radius-md); background: var(--raised); box-shadow: var(--shadow-floating); color: var(--text); font-size: var(--text-body); pointer-events: none; cursor: grabbing; transform: rotate(1.5deg); }
 .task-drag-preview strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-height: var(--leading-snug); overflow-wrap: anywhere; }

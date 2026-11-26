@@ -784,6 +784,174 @@ describe("TaskSidebar", () => {
     });
   });
 
+  describe("ordering board cards", () => {
+    const originalElementFromPoint = document.elementFromPoint;
+    afterEach(() => { document.elementFromPoint = originalElementFromPoint; });
+
+    const stamp = (day: number) => `2026-09-${String(day).padStart(2, "0")}T10:00:00Z`;
+    const noteRecord = { id: "note:daily:m1", markerId: "m1", noteId: "daily", noteTitle: "Daily", title: "Note task", checked: false, updatedAt: "v1", completedAt: null as string | null, conflicted: false };
+
+    /** To Do holds Alpha, a task hidden by the search filter, Beta and Gamma; In Progress holds Delta. */
+    async function renderOrderedBoard(options: { fail?: boolean; withNote?: boolean } = {}) {
+      const stored = new Map([
+        workspaceTask("alpha", { title: "Alpha task", createdAt: stamp(1) }),
+        workspaceTask("hidden", { title: "Hidden thing", createdAt: stamp(2) }),
+        workspaceTask("beta", { title: "Beta task", createdAt: stamp(3) }),
+        workspaceTask("gamma", { title: "Gamma task", createdAt: stamp(4) }),
+        workspaceTask("delta", { title: "Delta task", status: "in_progress", createdAt: stamp(5) }),
+      ].map((task) => [task.id, task]));
+      vi.spyOn(mailClient, "listTasks").mockResolvedValue([...stored.values()]);
+      if (options.withNote) vi.mocked(mailClient.listNoteTasks).mockResolvedValue([noteRecord]);
+      const place = vi.spyOn(mailClient, "placeTaskOnBoard").mockImplementation(async (id, status, ids) => {
+        if (options.fail) throw new Error("Could not save the order");
+        return ids.map((taskId, position) => ({ ...stored.get(taskId)!, status: taskId === id ? status : stored.get(taskId)!.status, boardRank: (position + 1) * 1024 }));
+      });
+      const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (id, status) => ({ ...stored.get(id)!, status }));
+      const ref = createRef<TaskWorkspaceHandle>();
+      const view = render(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
+      await screen.findByText("Alpha task", { selector: "strong" });
+      fireEvent.change(screen.getByRole("searchbox", { name: "Search tasks" }), { target: { value: "task" } });
+      await waitFor(() => expect(view.container.querySelector("#task-hidden")).toBeNull());
+      const columnIds = (name: string) => within(screen.getByRole("region", { name })).getAllByRole("article").map((card) => card.id.replace("task-", ""));
+      // Cards are 50px tall and 100px apart within a column, so midpoints fall at 25, 125, 225...
+      const layout = () => {
+        for (const name of ["To Do", "In Progress", "Done"]) {
+          within(screen.getByRole("region", { name })).queryAllByRole("article").forEach((card, position) => {
+            card.getBoundingClientRect = () => ({ top: position * 100, height: 50, bottom: position * 100 + 50, left: 0, right: 100, width: 100, x: 0, y: position * 100, toJSON: () => ({}) });
+          });
+        }
+      };
+      const point = (column: string) => { document.elementFromPoint = vi.fn(() => screen.getByRole("region", { name: column })); };
+      const grab = (id: string) => {
+        layout();
+        const main = view.container.querySelector(`[id="task-${id}"] .task-card-main`) as HTMLButtonElement;
+        main.setPointerCapture = vi.fn();
+        main.releasePointerCapture = vi.fn();
+        fireEvent.pointerDown(main, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+        return main;
+      };
+      const dragTo = (main: HTMLElement, column: string, y: number) => {
+        point(column);
+        fireEvent.pointerMove(main, { pointerId: 1, clientX: 300, clientY: y });
+      };
+      const drop = (main: HTMLElement, y: number) => {
+        fireEvent.pointerUp(main, { pointerId: 1, clientX: 300, clientY: y });
+        fireEvent.click(main);
+      };
+      return { ...view, ref, place, setTaskStatus, columnIds, grab, dragTo, drop, layout };
+    }
+
+    it("reorders within a column, saving the whole column including a task the filter hides", async () => {
+      const { columnIds, grab, dragTo, drop, place, container } = await renderOrderedBoard();
+      expect(columnIds("To Do")).toEqual(["alpha", "beta", "gamma"]);
+      const main = grab("alpha");
+      dragTo(main, "To Do", 500);
+      expect(screen.getByRole("region", { name: "To Do" })).not.toHaveClass("drop-target");
+      expect(container.querySelectorAll(".task-insertion-line")).toHaveLength(1);
+      drop(main, 500);
+      await waitFor(() => expect(place).toHaveBeenCalledWith("alpha", "open", ["hidden", "beta", "gamma", "alpha"]));
+      await waitFor(() => expect(columnIds("To Do")).toEqual(["beta", "gamma", "alpha"]));
+      expect(container.querySelector(".task-insertion-line")).toBeNull();
+      expect(container.querySelector("p.sr-only[role=status]")).toHaveTextContent("Moved Alpha task to position 3 in To Do");
+    });
+
+    it("drops above the first visible card by placing the task before it", async () => {
+      const { columnIds, grab, dragTo, drop, place } = await renderOrderedBoard();
+      const main = grab("gamma");
+      dragTo(main, "To Do", 5);
+      drop(main, 5);
+      await waitFor(() => expect(place).toHaveBeenCalledWith("gamma", "open", ["gamma", "alpha", "hidden", "beta"]));
+      await waitFor(() => expect(columnIds("To Do")).toEqual(["gamma", "alpha", "beta"]));
+    });
+
+    it("places a card between two visible cards right after the one above", async () => {
+      const { grab, dragTo, drop, place } = await renderOrderedBoard();
+      const main = grab("gamma");
+      dragTo(main, "To Do", 75);
+      drop(main, 75);
+      await waitFor(() => expect(place).toHaveBeenCalledWith("gamma", "open", ["alpha", "gamma", "hidden", "beta"]));
+    });
+
+    it("changes status and position in one call when dropped at a spot in another column", async () => {
+      const { columnIds, grab, dragTo, drop, place, setTaskStatus } = await renderOrderedBoard();
+      const main = grab("beta");
+      dragTo(main, "In Progress", 5);
+      expect(screen.getByRole("region", { name: "In Progress" })).toHaveClass("drop-target");
+      drop(main, 5);
+      await waitFor(() => expect(place).toHaveBeenCalledWith("beta", "in_progress", ["beta", "delta"]));
+      expect(setTaskStatus).not.toHaveBeenCalled();
+      await waitFor(() => expect(columnIds("In Progress")).toEqual(["beta", "delta"]));
+      expect(columnIds("To Do")).toEqual(["alpha", "gamma"]);
+    });
+
+    it("still sets only the status when dropped on Done, with no insertion line", async () => {
+      const { grab, dragTo, drop, place, setTaskStatus, container } = await renderOrderedBoard();
+      const main = grab("beta");
+      dragTo(main, "Done", 40);
+      expect(screen.getByRole("region", { name: "Done" })).toHaveClass("drop-target");
+      expect(container.querySelector(".task-insertion-line")).toBeNull();
+      drop(main, 40);
+      await waitFor(() => expect(setTaskStatus).toHaveBeenCalledWith("beta", "completed"));
+      expect(place).not.toHaveBeenCalled();
+    });
+
+    it("makes no call when a card is dropped where it already is", async () => {
+      const { grab, dragTo, drop, place, container } = await renderOrderedBoard();
+      const main = grab("beta");
+      dragTo(main, "To Do", 75);
+      drop(main, 75);
+      expect(container.querySelector(".task-drag-preview")).toBeNull();
+      expect(place).not.toHaveBeenCalled();
+    });
+
+    it("shows the insertion line while dragging and removes it on Escape", async () => {
+      const { grab, dragTo, container, place } = await renderOrderedBoard();
+      const main = grab("alpha");
+      dragTo(main, "To Do", 75);
+      expect(container.querySelectorAll(".task-insertion-line")).toHaveLength(1);
+      expect(within(screen.getByRole("region", { name: "To Do" })).getAllByRole("article")[1].previousElementSibling).toHaveClass("task-insertion-line");
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(container.querySelector(".task-insertion-line")).toBeNull();
+      fireEvent.pointerUp(main, { pointerId: 1, clientX: 300, clientY: 75 });
+      expect(place).not.toHaveBeenCalled();
+    });
+
+    it("cannot reorder a note task, which is never placed", async () => {
+      const { container, grab, dragTo, drop, place, layout } = await renderOrderedBoard({ withNote: true });
+      await screen.findByText("Note task", { selector: "strong" });
+      layout();
+      const main = grab("note:daily:m1");
+      dragTo(main, "To Do", 500);
+      expect(container.querySelector(".task-insertion-line")).toBeNull();
+      drop(main, 500);
+      expect(place).not.toHaveBeenCalled();
+    });
+
+    it("restores the previous order and shows the error when saving fails", async () => {
+      const { columnIds, grab, dragTo, drop, place } = await renderOrderedBoard({ fail: true });
+      const main = grab("alpha");
+      dragTo(main, "To Do", 500);
+      drop(main, 500);
+      await waitFor(() => expect(place).toHaveBeenCalled());
+      expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the order");
+      expect(columnIds("To Do")).toEqual(["alpha", "beta", "gamma"]);
+    });
+
+    it("moves the selected card up or down one visible place and keeps it selected", async () => {
+      const { ref, columnIds, place, container } = await renderOrderedBoard();
+      fireEvent.click(screen.getByText("Beta task", { selector: "strong" }));
+      act(() => ref.current?.moveSelectedInColumn(-1));
+      await waitFor(() => expect(place).toHaveBeenCalledWith("beta", "open", ["beta", "alpha", "hidden", "gamma"]));
+      await waitFor(() => expect(columnIds("To Do")).toEqual(["beta", "alpha", "gamma"]));
+      expect(container.querySelector("#task-beta")).toHaveClass("selected");
+      act(() => ref.current?.moveSelectedInColumn(-1));
+      expect(place).toHaveBeenCalledTimes(1);
+      act(() => ref.current?.moveSelectedInColumn(1));
+      await waitFor(() => expect(place).toHaveBeenCalledTimes(2));
+      expect(place).toHaveBeenLastCalledWith("beta", "open", ["alpha", "beta", "hidden", "gamma"]);
+    });
+  });
+
   it("steps between tasks with j and k outside a field, saving the edit in progress first", async () => {
     let tasks = [workspaceTask("task-1", { title: "First" }), workspaceTask("task-2", { title: "Second" }), workspaceTask("task-3", { title: "Third" })];
     vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
