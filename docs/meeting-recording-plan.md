@@ -196,16 +196,22 @@ synthetic PCM.
 
 | Platform | Microphone | System audio |
 | --- | --- | --- |
-| macOS 14.4 and later | `cpal` (Core Audio) on the default input device, following device changes. ThreeStrands' own tap device is left out of the device list. | A Core Audio process tap: a mono `CATapDescription` global tap that excludes ThreeStrands' own process, `AudioHardwareCreateProcessTap`, and a private aggregate device whose tap list holds the tap. Bindings come from `objc2-core-audio` 0.3, in the objc2 family already in the tree. The spike confirmed it exposes everything the tap needs, so `cidre` (used by both references) isn't needed. It needs `NSAudioCaptureUsageDescription` and no Screen Recording permission. |
-| macOS before 14.4 | `cpal` | None. The recording has only the microphone track. It also picks up other people's voices from the speakers, so the transcript has no speaker labels, and the recap treats every action's owner as unclear rather than as the user's. |
+| macOS 14.4 and later | Core Audio directly: an IOProc on the default input device, following device changes, the same code path as the tap. ThreeStrands' own tap device is left out of the device list. | A Core Audio process tap: a mono `CATapDescription` global tap that excludes ThreeStrands' own process, `AudioHardwareCreateProcessTap`, and a private aggregate device whose tap list holds the tap. Bindings come from `objc2-core-audio` 0.3, in the objc2 family already in the tree. The spike confirmed it exposes everything the tap needs, so `cidre` (used by both references) isn't needed. It needs `NSAudioCaptureUsageDescription` and no Screen Recording permission. |
+| macOS before 14.4 | Core Audio, as above | None. The recording has only the microphone track. It also picks up other people's voices from the speakers, so the transcript has no speaker labels, and the recap treats every action's owner as unclear rather than as the user's. |
 | Windows | `cpal` (WASAPI) | WASAPI loopback (`cpal` input streams on output devices, as meetily does, or the `wasapi` crate, as anarlog does). The source follows the endpoint another process is actually playing through. It switches only after two polls agree, and skips ThreeStrands' own process. |
 | Linux | `cpal` | The PulseAudio monitor source of the default sink through `libpulse-binding`. PipeWire answers it through its Pulse compatibility layer. ALSA is avoided: meetily crashed after about 30 minutes of concurrent ALSA calls. |
 
 Processing:
 
 - Each track is downmixed to mono, resampled to 16 kHz (whisper's input format)
-  on a capture thread, and written as 16-bit PCM WAV. Resampling uses `rubato`,
-  with one resampler per stream for the whole recording. meetily found that
+  on a capture thread, and written as 16-bit PCM WAV. On macOS the resampler
+  (a windowed-sinc filter) and the WAV writer are written in the app, so
+  stage 2 adds only `objc2-core-audio` and `objc2-core-audio-types`, not
+  `cpal`, `rubato`, or `hound` (chosen on
+  2026-11-27 to keep the unvetted set small; the spike's `cargo vet` found
+  35 unvetted crates with them).
+  Windows and Linux may still use `cpal` in stages 6 and 7. One resampler
+  runs per stream for the whole recording. meetily found that
   making a new one per chunk raised the volume by about 173%.
 - **Tracks are never mixed.** Both references mix mic and system audio into
   one stream at some point. Keeping them apart is what gives the You/Others
