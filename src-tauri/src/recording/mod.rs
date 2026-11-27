@@ -287,8 +287,15 @@ impl RecordingService {
     }
 
     fn finish(&mut self, reason: Option<StopReason>) -> Result<RecordingStatus, String> {
+        if self.active.is_none() {
+            return Err("There is no recording to stop.".into());
+        }
         self.pump();
-        let mut active = self.active.take().ok_or("There is no recording to stop.")?;
+        // A queued failure can end the recording while being applied (every
+        // track has now failed). It is stopped either way.
+        let Some(mut active) = self.active.take() else {
+            return Ok(self.status());
+        };
         let now = self.clock.now();
         for run in active.tracks.values_mut() {
             if let Some(mut session) = run.session.take() {

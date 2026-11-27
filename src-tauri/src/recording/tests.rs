@@ -451,6 +451,29 @@ fn a_restart_that_cannot_start_counts_toward_the_limit() {
 }
 
 #[test]
+fn stop_succeeds_when_a_queued_failure_ends_the_recording_first() {
+    let mut h = Harness::new();
+    h.backend.set_system_audio(SystemAudioSupport::Unsupported);
+    let id = h.started();
+    h.backend.emit_first_frame(Track::Mic, 0);
+    h.service.tick();
+    // Use up every restart without the microphone delivering frames again.
+    for wait in [1, 2, 4] {
+        h.backend.emit_failed(Track::Mic, "gone");
+        h.service.tick();
+        h.advance_secs(wait);
+        h.service.tick();
+        assert_eq!(h.track_state(Track::Mic), TrackRunState::Active);
+    }
+    // The last failure is still queued when the user presses Stop.
+    h.backend.emit_failed(Track::Mic, "gone");
+    let stopped = h.service.stop().unwrap();
+    assert_eq!(stopped.state, RecordingPhase::Idle);
+    assert_eq!(h.stored(&id).state, RecordingState::Recorded);
+    assert!(h.service.stop().is_err(), "a second stop still says so");
+}
+
+#[test]
 fn when_every_track_has_failed_the_recording_stops() {
     let mut h = Harness::new();
     let id = h.started();
