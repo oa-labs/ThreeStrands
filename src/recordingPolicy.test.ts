@@ -114,6 +114,6 @@ describe("formatting", () => {
     expect(stopReasonNotice(null)).toBeNull();
     expect(stopReasonNotice("lengthLimit")).toContain("length limit");
     expect(stopReasonNotice("lowDisk")).toContain("disk space");
-    expect(stopReasonNotice("allTracksFailed")).toContain("no audio");
+    expect(stopReasonNotice("allTracksFailed")).toContain("stopped working");
   });
 });

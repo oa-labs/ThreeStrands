@@ -78,7 +78,8 @@ export function stopReasonNotice(reason: RecordingStopReason | null): string | n
   switch (reason) {
     case "lengthLimit": return "Recording stopped because it reached the length limit. The audio was saved.";
     case "lowDisk": return "Recording stopped because this Mac is low on disk space. The audio was saved.";
-    case "allTracksFailed": return "Recording stopped because no audio could be captured.";
+    // Earlier audio may have been saved, so this says only why it stopped.
+    case "allTracksFailed": return "Recording stopped because the microphone and computer audio stopped working.";
     default: return null;
   }
 }
