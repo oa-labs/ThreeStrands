@@ -56,7 +56,7 @@
             ThreeStrands is built so that your mail never passes through us. This policy explains what the
             app keeps on your computer, which services it talks to on your behalf, and how to remove it all.
           </p>
-          <p class="fine-print">Effective <time datetime="2026-11-11">November 11, 2026</time></p>
+          <p class="fine-print">Effective <time datetime="2026-11-27">November 27, 2026</time></p>
         </div>
       </section>
 
@@ -96,8 +96,8 @@
             <section id="scope" aria-labelledby="scope-title">
               <h2 id="scope-title">Who We Are</h2>
               <p>
-                ThreeStrands is a desktop email client published by OpenArc LLC (“we”, “us”), a Pennsylvania limited
-                liability company. This policy covers the ThreeStrands application and this website.
+                ThreeStrands is a local-first email client (with an Android companion app for Notes and Tasks) published by OpenArc LLC (“we”, “us”), a Pennsylvania limited
+                liability company. This policy covers the ThreeStrands desktop and Android applications and this website.
               </p>
             </section>
 
@@ -119,18 +119,19 @@
               <p>To work quickly and offline, the app keeps the following in its local data folder:</p>
               <ul>
                 <li><strong>Mail cache</strong> — conversations, message bodies, labels, attachment details, and a search index, in a local SQLite database.</li>
-                <li><strong>Your work</strong> — drafts, queued and scheduled outgoing mail, scheduled-send status summaries, tasks, goals, snippets, Split Inboxes, and settings.</li>
-                <li><strong>Contacts</strong> — profiles you save, edit, or import, including notes, photos, groups, birthdays, and Keep in Touch reminders, plus a record of who you have corresponded with, built from your mail.</li>
+                <li><strong>Your work</strong> — drafts, queued and scheduled outgoing mail, scheduled-send status summaries, tasks, goals, notes and note attachments, snippets, Split Inboxes, muted and blocked senders, Inbox Assistant configurations and suggestions, and settings.</li>
+                <li><strong>Contacts</strong> — profiles you save, edit, or import (including phone numbers, notes, photos, groups, birthdays, and Keep in Touch reminders), a record of who you have corresponded with built from your mail, and, if enabled on macOS, a read-only local cache from selected Apple Mac Contacts address books (names, email addresses, phone numbers, companies, and job titles).</li>
+                <li><strong>Meeting recordings</strong> — on macOS when enabled, recordings of your microphone and Mac system audio saved strictly on this Mac under the <code>recordings/</code> folder until deleted by your configured retention setting or by you.</li>
                 <li><strong>Attachments</strong> — files you attach while composing, and temporary copies of attachments you open, which are cleared after 24 hours.</li>
                 <li><strong>AI records</strong> — cached AI results and daily request, token, and estimated-cost totals. Usage totals do not contain message content.</li>
                 <li><strong>Reading activity</strong> — local signals, such as which senders you open and archive, that tune the app on your computer. They are never sent anywhere.</li>
-                <li><strong>Backups and logs</strong> — automatic database backups used for recovery, and diagnostic logs. Logs can include email addresses, error messages, and fragments of AI responses.</li>
+                <li><strong>Backups and logs</strong> — automatic database backups used for recovery, and diagnostic logs. Logs can include email addresses, error messages, and redacted diagnostic details.</li>
                 <li><strong>Crash reports</strong> — if you opt in, redacted crash reports are stored locally so you can review and share them yourself.</li>
               </ul>
               <p>
                 Google sign-in tokens, IMAP/SMTP passwords or app passwords, AI provider keys, and sync keys are stored in your operating system's credential
-                store (Keychain on macOS, Credential Manager on Windows, or Secret Service on Linux) — never in a plain
-                file. You can set a retention period in Settings to remove older cached mail automatically.
+                store (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux, or Android Keystore on Android) — never in a plain
+                file. You can set a retention period in Settings to remove older cached mail and meeting recordings automatically.
               </p>
             </section>
 
@@ -181,9 +182,9 @@
             <section id="ai" aria-labelledby="ai-title">
               <h2 id="ai-title">Optional AI Features</h2>
               <p>
-                AI is off until you choose a provider (such as OpenAI, Anthropic, OpenRouter, Fireworks, or a compatible
+                AI is off until you choose a provider (such as OpenAI, Anthropic, Straitly, OpenRouter, Fireworks, or a compatible
                 endpoint you specify) and enter your own API key. Even then, a conversation is sent only when you click
-                a button marked with sparkles, or when you turn on automatic briefs. Requests go directly from your
+                a button marked with sparkles, or when you turn on proactive briefs or scheduled Inbox Assistants. Requests go directly from your
                 computer to that provider under your account and its terms. We never see them.
               </p>
               <p>Depending on the feature you use, a request can include:</p>
@@ -192,6 +193,8 @@
                 <li>Your time zone, and the titles of your goals and open tasks, so suggestions fit your plans.</li>
                 <li>Other conversations from your mailbox, only when you choose Search other mail in Thread Chat.</li>
                 <li>Text from attachments you select.</li>
+                <li>Pre-selected local meeting preparation context (notes not marked Exclude from AI, related emails, open promises, tasks, and files) when you click Prepare Agenda.</li>
+                <li>Candidate emails (and related threads or calendar events for Expired &amp; Already-Handled Sweeper) evaluated when you run Inbox Assistants manually or on a configured daily or weekly schedule.</li>
                 <li>Up to a dozen recent emails with a person, when you ask to enrich their contact profile.</li>
                 <li>The draft subject, written text, and optional goal shown in the preview you approve for draft review. Recipient fields, separately stored quoted history, and attachments are excluded from that review request.</li>
               </ul>
@@ -207,14 +210,14 @@
               <h2 id="sync-title">Export and Sync</h2>
               <p>
                 <strong>Settings export</strong> creates a file encrypted with a password you choose. It contains preferences,
-                account display details, Split Inboxes, snippets, and saved contacts, including groups, birthdays, and
-                Keep in Touch settings. It never includes mail, drafts, queued sends, scheduled-send summaries, or credentials.
+                account display details, Split Inboxes, signatures, snippets, muted and blocked senders, and saved contacts, including phone numbers, groups, birthdays, and
+                Keep in Touch settings. It never includes mail, notes, meeting recordings, Inbox Assistants, drafts, queued sends, scheduled-send summaries, or credentials.
               </p>
               <p>
-                <strong>Encrypted sync</strong> is off by default. When you enable it, tasks, goals, saved contacts,
-                contact groups, snippets, Split Inboxes, portable preferences, account and calendar display details and selections, device names, and scheduled-send summaries are encrypted
-                on your computer before being stored in a location you choose: a shared folder, S3-compatible storage, or
-                an IPFS service. That provider stores only encrypted data, but can see file sizes and timing. Mail,
+                <strong>Encrypted sync</strong> is off by default. When you enable it, tasks, manual task board order, goals, notes and note attachments, Exclude from AI flags, saved contacts,
+                contact groups, signatures, snippets, muted and blocked senders, snooze schedules, Split Inboxes, portable preferences, account and calendar display details and selections, device names, and scheduled-send summaries are encrypted
+                on your device before being stored in a location you choose: a shared folder, S3-compatible storage (including for the ThreeStrands for Android companion over HTTPS), or
+                an IPFS service. That provider stores only encrypted data, but can see file sizes and timing. Meeting recordings, Inbox Assistants, and Mac Contacts cache stay on your device, and Mail,
                 drafts, queued send payloads, and credentials never sync. Keep your recovery phrase safe — we cannot recover it.
               </p>
               <p>Scheduled-send summaries include the sending account, subject, chosen time and timezone, owning computer, and last reported delivery status. Message bodies, recipients (including Bcc), and attachments are excluded. Only the computer where a message was scheduled can send, reschedule, or cancel it; other computers show a read-only summary. A stale summary does not establish whether delivery succeeded or failed.</p>
@@ -238,7 +241,7 @@
               <ul>
                 <li><strong>Remove an account</strong> in Settings to delete its cached mail, drafts, queued mail, tasks, and credentials from your computer, including from the app's backups. Removing it also revokes the app's access with Google, unless you keep the account on your other computers with Replicated Sync.</li>
                 <li><strong>Revoke access</strong> at any time from your <a href="https://myaccount.google.com/permissions" rel="noopener">Google Account permissions</a>.</li>
-                <li><strong>Remove everything</strong> by following <a href="docs/privacy.html#remove-everything">Remove Everything From This Computer</a>. Uninstalling alone leaves your data in place: remove your accounts, uninstall, then delete the app's data and log folders and the entries in your operating system's credential store whose names contain <code>app.threestrands</code>. On Windows, the uninstaller can delete the folders for you. This also removes saved contacts, notes, settings, and logs, which outlive a removed account.</li>
+                <li><strong>Remove everything</strong> by following <a href="docs/privacy.html#remove-everything">Remove Everything From This Computer</a>. Uninstalling alone leaves your data in place: remove your accounts, uninstall, then delete the app's data and log folders (including any local macOS <code>recordings/</code> folder) and the entries in your operating system's credential store whose names contain <code>app.threestrands</code>. On Windows, the uninstaller can delete the folders for you. On Android, uninstalling the companion app removes its local database and Android Keystore credentials. This also removes saved contacts, notes, settings, and logs, which outlive a removed account.</li>
                 <li><strong>Remove synced data</strong> by leaving the sync group and deleting the files in your chosen storage location.</li>
               </ul>
               <p>Since we hold no personal data about you, there is nothing for us to export or delete on request — but we are happy to help you remove data from your own devices.</p>

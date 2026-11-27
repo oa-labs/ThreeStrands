@@ -11,7 +11,7 @@ import { shortcutGroups } from "../../src/shortcutCatalog";
 
 const RELEASES = "https://github.com/oa-labs/ThreeStrands/releases/latest";
 const LICENSE_URL = "https://github.com/oa-labs/ThreeStrands/blob/master/LICENSE";
-const TOUR_SCENES = ["inbox", "split-inbox", "newsletter", "reply", "tasks", "goals", "today", "find-times", "calendar-week", "calendar-create", "notes", "notes-meeting", "meeting-prep", "notes-linked", "contacts", "files"];
+const TOUR_SCENES = ["inbox", "split-inbox", "newsletter", "reply", "tasks", "goals", "today", "find-times", "calendar-week", "calendar-create", "notes", "notes-meeting", "meeting-prep", "notes-linked", "contacts", "files", "inbox-assistants", "meeting-recording"];
 const { version } = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as { version: string };
 
 /** Walks the whole page so every lazy image and scroll-driven effect gets a chance to run. */
@@ -108,12 +108,17 @@ test.describe("feature claims", () => {
     }
     await expect(today.locator("kbd")).toHaveText(["0", "Tab"]);
     const prep = page.locator('[data-step="meeting-prep"]');
-    for (const claim of ["only what is on your computer and changes nothing", "nothing is sent until you send it"]) {
+    for (const claim of ["only what is on your computer and changes nothing", "nothing is sent until you send it", "Suggested Agenda", "Exclude from AI"]) {
       await expect(prep).toContainText(claim);
     }
+    await expect(prep).not.toContainText("Reserve Prep Time");
     await expect(writing).toContainText("Drafts save to your Gmail or IMAP Drafts folder");
     await expect(page.locator(".privacy-shot")).toContainText("Trust checks run on your computer");
     await expect(page.locator(".privacy-shot")).toContainText("Show link takes you to the link in the email");
+    await expect(page.locator(".privacy-shot")).toContainText("Trust this sender");
+    await expect(page.locator(".privacy-shot")).not.toContainText("This is legitimate");
+    await expect(page.locator('[data-step="inbox-assistants"]')).toContainText("Stale Reads Summarizer");
+    await expect(page.locator('[data-step="meeting-recording"]')).toContainText("Settings → Meeting Recording");
     await expect(page.locator('[data-step="files"]')).toContainText("On macOS and Windows, preview");
     await expect(page.locator('[data-step="files"]')).toContainText("never previewed");
   });
@@ -225,6 +230,9 @@ test.describe("feature claims", () => {
     await expect(ai).toContainText("subject, written text, and any goal you add when you click Review");
     await expect(ai).toContainText("What was sent shows exactly what went to your provider");
     await expect(ai).toContainText("Recipient fields, separately stored quoted history, and attachments are excluded");
+    await expect(ai).toContainText("Inbox Assistants");
+    await expect(ai).toContainText("Straitly");
+    await expect(ai).not.toContainText("Web Research");
     await expect(ai).toContainText("Review suggested wording before applying it; revisions can be undone");
     for (const scene of ["thread-assist", "thread-chat"]) {
       const shot = ai.locator(`picture:has(img[src*="${scene}-"])`);
@@ -596,6 +604,11 @@ test.describe("legal pages", () => {
     }
     await page.goBack();
     await expect(body.locator("#device")).toContainText("IMAP/SMTP passwords or app passwords");
+    await expect(body.locator("#device")).toContainText("Meeting recordings");
+    await expect(body.locator("#device")).toContainText("Mac Contacts");
+    await expect(body.locator("#ai")).toContainText("Straitly");
+    await expect(body.locator("#ai")).toContainText("Inbox Assistants");
+    await expect(body.locator("#scope")).toContainText("Android");
     await expect(body.locator("#connections")).toContainText("IMAP reads and synchronizes your mail and folders; SMTP submits outgoing messages");
     await expect(body.locator("#connections")).toContainText("Bridge running on your computer");
     await expect(body.locator("#connections")).toContainText("IMAP does not grant calendar or address-book access");
@@ -631,6 +644,9 @@ test.describe("legal pages", () => {
     await expect(license).not.toContainText("revocable");
     await expect(license).not.toContainText("Reverse engineer, decompile, or disassemble");
     await expect(license).not.toContainText("any purpose other than reviewing it");
+    await expect(body.locator("#agreement")).toContainText("Android");
+    await expect(body.locator("#responsibilities")).toContainText("Record meetings or conversations without giving any notices or obtaining any consent");
+    await expect(body.locator("#ai")).toContainText("Inbox Assistants");
     await expect(body.locator("#termination")).toContainText("Termination of these Terms does not itself terminate your rights under the PolyForm Perimeter License");
     await expect(body.locator("#termination")).toContainText("including its provisions for correcting violations");
     await expect(body.locator("#general")).toContainText("Updates to these Terms do not change permissions already granted under the software license");

@@ -693,7 +693,7 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
     ],
     contactProfiles: [
       {
-        id: "contact:priya@harborlight.example", displayName: "Priya Natarajan", role: "VP of Product Marketing", company: "Harborlight", location: "San Francisco, CA",
+        id: "contact:priya@harborlight.example", displayName: "Priya Natarajan", role: "VP of Product Marketing", company: "Harborlight", phone: "+1 (415) 555-0142", location: "San Francisco, CA",
         bio: "Leads launches and positioning. Prefers written proposals before live reviews.", notes: "Loves a clear decision log. Out Oct 24–27.",
         links: ["https://harborlight.example/team/priya"], photoData: null, favorite: true, addresses: ["priya@harborlight.example", "priya.natarajan@harborlight.example"], sentCount: 48, receivedCount: 63, lastInteractedAt: daysAgo(0.02),
       },
