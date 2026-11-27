@@ -3,18 +3,19 @@
 For the essential Gmail-fallback work, safe connection conversion, and remaining
 functional gaps, see [IMAP parity and Gmail fallback](imap-parity-plan.md).
 
-For the current aggregate acquisition, label-based archive, and search behavior,
-see [All Mail, archive, and search completeness](imap-all-mail.md). That document
-supersedes the historical All Mail exclusions below.
+For Gmail's advertised extensions (`X-GM-EXT-1`), All Mail acquisition,
+label-based archive, `X-GM-RAW` search, identity/thread mappings, legacy thread
+repair, and native label/folder hierarchy edits, see
+[Gmail IMAP extensions](imap-gmail-extensions.md). Those sections supersede the
+historical All Mail and read-only folder descriptions in the original 2026-10-08
+design below.
 
-Status: accepted (2026-10-08); implementation in progress. Phases 1–4 of
-[Phasing](#phasing) are implemented (2026-10-09 to 2026-10-11, through 0.104.0):
-the provider seam, read-only sync, changes, and SMTP sending with identities.
-Server search (phase 5) followed on 2026-10-12. Phase 6 is partly done: account
-setup UI exists, and settings transfer accepts IMAP accounts. Hardening
-(phase 7) remains. The
-`async-imap` spike result is archived in
-[imap-spike-findings.md](archive/imap-spike-findings.md).
+Status: Phases 1–6 and core Phase 7 hardening (IDLE, connection limits, Gmail
+extensions, All Mail, label/folder management, Sent-copy delivery verification,
+and per-device Gmail-to-IMAP conversion) are implemented. Remaining optional
+protocol extensions (`CONDSTORE`/`QRESYNC`/`OBJECTID`), full DNS SRV
+autodiscovery, and scale benchmarks are tracked in [IMAP parity and Gmail
+fallback](imap-parity-plan.md).
 
 This is the design note `PLAN.MD` asks for before IMAP/SMTP work starts
 ("after its folder and threading behavior is designed"). IMAP now
@@ -53,9 +54,9 @@ advertises and how it changes the design.
 4. **When unsure, do nothing destructive.** No `EXPUNGE` without `UIDPLUS`.
    No automatic resend after an uncertain SMTP result. Threads are never merged
    on subject alone.
-5. **Same trust boundary.** IMAP mail goes through `mime.rs` normalization,
-   the sanitizer and the remote-image proxy exactly like Gmail mail. No IMAP
-   content takes any other path to the renderer.
+5. **Same trust boundary.** IMAP mail goes through `crates/mail-mime/src/mime.rs`
+   normalization, the sanitizer and the remote-image proxy exactly like Gmail
+   mail. No IMAP content takes any other path to the renderer.
 
 ## Recommended stack
 
@@ -66,7 +67,7 @@ advertises and how it changes the design.
 | SMTP | [`mail-send`](https://crates.io/crates/mail-send) 0.6.2 (Stalwart Labs; pinned `=0.6.2`, `default-features = false`) | **Supersedes the earlier `lettre` choice.** `lettre` cannot take our custom pinning `ServerCertVerifier` (it only offers a root-store route), which would force a second TLS trust path to reconcile with IMAP's. `mail-send` exposes its `tls_connector` field publicly, so we inject the SAME ring-backed rustls `ClientConfig` + `PinnedCertVerifier` the IMAP side uses, for both implicit TLS and STARTTLS, and a wrong pin fails in the handshake before any AUTH. It pulls no second rustls, no aws-lc and no second mail-builder. We drive the submission phases with its low-level API (`mail_from`/`rcpt_to`/`cmd`/`read`) rather than its one-shot `send()`, which merges the body write and the final reply and so cannot distinguish definite non-delivery from an unknown result — see [Sending](#sending). We validate envelope addresses and frame the body ourselves (mail-send does neither safely). |
 | MIME | `mail-parser` / `mail-builder` (already dependencies) | Reuse. Raw `BODY.PEEK[]` bytes are parsed into `RawMessage`. |
 | TLS | rustls 0.23 with the `ring` provider (already a dependency), with certificates always verified | The same stack `reqwest` already uses. A certificate that doesn't chain to a trusted root is accepted only if it matches the certificate the user pinned at setup (see [Account setup](#account-setup)). On IMAP AND SMTP alike it's the custom `PinnedCertVerifier` comparing the SHA-256 fingerprint, injected into mail-send's `tls_connector`. Verification is never switched off. |
-| DNS SRV | `hickory-resolver` | Only needed for RFC 6186 autodiscovery. |
+| DNS SRV *(deferred)* | `hickory-resolver` | Only needed when RFC 6186 SRV autodiscovery is added (not in `Cargo.toml` yet). |
 
 Avoid the blocking [`imap`](https://crates.io/crates/imap) crate (2.4.1, last
 released Feb 2025; 3.0 has stayed in alpha) and
@@ -107,21 +108,23 @@ Anything that fails decides between the raw-command route and moving to
 
 ## Server capabilities
 
-Every extension below is optional. Each row says what the provider does when
-the server advertises the extension and what it falls back to when it doesn't.
+Every extension below is optional. Extensions marked *(deferred)* are not yet
+wired in `src-tauri/src/provider/imap/` and currently always use the fallback
+column. Each row says what the provider does when supported and what it falls
+back to when absent.
 
 | Extension | When present | When absent |
 | --- | --- | --- |
 | `IDLE` (RFC 2177) | One connection idles on INBOX. IDLE is re-issued every 25 minutes. | Poll INBOX on the existing schedule. |
-| `CONDSTORE` (RFC 7162) | Flag changes are fetched with `CHANGEDSINCE`. | Re-fetch `FLAGS` over the sync window each poll. |
-| `QRESYNC` (RFC 7162) | Deletions arrive as `VANISHED`. Each mailbox resyncs in one round trip. | Find deletions with `UID SEARCH ALL` compared against local UIDs. This runs every poll for INBOX and less often for other folders. |
+| `CONDSTORE` (RFC 7162) *(deferred)* | Planned: fetch flag changes with `CHANGEDSINCE`. | Re-fetch `FLAGS` over the sync window each poll. |
+| `QRESYNC` (RFC 7162) *(deferred)* | Planned: deletions via `VANISHED`. | Find deletions with `UID SEARCH ALL` compared against local UIDs. |
 | `MOVE` (RFC 6851) | Moves are atomic. | `COPY` + `\Deleted` + `UID EXPUNGE`, which needs `UIDPLUS`. |
 | `UIDPLUS` (RFC 4315) | New UIDs come back from `COPYUID`/`APPENDUID`. Targeted `UID EXPUNGE`. | No expunge. The source copy is only marked `\Deleted`, because a plain `EXPUNGE` would also remove other clients' deleted mail. The new location is found on the next sync. |
 | `SPECIAL-USE` (RFC 6154) | `\Sent`, `\Archive`, `\Junk`, `\Trash`, `\Drafts`, `\All`, `\Flagged` come from `LIST`. | Special-use attributes are still read from a plain `LIST` when present; some servers return them without advertising the extension. Only when none come back are common mailbox names matched, and the user confirms the result at account setup. |
-| `OBJECTID` (RFC 8474) | Message ID from `EMAILID`, thread ID from `THREADID` when the server returns it. | IDs are derived locally (next section). |
-| `ESEARCH` (RFC 4731) | Search returns compact result sets. | Plain `SEARCH` results. |
-| `LIST-STATUS` (RFC 5819) | One round trip for every mailbox's counters. | One `STATUS` command per mailbox. |
-| `ENABLE`, `UTF8=ACCEPT`, `ID` | Turned on when offered. `ID` is always sent; some servers expect it. | Mailbox names are decoded from modified UTF-7. |
+| `OBJECTID` (RFC 8474) *(deferred on live wire)* | Resolver reserves the `objectid-emailid` namespace; live `EMAILID`/`THREADID` wire acquisition is deferred. | IDs are derived locally (or via `X-GM-MSGID`/`X-GM-THRID` when `X-GM-EXT-1` is advertised). |
+| `ESEARCH` (RFC 4731) *(deferred)* | Planned: compact search result sets. | Plain `SEARCH` results. |
+| `LIST-STATUS` (RFC 5819) *(deferred)* | Planned: one round trip for every mailbox's counters. | One `STATUS` command per mailbox. |
+| `ENABLE`, `UTF8=ACCEPT`, `ID` *(deferred)* | Planned: turn on when offered / send `ID`. | Mailbox names are decoded from modified UTF-7. |
 
 The **minimum requirement** is IMAP4rev1 over implicit TLS (usually port 993)
 or STARTTLS (usually port 143, but any port the user configures, such as
@@ -175,7 +178,7 @@ What this means for the design. Everything below follows from capabilities and
 | `MOVE` + `UIDPLUS` | Moves are atomic and return new UIDs through `COPYUID`. Archive, trash and spam don't wait for the next sync to learn where messages went. |
 | `SPECIAL-USE` not advertised, but plain `LIST` returns `\Sent`, `\Drafts`, `\Trash`, `\Junk`, `\Archive`, `\All` and `\Flagged` | Always send a plain `LIST` (`RETURN (SPECIAL-USE)` needs `LIST-EXTENDED`, which isn't advertised) and trust the attributes it returns. Every system mailbox is mapped from attributes, so no name matching is needed and setup has nothing to confirm. An Archive mailbox already exists, so creating one isn't needed here. |
 | `\Noselect` containers (`Folders`, `Labels`) | Mailboxes with `\Noselect` aren't locations and never become `folder:` labels. Only their selectable children do. |
-| `\All` (`All Mail`) and `\Flagged` (`Starred`) | Aggregate mailboxes, skipped by sync (see [Labels](#labels-in-the-rawmessage-envelope)). |
+| `\All` (`All Mail`) and `\Flagged` (`Starred`) | `\Flagged` is skipped as an aggregate view; `\All` is synced in bounded rounds when present without generating a `folder:` label (see [Gmail IMAP extensions](imap-gmail-extensions.md#all-mail-archive-and-search-completeness)). |
 | No `LIST-STATUS` | Counters come from one `STATUS` per synced mailbox. |
 | No `OBJECTID` | Message and thread IDs are derived locally (below). |
 | No `ENABLE` / `UTF8=ACCEPT` | Mailbox names are decoded from modified UTF-7. |
@@ -196,18 +199,19 @@ as the account's label container (see [User labels](#user-labels)).
 
 ### Message identity
 
-The [identity audit and regression fixtures](imap-identity-audit.md) describe
-current ID dependencies and the compatibility contract for IMAP parity work.
+See [Gmail IMAP extensions](imap-gmail-extensions.md#message-and-thread-identity-mappings)
+for external identity mappings (`imap_message_identities`, `X-GM-MSGID`, and
+converted-account rules).
 
 IMAP UIDs are only unique within one mailbox while its `UIDVALIDITY` stays the
 same, and they change whenever a message moves. ThreeStrands needs a message ID
 that stays stable across moves. It must also be unique across accounts, because
 `messages.id` is a primary key over all accounts.
 
-- **Message ID:** `imap:<account>:<EMAILID>` when the server supports
-  `OBJECTID`. Otherwise `imap:<account>:<hash>`, where the hash covers the
-  normalized `Message-ID` header. Messages without a `Message-ID` header hash
-  `Date`, `From`, `Subject` and `RFC822.SIZE` instead.
+- **Message ID:** `imap:<account>:<hash>`, where the hash covers the normalized
+  `Message-ID` header (or `Date`, `From`, `Subject`, and `RFC822.SIZE` when
+  absent), unless resolved via `X-GM-MSGID` / `imap_message_identities` (or
+  future `OBJECTID`).
 - **One message, several places:** if the same Message-ID appears in two
   mailboxes (for example a Bcc to yourself arrives in INBOX and is also stored
   in Sent), it is **one message with two locations**. This matches the "one
@@ -262,14 +266,15 @@ provider is unaffected.
 
 Mailbox write capabilities remain unknown until a writable `SELECT` supplies
 `PERMANENTFLAGS`. Read-only discovery uses `EXAMINE` for counters and preserves
-any known write capabilities; its read-only permissions never replace them.
-Database migration 56 invalidates the unreliable EXAMINE-derived permissions
-stored by earlier versions while preserving the catalog and message locations.
+any known write capabilities; its read-only permissions never replace them
+(baked into baseline `INITIAL_SCHEMA` v74 in `schema.rs`).
 This provider-internal metadata is not part of settings transfer.
 
 ### Threading
 
-Most ISP servers don't return `THREADID`, so local threading is the main path:
+Most ISP servers don't return `THREADID` (for Gmail `X-GM-THRID` bindings and
+repair, see [Gmail IMAP extensions](imap-gmail-extensions.md)), so local
+threading (`provider/imap/threading.rs`) is the path for ordinary IMAP:
 
 - Threads are grouped by message references. Each message's normalized
   `Message-ID`, `In-Reply-To` and `References` are combined per account, and
@@ -278,15 +283,17 @@ Most ISP servers don't return `THREADID`, so local threading is the main path:
 - **There is no subject-based merging.** Merging on subject joins unrelated
   "Invoice" or "Re: hello" threads. A thread that is wrongly left split is
   harmless; a wrong merge is not.
-- A thread's ID is fixed when the thread is created: `imap:<account>:t:<hash of
-  the first message ID seen>`.
+- A provider thread ID is fixed when created: `imap:t:<SHA256>` (plus
+  `imap:gmail-thread:<SHA256>` or raw Gmail hex IDs on converted Gmail
+  accounts); `db/threads.rs::local_thread_id` adds the `<account>:` prefix.
 - **Merges:** a late message can link two existing threads. When that
   happens, the older thread's ID survives and the other thread's messages are
-  re-pointed to it. A `thread_aliases(account_id, old_id, new_id)` row lets
-  tasks, triage events and replicated-sync references that hold the old ID
+  re-pointed to it. An `imap_thread_aliases(account_id, old_id, new_id)` row
+  lets tasks, triage events and replicated-sync references that hold the old ID
   resolve to the new one. Both IDs are reported as changed so the sync engine
   re-ingests them.
-- When the server returns `THREADID`, it is used and local merging is skipped.
+- When the server returns `X-GM-THRID` (or future `THREADID`), it is used and
+  header merging is bypassed for those bindings.
 
 `ProviderCapabilities` gains a flag `provided_threads: bool`, as already
 anticipated in `provider.rs`. It is false for local threading.
@@ -310,12 +317,10 @@ Labels are worked out from where a message is stored and its flags:
 A message stored only in the Archive mailbox therefore has no `INBOX` label.
 The existing rule "archived = no INBOX" in `db.rs` works without changes.
 
-**Aggregate mailboxes** are mailboxes with the RFC 6154 `\All` or `\Flagged`
-attribute (or a user-confirmed equivalent when `LIST` returns no attributes). They
-are views of mail stored elsewhere, so they don't contribute `folder:` labels
-and aren't synced as locations. Otherwise every message would get a
-`folder:All Mail` label and be fetched twice. `\Flagged` state comes from the
-`\Flagged` flag, not from membership in a starred mailbox.
+**Aggregate mailboxes:** `\Flagged` (`Starred`) is skipped so starred messages
+do not acquire a `folder:` label (status comes from `\Flagged`). When an `\All`
+(`All Mail`) mailbox is present, it is synced in bounded rounds without
+generating a `folder:` label (see [Gmail IMAP extensions](imap-gmail-extensions.md#all-mail-archive-and-search-completeness)).
 
 **`\Noselect` mailboxes** are containers in the hierarchy. They hold no
 messages, aren't synced and don't produce labels.
@@ -331,7 +336,9 @@ frontend shows folders as locations, not as labels that can be toggled.
 
 ### User labels
 
-Each account has a `label_storage` setting:
+Each account has a `label_storage` setting (`None`, `Keywords`, or `Folders` in
+`provider/imap/settings.rs`), alongside `LabelModel::ImapNativeLabels` when
+`X-GM-EXT-1` is negotiated (see [Gmail IMAP extensions](imap-gmail-extensions.md#native-labels-folder-trees-and-editing)):
 
 - **`keywords`**: the default when INBOX's `PERMANENTFLAGS` includes `\*`.
 - **`folders`**: the user picks a container mailbox, either a `\Noselect`
@@ -340,17 +347,17 @@ Each account has a `label_storage` setting:
   shown at setup when keywords are unavailable, and it can be changed later in
   account settings.
 
-When `PERMANENTFLAGS` lacks `\*` and the user hasn't picked a container, user
-labels are unavailable and the UI offers folder management for that account.
+When `PERMANENTFLAGS` lacks `\*` and the user hasn't picked a container (`None`),
+user labels are unavailable and the UI offers folder management for that account.
 
 In keyword mode, the catalog lists custom keywords from synced mail and locally
 declared labels. Creating a label saves the name locally. IMAP stores the keyword
 when it is first applied to a message. Applying or removing it uses
 `UID STORE ±FLAGS.SILENT` with a fresh writable selection and flag read-back for
 each message copy. System flags and service keywords remain message state.
-Folder creation, renaming, and deletion live in **Manage Folders**. A confirmed
-leaf rename keeps the folder's original ID. Deletion requires a verified
-surviving copy of every message in the folder.
+Folder creation, full folder-tree renaming (`imap_label_bindings`), and leaf
+deletion live in **Manage Folders**. Deletion requires a verified surviving
+copy of every message in the folder.
 
 In label-folder mode:
 
@@ -384,13 +391,12 @@ In label-folder mode:
 
 ### What gets synced
 
-- **Mailboxes:** INBOX, Sent, Archive, Junk and Trash are synced continuously.
-  Drafts are not: they are read and written as server drafts
-  ([server-drafts-design.md](server-drafts-design.md)), never as
-  conversation messages. Aggregate mailboxes
-  (`\All`, `\Flagged`) are not synced; see above. User folders are
-  listed. Their headers sync inside the window below, and bodies are fetched
-  when a message is opened.
+- **Mailboxes:** INBOX, Sent, Archive, Junk, Trash, and (when present) `\All`
+  are synced continuously. Drafts are not: they are read and written as server
+  drafts ([server-drafts-design.md](server-drafts-design.md)), never as
+  conversation messages. `\Flagged` aggregate views are not synced; see above.
+  User folders are listed, their headers sync inside the window below, and
+  bodies are fetched when a message is opened.
 - **Initial window** (decided 2026-10-08, matching Gmail):
   - **INBOX:** all of it. The inbox is a to-do list, and a cutoff would hide
     old mail that still needs handling. A count limit applies only to inboxes
@@ -413,9 +419,9 @@ In label-folder mode:
   and just above each limit.
 - **Bodies:** message bodies never change in IMAP. Only flags and locations
   do. So `BODY.PEEK[]` is fetched once per message ID and cached. A flag change
-  never re-downloads a thread. Messages above a size threshold fetch
-  `BODYSTRUCTURE` and their text parts first. Attachments are fetched lazily by
-  MIME section number, which becomes the `attachment_bytes` handle.
+  never re-downloads a thread. (Planned read-path optimization: fetch
+  `BODYSTRUCTURE` and text parts first above a size threshold with lazy
+  attachment fetches — not implemented yet.)
 
   The Slice 4 full-body path currently accepts raw messages up to 64 MiB.
   It rejects an advertised `RFC822.SIZE` above that limit before requesting
@@ -583,13 +589,14 @@ How this differs from Gmail's delivery:
   the Message-ID header, which we generate, so it is known as soon as SMTP
   accepts the message. A failed `APPEND` is queued as its own retry job and
   never causes a resend.
-- **An uncertain SMTP result can't be checked against the server.** If the
-  connection drops after the message data was sent but before the server's
-  `250` reply, the Sent folder can't confirm delivery, because only we would
-  have put a copy there. The send is shown as "may have been sent: check
-  before resending" and is never resent automatically. Today
-  `find_sent_copy`-based reconciliation assumes a server-side copy, so the
-  delivery state machine needs an `Unverifiable` outcome for IMAP.
+- **Uncertain SMTP outcomes and Sent verification:** if the connection drops
+  after the message data was sent but before the server's `250` reply, the send
+  enters the uncertain state and is NEVER resent automatically. When the
+  account is known to save Sent copies on the server (`server_saves_sent`,
+  `sent_copy_detection() == Some(true)`, or `native_label_model().is_some()`),
+  `ImapProvider::find_sent_copy` (`provider/imap/provider/mail_send.rs`) and
+  `capabilities().verifiable_delivery` reconcile against Sent; otherwise the
+  outcome stays `Unverifiable`.
 - **Threading:** replies already set `In-Reply-To` and `References`
   (`correspondence/mime.rs`), so local threading places the sent copy in its
   thread.
@@ -607,13 +614,14 @@ How this differs from Gmail's delivery:
 
 The primary user sends from more than one Proton address over one Bridge login
 (Bridge's combined-addresses mode). Each IMAP account therefore has an ordered
-**identity list**: the login address first, then addresses the user adds in
-account settings. Each identity has an address and an optional display name.
-Nothing is discovered automatically, because IMAP has no standard way to list
-a login's addresses.
+**identity list** (`Identity` in `provider/imap/settings.rs`): the login address
+first, then addresses the user adds in account settings, each with `address`,
+optional `name`, optional `reply_to`, and `is_default`. Nothing is discovered
+automatically, because IMAP has no standard way to list a login's addresses.
 
 - **Compose** shows a From picker only when the account has more than one
-  identity. A new message starts with the first identity.
+  identity. A new message starts with the `is_default` identity (falling back
+  to the first).
 - **Replies and forwards** use whichever identity the original was sent to.
   The match is checked against `To`, then `Cc`, then `Delivered-To`/`X-Original-To`
   on the original message, comparing normalized addresses. If nothing
@@ -640,9 +648,12 @@ first:
 - **Unsupported terms:** anything IMAP can't express, such as
   `has:attachment`, is applied to the local results only. The search reports
   the term as filtered locally instead of guessing on the server.
-- **Mailboxes searched:** INBOX, Archive and Sent by default, plus user folders
-  when an `in:` term asks for them. Results are capped and ingested through the
-  existing `search_and_ingest_missing`.
+- **Mailboxes searched:** INBOX, Archive, Sent, All Mail (when present), user
+  folders, and label folders by default (Trash and Spam excluded unless
+  `in:anywhere` or explicitly requested). Results are capped and ingested
+  through `search_and_ingest_missing`; see
+  [Gmail IMAP extensions](imap-gmail-extensions.md#server-search-and-partial-coverage)
+  for `X-GM-RAW` and partial coverage.
 - **Speed:** servers without a full-text index scan message bodies, so every
   search has a timeout and partial results are shown.
 
@@ -672,11 +683,10 @@ the fetched results locally. All search numeric limits live in
 2. **Autodiscovery, in order, HTTPS sources only:**
    1. `autoconfig.<domain>`;
    2. `https://<domain>/.well-known/autoconfig/mail/config-v1.1.xml`;
-   3. the Mozilla ISP database (also looked up via the domain's MX host);
-   4. RFC 6186/8314 SRV records: `_imaps._tcp`, `_submissions._tcp`,
-      `_submission._tcp`;
-   5. as a last resort, guesses such as `imap.<domain>` and `mail.<domain>`.
-      A guess is only accepted if its TLS certificate matches the host.
+   3. the Mozilla ISP database (domain lookup; MX-host lookup is deferred);
+   4. *(deferred)* RFC 6186/8314 SRV records (`_imaps._tcp`, `_submissions._tcp`,
+      `_submission._tcp`);
+   5. *(deferred)* guarded hostname guesses (`imap.<domain>`, `mail.<domain>`).
 3. **Confirm before the password goes anywhere.** The user sees the discovered
    hosts, ports and security settings and confirms or edits them. Manual setup
    (host, port, implicit TLS or STARTTLS) is a first-class choice, not buried,
@@ -718,10 +728,11 @@ keep working.
   set up with a "test and save" command, not the interactive browser
   sign-in.
 - **`MailProviderKind`** gets an `Imap` variant.
-- **`ProviderCapabilities`** gains `provided_threads` and a label-model flag
-  (Gmail labels; IMAP folders plus keyword labels; IMAP folders plus
-  label folders; IMAP folders with no user labels) so the frontend can choose
-  its label actions.
+- **`LabelModel`** (`src-tauri/src/provider.rs`) has 5 variants (`Gmail`,
+  `ImapNativeLabels`, `ImapKeywordLabels`, `ImapLabelFolders`, `ImapFoldersOnly`);
+  the frontend reads `models::Account.label_model` populated by
+  `db/accounts.rs::enrich_label_model`. (`ProviderCapabilities.provided_threads`
+  and `label_model` exist on the trait struct for capability parity.)
 - **`DeliveryReceipt`** and the delivery state machine get the `Unverifiable`
   outcome described above.
 
@@ -799,10 +810,10 @@ capability-driven:
     message from any identity counts as sent by you; a rejected sender is a
     permanent failure;
   - the generated Message-ID uses the domain of the chosen From address.
-- **Integration tests:** Dovecot in Docker, with extensions removed through its
-  `imap_capability` setting to cover the matrix, plus an SMTP sink such as
-  Mailpit. They live in a separate cargo test target gated by
-  `THREESTRANDS_IMAP_IT=1` and run in CI.
+- **Integration tests:** Dovecot in Docker (`docker/dovecot-test/`), with
+  extensions removed through its `imap_capability` setting, plus a custom
+  `smtp-sink.py`. They live in a separate cargo test target gated by
+  `THREESTRANDS_IMAP_IT=1` (run manually/locally; not part of GitHub Actions CI).
 - **Security-negative tests:**
   - IMAP-ingested MIME goes through the same normalize, sanitize and proxy
     path;
@@ -814,9 +825,10 @@ capability-driven:
   - autodiscovery never contacts a host over plain HTTP.
 - **Settings transfer:** regression tests for importing a version 3 export,
   and a round trip of the identity list, Archive choice and `label_storage`.
-- **End-to-end:** `pnpm test:e2e` covers triage on an IMAP-backed demo account:
-  folder labels, keyword labels, label-folder labels, archive moving the
-  message to the Archive mailbox, and a reply sent from a second identity.
+- **End-to-end:** `pnpm test:e2e` (`tests/e2e/mail-accounts.spec.ts`) covers
+  switching to IMAP and opening Sending Addresses and Signature Defaults; full
+  IMAP triage is covered by the Rust provider/DB and frontend unit/component
+  suites.
 
 ## Phasing
 

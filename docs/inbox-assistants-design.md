@@ -25,22 +25,22 @@ Delegated Tasks and separate Web Research settings were removed because they wen
 
 1. **Stale Reads Summarizer (`stale_reads`)**
    - *Target:* Unreplied Inbox threads older than *N* days that are newsletters, bulk updates/promotions, or long unread/unreplied emails.
-   - *Action:* Summarizes the core takeaways with cited message evidence and offers **Archive** or **Save to Notes & Archive** (evicting the email from Inbox while keeping the summary searchable in Notes).
+   - *Action:* Summarizes the core takeaways (`takeaways` bullets, plus an optional `deadline` badge) with cited message evidence and offers **Archive**, **Save to Notes & Archive** (shown when `suggestSaveToNote` is set, evicting the email from Inbox while keeping the summary searchable in Notes), and **Create Task**.
 2. **Expired & Already-Handled Sweeper (`resolved_and_expired`)**
    - *Target:* Aging Inbox threads that are either already resolved or past their useful window:
-     - Deterministic zero-token check: a linked ThreeStrands task on the thread was already completed after the email arrived.
+     - Deterministic zero-token check: the thread has no active (incomplete) task, and a linked ThreeStrands task completed after the email arrived with `completion_source = 'user'` and `completed_by_email IS NULL`.
      - Cross-entity AI verification: a newer thread with the same external participant where the user replied, a calendar event with the sender that already occurred, or an explicit deadline/event/promo date that has already passed.
-   - *Action:* Proposes **Archive** with clickable resolving evidence (thread, completed task, or expired date) and Undo.
+   - *Action:* Proposes **Archive** with clickable resolving evidence (**View Completed Task**, **Reopen Task**, **Create Task** when no task is linked, or **View Resolving Thread**) and Undo, plus one-click bulk **Archive All N Safe** for `archive_as_expired` or `archive_as_resolved` backed by a user-completed task.
 3. **Aging Reply Drafter (`aging_replies`)**
    - *Target:* Aging Inbox threads where the latest message is from an external human sender (excluding bulk/automated mail and threads that already have a draft).
-   - *Action:* Drafts a natural reply for the user's review—plus an optional low-friction check-in angle when the thread is 5+ days old—and opens the ThreeStrands composer pre-filled for editing. Never auto-sends.
+   - *Action:* Drafts a natural reply for the user's review—plus an optional **Quick Check-In** angle when the thread is 5+ days old—and offers **Review Draft**, **Quick Check-In**, and **Archive**. Opens the ThreeStrands composer pre-filled for editing; never auto-sends.
 
 ### Configuration & Safety Contracts
 
 - **Enable / Disable per assistant** plus global **Pause All / Resume All** in the **Agents** workspace.
-- **Per-assistant knobs:** minimum age in days (`1–365`), max threads per run (`1–30`), include/exclude starred conversations, optional account scope, and cadence (`Manual only`, `Daily`, `Weekly`).
-- **Two-stage pipeline:** deterministic local SQLite candidate filtering first, followed by bounded AI verification using the existing fast/reasoning model tiers (`summary` / `replyDraft` vs. `resolved_and_expired`).
-- **Evidence & non-reproposal:** every AI proposal must cite real candidate IDs and message excerpts; dismissed proposals are never re-proposed for the same thread revision, and proposals automatically become `superseded` if the thread is archived, trashed, or receives a new message.
+- **Per-assistant knobs:** minimum age in days (`1–365`), max threads per run (`1–30`), include/exclude starred conversations, optional account scope, and cadence (`Manual Only`, `Daily`, `Weekly`).
+- **Two-stage pipeline:** deterministic local SQLite candidate filtering first, followed by bounded AI verification using `ai.fast_or_main_model()` for `stale_reads` (`AgentStaleReads`) and `aging_replies` (`AgentAgingReplies`), and `ai.main_model()` for `resolved_and_expired` (`AgentResolvedSweeper`).
+- **Evidence & non-reproposal:** every AI proposal must cite real candidate IDs and message excerpts; dismissed proposals are never re-proposed for the same thread revision, and proposals automatically become `superseded` if the thread is archived, trashed, currently snoozed (`conversation_snoozes`), or receives a new message.
 - **Surface everywhere:** manage and triage proposals in **Agents** (`7`), and act on a thread's active suggestion directly inside Mail's right-side context panel.
 
 ---
@@ -55,4 +55,4 @@ Delegated Tasks and separate Web Research settings were removed because they wen
 - **Batched Stale Reads Digest:** Weekly roll-up of all unread newsletters/articles older than 7 days into one scannable card with one-click **Archive all N** and per-item **Save to Notes**.
 - **Inbox → Task / Note Graduation ("Evict from Inbox"):** Spot aging non-reply emails that represent an actionable chore or reference doc (receipts, itineraries, how-tos) and propose **Create Task & Archive** or **Save to Note & Archive**.
 - **Behavioral Sender Hygiene:** Combine aging unread counts with `src/triage.ts` quick-dismissal telemetry (`isQuickTriageDisposition` < 1s) to suggest **Unsubscribe**, **Mute**, or **Create a Split** when a sender is repeatedly ignored or dismissed.
-- **Assisted "Inbox Amnesty" & Post-Meeting Deflation:** A guided 2-minute sweep in **Today** (during Plan Today / Shutdown) grouping mail older than *N* days by reason, plus post-meeting prompts (*"Did your 2pm with Sarah cover these 2 threads? Archive?"*).
+- **Assisted "Inbox Amnesty" & Post-Meeting Deflation:** A guided 2-minute sweep in **Today** grouping mail older than *N* days by reason, plus post-meeting prompts (*"Did your 2pm with Sarah cover these 2 threads? Archive?"*).

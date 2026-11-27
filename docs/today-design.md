@@ -1,216 +1,165 @@
 # Today view design
 
-Today (key `0`) is the day at a glance: the day's plan beside today's
-calendar, with tasks, promises, check-ins, and a line about unread mail. It's a live dashboard, not a snapshot. It
-updates as mail syncs and the clock moves, and every row opens the thing it
-describes.
+Today (key `0`) is the day at a glance: a Planning Inbox and Done Today record
+beside the day's calendar agenda or inline Daily Note. It is a live dashboard,
+not a snapshot—it updates as mail syncs, notes change, and the clock moves, and
+every row opens the thing it describes.
 
-This document records what Today does without AI (phase 1) and the plan for
-phase 2, which adds an AI layer on top. Phase 2 takes lessons from a
-comparison with Dia's "Monday Brief", an AI-written morning brief built from
-Gmail and Google Calendar.
+*(History note: A modal **Plan Today / Plan Tomorrow** routine and a **Shut
+Down** evening view were built and removed before release on 2026-11-18, along
+with the old unread-mail column and `dayShape` summary. Today now focuses
+directly on the Planning Inbox beside the daily schedule and Daily Note.)*
 
 ## Principles
 
 - **Complete before curated.** Today never hides mail, meetings, or tasks to
-  look tidy. An AI layer can rank and summarize, but the full lists stay
-  underneath it, so nothing the model skipped is lost.
-- **Every claim is traceable.** A row that tells the user something ("Taylor
-  is also in your 2 PM") links to the event, message, or task it came from.
-  Guesses are labelled as guesses or left out.
-- **Heuristics first, AI on request.** Anything that can be worked out from
-  headers, calendar data, or the user's own sent mail runs locally and always.
-  AI features follow the AI affordance rules: a sparkles button means data
-  goes to the provider, and turning AI off hides the feature.
-- **Say what to do and why.** A row's headline is better as the action ("Send
-  Jill the report") than as metadata (a sender and a time), and its second line
-  is better as the reason than as the subject.
+  look tidy. A plan or an optional AI layer can highlight priorities, while the
+  full lists stay underneath so nothing is lost.
+- **Every claim is traceable.** A row that surfaces an overlap, promise, or
+  attendee unread count links to the event, message, or task it came from.
+  Guesses are labeled or left out.
+- **Heuristics first, AI on request.** Everything that can be derived from
+  headers, calendar data, daily notes, or the user's own sent mail runs locally
+  and always. Any AI layer follows the AI affordance rules: a sparkles button
+  sends data only on explicit action, and turning AI off hides it.
+- **A plan links work; it does not copy it.** Planning an item for a day never
+  duplicates a task or alters its due date, and checking a link never replaces
+  the underlying source state.
 
-## Phase 1: built without AI
+## Current layout and behavior (Phase 1)
 
-- Agenda for today and tomorrow, with a Now line, declined and finished events
-  dimmed, and Next meeting with Join in the header.
-- Unread mail in four groups worked out from headers (`src/todayMail.ts`):
-  Invitations, Needs a reply, From people, Updates.
-- Tasks (overdue, due today, open) and due Keep in Touch reminders.
+`TodayWorkspace` (`src/TodayWorkspace.tsx`) renders a two-column workspace:
+the **Planning Inbox** and **Done Today** on the left, and the **Agenda** /
+**Daily Note** pane on the right (toggled via `Tab`, with `Enter` to edit the
+Daily Note). An optional three-phase SVG/CSS header backdrop (`TodayBackdrop`
+in `src/TodayBackdrop.tsx`, controlled under **Settings → Appearance → Today
+Backdrop**, stored locally only) follows the local clock across `day` (6am–5:59pm),
+`dusk` (5am–5:59am and 6pm–8:59pm), and `night` (9pm–4:59am).
 
-Added after the Dia comparison:
+### Planning Inbox and Commitments (`src/PlanningInbox.tsx`)
 
-- **Day summary line.** Under the counts, one line describes the rest of the
-  day: "Free until 2:00 pm · 4:00 pm double-booked (CS Updates is recorded) ·
-  Last meeting ends 5:00 pm" (`dayShape` in `src/todayInsights.ts`). A gap
-  counts as free from `FREE_STRETCH_MINUTES` up.
-- **Conflicts on the agenda.** Today's agenda marks each meeting that overlaps
-  another ("Overlaps Ramp AI deep dive"). When the event's own text says it is
-  recorded, the row adds "Recorded", which tells the user which meeting is
-  safer to skip. Declined and all-day events never conflict.
-- **People across columns.** A mail row whose sender is invited to a meeting
-  still ahead today says so ("Also in your 2:00 pm and 3:00 pm meetings").
-  This compares the sender's address with the event's attendees and makes no
-  model call.
-- **You said you would.** The Tasks column lists promises from the user's own
-  sent mail in the last `PROMISE_LOOKBACK_DAYS` (14) days: a first-person
-  promise ("I'll send…", "Let me check…") in the user's own text, not in quoted
-  history, where nothing the user has sent since went to anyone on its To
-  line. Detection is in `crates/mail-text/src/promise_text.rs`; the query is
-  `Database::list_open_promises`. A promise whose conversation already has an
-  open task is left out. Each row can become a follow-up task, or be dismissed
-  on this device.
+- **Five filters:** `All`, `Tasks`, `Emails`, `Contacts`, and `Commitments`.
+  - **Tasks:** Open and in-progress mail, standalone, and note tasks (overdue
+    and due first), plus active `## Plan` items leading the list.
+  - **Emails:** Starred conversations (opening the prefilled task form on
+    creation/booking without unstarring or archiving).
+  - **Contacts:** Due **Keep in Touch** check-ins.
+  - **Commitments:** Combines due follow-up/waiting-for tasks, tracked mail
+    tasks, open **You Said You Would** promises, and possible replies
+    (`list_commitment_replies`, open while the newest message is inbound).
+- **Open promises (`crates/mail-text/src/promise_text.rs`, `Database::list_open_promises`):**
+  Detects first-person promises ("I'll send…", "Let me check…") in the user's
+  own sent text over the last `PROMISE_LOOKBACK_DAYS` (14) days where no later
+  message went to anyone on the `To` line and no open task already exists on the
+  conversation. Each promise can become an action task via **Make a Task** or
+  be dismissed locally.
+- **Quick add and keyboard triage:** Inline quick-add task input (`onAddTask`)
+  in the inbox plus keyboard navigation (`j`/`k`, `[`/`]`, `e`, `s`, `a`, `#`,
+  `o`, `b`, `Tab`, `Enter`, `-`/`=`/`t` defined in `src/commands.ts`).
 
-## Direction change: Today as the daily loop (2026-11-16)
+### Done Today (`src/DoneCard.tsx`)
 
-User feedback is that the agenda and task columns are Today's valuable parts.
-The centre unread-mail column, grouped by addressing heuristics, does not surface
-important mail reliably enough to earn its space. The
-[product plan](../PLAN.MD#connected-workflow-additions) therefore reshapes Today
-around a daily loop, drawing on Sunsama's guided planning and shutdown:
+Lists work finished on the selected day:
+- Completed tasks (including **Done by email** attribution), completed note
+  tasks, and checked plan items;
+- Sent emails (`list_sent_between`), created calendar meetings, and created or
+  edited notes.
 
-- A guided **Plan Today** routine: settle yesterday's unfinished planned items,
-  choose priorities, walk through the day's meetings with their readiness and
-  preparation (see [meeting preparation](meeting-preparation-design.md)), and
-  check the plan against free time.
-- A **Shutdown** that offers meeting follow-through and carry, defer, or drop for
-  unfinished planned items.
-- The day's plan, tasks, promises, and Keep in Touch lead the layout as cards,
-  beside a one-day calendar view of today where dragging a card books time for it.
-  Mail shrinks to a compact, collapsible signal (such as Invitations and a count
-  needing a reply, with a path to Inbox) rather than a full column.
+### Agenda, Daily Note, and Meeting Preparation
 
-Phase 1's principles still hold. Today stays complete underneath: the plan is a
-layer the user curates, and nothing it leaves out is hidden from Tasks, Calendar,
-or Inbox. The [daily planning design](daily-planning-design.md) specifies the
-routine, its storage, and the new layout; this section records the direction.
+- **Independent day browsing (`src/todayDayChoice.ts`):** `-` / `=` / `t` (Today)
+  browses dates for the right pane, driving both the Agenda and the Daily Note
+  for that date.
+- **One-day Agenda (`src/TodayDayView.tsx`):** Reuses Calendar's shared day-grid
+  and drag hook (`src/useTaskBlockDrag.ts`), showing timed events, all-day
+  events, working locations, and the **Now** line (with a narrow-width agenda
+  list fallback). Declined and finished events are dimmed.
+  - `agendaConflicts` & `mentionsRecording` (`src/todayInsights.ts`) flag
+    overlapping events and recorded meetings.
+  - Attendee-unread badges count unread conversations in Today's mail list from
+    each meeting's attendees.
+  - Dragging a Planning Inbox card onto the grid—or pressing **Book** (`b`,
+    finding the next `TASK_BLOCK_MINUTES` (30) slot in `planCapacity`)—creates
+    a calendar block (`src/todayBooking.ts`). Both mail/standalone tasks and
+    note tasks (`note:<noteId>:<markerId>` via `src/taskBooking.ts`) can be
+    booked. Check-ins book unlinked events; Starred Mail opens the task form
+    before booking.
+  - Clicking a meeting title opens Calendar; clicking its note icon or pressing
+    `p` opens or creates the occurrence note in Notes, where [meeting preparation](meeting-preparation-design.md)
+    lives in the right rail.
+- **Inline Daily Note (`src/TodayDailyNote.tsx`):** Pressing `Tab` switches the
+  right pane to an embedded `NoteEditor` for that date's daily note (`daily:YYYY-MM-DD`).
 
-Effect on phase 2 below: **Sort by Meaning** is deferred and no longer shapes
-Today's layout; if it ships, it feeds the compact mail signal. The AI **Plan My
-Day** button becomes an optional step inside Plan Today (for example, suggesting
-priorities), and the routine without AI takes the plain name. The Top of mind
-strip's ideas (a small budget, one focus item, cited joins) carry into that step.
+### Daily-Note Plan Format
 
-**As built (planning inbox).** Today has a planning inbox of cards on the left
-and a larger one-day schedule on the right. The inbox has four filters: All, Tasks, Emails, and Contacts. Active, unscheduled
-plan items and source candidates share one list, deduplicated by durable identity;
-scheduled items live on the calendar. New Task and New Event open the standard
-forms. The schedule arrows browse other dates independently of the inbox.
-Event titles open Calendar; each meeting’s note icon and the **Prepare for Meeting**
-shortcut open its occurrence note, or add an entry to its daily note and open it.
-Preparation lives beside the Notes editor, opened from the event’s link in **Links**,
-with **Back to Meeting** restoring the note and preparation after opening a source.
-See [Today's new layout](daily-planning-design.md#todays-new-layout).
+Plans live in a `## Plan` section inside each date's daily note so they sync,
+export, and import automatically through Notes without a separate replicated
+entity:
 
-## Phase 2: the AI layer
+- **Plan items (`src-tauri/src/daily_plan.rs`, `src/dailyPlan.ts`):** Top-level
+  list items linking `threestrands:task/<id>`, note-task markers, round tasks
+  `( ) <!-- threestrands-task:… -->`, `threestrands:contact/…` check-ins, or
+  free text. A `### Not today` subsection records deferred
+  (`<!-- threestrands-plan:deferred YYYY-MM-DD -->`) or dropped
+  (`<!-- threestrands-plan:dropped -->`) items; carried items carry
+  `<!-- threestrands-plan:carried YYYY-MM-DD -->`.
+- **Editor marker hiding (`src/noteEntities.ts`):** `toEditorMarkdown` /
+  `fromEditorMarkdown` hide trailing markers as indented comments while editing
+  and preserve untouched markdown byte-for-byte on save.
+- **Guarded writes & local receipts:** `src-tauri/src/db/daily_plan.rs`,
+  `db/plan_save.rs`, `commands/plans.rs`, and `plan_save_receipts` (schema
+  v110, local-only) keep item-level additions/removals transactional and
+  idempotent.
+- **Account scope:** The plan, Daily Note, Agenda calendars, and Notes are
+  account-independent; Today's account selector filters account-scoped Tasks,
+  Starred Mail, promises, and Goals.
 
-Phase 2 was already planned as AI grouping plus a "Plan my day" button. The
-Dia comparison sharpens it into two features. See the direction change above
-for how the daily loop changes their place in Today.
+### Finishing Planning Items by Email
 
-### Sort mail by meaning
+Sending mail connects directly to Today's commitments and tasks:
 
-Phase 1 sorts mail by how it's addressed: whether the user is on the To line,
-how many people are, and whether it's list mail. That reliably separates bulk
-mail from personal mail. It can't tell "Paylocity needs you to approve
-Taylor's time off today" from "Paylocity: your pay stub is ready", because
-both are automated mail from the same sender.
+1. **Check-ins count sent mail:** `daily_plan` passes local midnight (`dayStart`).
+   A `threestrands:contact/…` check-in on a day's plan counts as done when mail
+   was sent to any of that contact's addresses (or the unlinked address) on or
+   after `dayStart`, as well as after **Mark Contacted**.
+2. **Write Email & `completesTaskId`:** Planning-inbox tasks offer **Write Email**
+   (`TodayWorkspace.tsx`), opening a draft with a `"Completes: <task title>"`
+   header line and an unlink action (`Composer.tsx`). When the outbox row moves
+   to `sent`, `Database::finish_linked_tasks_on` (`src-tauri/src/db/tasks.rs`
+   inside `db/scheduled_send.rs::change_outbox`) advances repeating follow-ups
+   or completes one-off tasks (`completion_source = 'user'`) and records
+   `completedByEmail` (replicated JSON metadata) so the task displays **Done by
+   email** (`DoneByEmail.tsx`, `find_completed_message`). Failed, undone, or
+   canceled sends finish nothing.
+3. **Post-send task suggestions (`db/task_suggestions.rs`, `src/useSendTaskSuggestion.ts`):**
+   After sending an unlinked draft, `suggest_task_for_outbox` checks for a single
+   strong match—either an open task linked to the thread or a planned/due task
+   whose conversation or title matches a To/Cc recipient (`MIN_NAME_MATCH_CHARS = 3`).
+   When unambiguous, a notice offers **Mark Done**, calling `link_task_to_outbox`
+   so the task completes immediately (if already sent) or on send.
 
-What Dia does well, and what to copy:
+## Phase 2: deferred AI layer
 
-- **Group by what the user has to do.** Dia had two groups: *to-dos*
-  (something to send, decide, or approve) and *new updates* (something worth
-  knowing, with nothing to do). It left everything else out. Ours should be:
-  **Needs you** (a reply, a decision, an approval, or a deadline), **Worth
-  knowing** (news on a project or account the user follows), and **The rest**.
-  The rest stays visible, collapsed, so nothing is hidden.
-- **Write the row as an action.** For mail in Needs you, the model writes a
-  short headline in the imperative ("Approve Taylor's time-off request for
-  today"). The sender and subject move to the second line. For Worth knowing,
-  the headline is the news itself ("Synergy pilot starts on 4 injection
-  molding presses").
-- **Give the reason in one line.** Dia's best rows explain themselves ("On Oct
-  22 you told Jill you'd… Nothing has gone to her since"). Each AI headline
-  gets a one-sentence reason drawn only from the cited messages.
-- **Label by project, not sender.** Dia tagged updates with the account or
-  project ("Synergy Industrial", "Hanel"), not the person who wrote. The model
-  can propose a project label from the conversation. It's a label for display,
-  never a filter rule, so a wrong label costs nothing.
+Planned optional AI enhancements layered strictly over the local Phase 1 lists
+(none built yet):
 
-What not to copy:
-
-- **Facts the mail doesn't state.** Dia wrote "likely Coverings, Apr 6–9 in
-  Orlando" for a conference the email never named. Our reasons may only
-  restate what the cited messages say. A detail the model inferred is either
-  marked as a guess or left out. The prompt should forbid outside knowledge,
-  and the output should cite message IDs that the code checks.
-- **Silent omission.** Dia's brief doesn't say what it left out. Ours always
-  shows "The rest (N)".
-
-Mechanics:
-
-- Phase 1 groups stay the fallback and the default when AI is off, so this
-  is a layer, not a replacement.
-- Send only new mail: the unread conversations since the last sort, each
-  conversation's newest inbound message trimmed to its own text, the way
-  Briefs focus on new messages. Cache the result per thread revision so
-  reopening Today costs nothing.
-- Wrap provider calls in `ai::with_purpose` so they appear in **Settings → AI
-  Provider → Activity**.
-- One sparkles button, **Sort by Meaning**, until the user turns on an
-  automatic option under **Settings → AI → Show AI In**, matching Automatic
-  Briefs.
-
-### Top of mind strip
-
-Dia's whole brief is, in effect, a strip of five or six items chosen from
-everything. For Today, that's a strip above the columns, never a replacement
-for them.
-
-What to copy:
-
-- **A small fixed budget.** Three to five items. The strip is worth having
-  because it's short. Mail, calendar, tasks, and promises all compete for the
-  same few slots.
-- **One focus item.** Dia's "Push your work forward" picks the single piece
-  of deep work (write the tile-opportunity brief before tomorrow's meeting
-  with Mike) and ties it to the meeting it's for. The strip leads with one
-  focus item when there's a good candidate: a task or promise linked to an
-  upcoming meeting or deadline.
-- **Combine sources.** The best items join two or more facts: a time-off
-  request plus "Taylor is also in your 2 PM and 3 PM"; a double-booking plus
-  "the CS session is recorded and Mike shared the deck". Phase 1 already
-  works out the joins (conflicts, recordings, shared meetings, promises). The
-  model's job is to choose among them and phrase them, not to discover them.
-  That keeps the facts deterministic and cheap.
-- **An offer, not an action.** Dia ended its focus item with "I can put
-  together a one-page brief". Items may offer a next step (Draft Reply, Make
-  a Task, Find Times) that the user starts. Nothing is sent or created
-  without the user.
-- **One sentence of tone.** "Your morning is wide open, and 4 PM somehow got
-  booked twice" reads better than the counts. The deterministic day summary
-  line already covers the facts. A model-written line is optional polish and
-  must not add facts.
-
-What not to copy:
-
-- A once-a-day snapshot. The strip recalculates when its inputs change, like
-  the rest of Today, and an item disappears once it's done: the task checked
-  off, the reply sent, the conflict resolved.
-- The editorial look (painting, jokes, "Made for you"). Today stays a working
-  view.
-
-Mechanics:
-
-- Input is the phase 1 data Today already holds, plus the meaning sort when it
-  has run: agenda with conflicts, promises, tasks due, and Needs you mail.
-  Each candidate goes in with its source ID, and each strip item must cite at
-  least one ID the code can resolve to a row; uncited items are dropped.
-- Button-only to start (**Plan My Day**, with sparkles), matching how Find
-  Times started.
-- Dismissing a strip item hides it for the day on this device, like a
-  dismissed promise.
+- **Sort mail by meaning:** Group unread inbound conversations into **Needs you**
+  (reply/decision/approval/deadline), **Worth knowing**, and **The rest**
+  (never hidden), with imperative action headlines, cited one-sentence reasons,
+  and display-only project labels. Runs only via an explicit sparkles action or
+  an opt-in setting, sending trimmed newest inbound text wrapped in
+  `ai::with_purpose` and cached by thread revision.
+- **Top of mind strip & Plan My Day:** A compact 3–5 item strip above Today
+  triggered by **Plan My Day** (with sparkles), leading with one focus item and
+  joining Phase 1 facts (conflicts, recordings, attendee overlap, promises) via
+  resolved source IDs (uncited items are dropped). Items offer next steps without
+  acting automatically and can be dismissed for the day.
 
 ## Not built
 
 - "From mail" event suggestions in Today.
-- A "Coming back" section of snoozed mail; the mail snooze it needs shipped in
-  0.190.0, so this is no longer blocked.
-- Promise detection in languages other than English, and promises made in
-  the Cc'd part of a reply-all (detection reads the To line only).
+- A "Coming back" section of snoozed mail in Today.
+- Promise detection in languages other than English, or promises made to Cc-only
+  recipients.
+- AI matching for post-send task completion if deterministic matching misses.
+- Duration estimates, workload warnings, or multi-day planning boards.

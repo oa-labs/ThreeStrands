@@ -1,7 +1,7 @@
 # Meeting recording spike findings
 
-**Date:** 2026-11-26. **Plan:** [Meeting recording and transcription](../meeting-recording-plan.md),
-stage 0. **Code:** [`spikes/meeting-recording/`](../../spikes/meeting-recording/README.md),
+**Date:** 2026-11-26. **Plan:** [Meeting recording and transcription](meeting-recording-plan.md),
+stage 0. **Code:** [`spikes/meeting-recording/`](../spikes/meeting-recording/README.md),
 a throwaway crate with its own workspace and lockfile.
 
 **Where it ran:** the developer's tart VM: macOS 26.6.2 on arm64, 6 vCPUs,

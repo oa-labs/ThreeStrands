@@ -1,26 +1,20 @@
 # IMAP parity and Gmail fallback
 
-Status: proposed implementation sequence, recorded 2026-11-06. No runtime
-changes are implemented by this document. Update the checklist as work lands.
-This supplements [the IMAP design](imap-design.md), whose historical phase
-status is not a complete description of today's implementation.
-The [Gmail connection implementation plan](gmail-connection-plan.md) sequences
+**Status:** Stages 0 and 1 complete; Stage 2 complete except account-wide keyword
+rename/removal; Stage 3 initial conversion (**Switch to Gmail via IMAP…**)
+complete; Stage 4 partially complete (single-pass flag/label fetch landed).
+This supplements [the IMAP design](imap-design.md) and summarizes shipped
+extension behavior in [Gmail IMAP extensions](imap-gmail-extensions.md). The
+[Gmail connection implementation plan](gmail-connection-plan.md) sequences
 this IMAP work and the later organization-supplied OAuth option.
 
-Progress: the [identity audit](imap-identity-audit.md) and regression fixtures
-are complete. [Persistent message identity mappings](imap-identity-mappings.md)
-and X-GM-MSGID retrieval are implemented. IMAP acquisition now learns Gmail
-conversation IDs and retains existing bindings when identity evidence conflicts.
-Settings → Mail Accounts can switch an existing Gmail API account to IMAP on
-one device while preserving tasks, goals and account setup. See stage 3 for
-the scope of that switch.
-
-[All Mail, archive, and search completeness](imap-all-mail.md) is implemented:
-bounded aggregate acquisition, negotiated label membership/system actions,
-broader server search, and explicit partial coverage. Creation and individual
-mailbox edits are available for native Gmail labels and plain IMAP folders.
-Plain IMAP keyword accounts can apply and remove supported keywords.
-See [native label membership](imap-native-labels.md).
+Progress: identity fixtures, persistent message/thread identity mappings
+(`X-GM-MSGID`, `X-GM-THRID`), and legacy Gmail thread repair are implemented.
+[All Mail, archive, and search completeness](imap-gmail-extensions.md#all-mail-archive-and-search-completeness)
+is shipped, along with native label creation, apply/remove, hierarchy rename/delete,
+plain IMAP folder-tree renames, and keyword apply/remove. **Settings → Mail
+Accounts → Switch to Gmail via IMAP…** converts an existing Gmail API account
+in place per device.
 
 The Gmail app-password setup route reuses the IMAP/SMTP connection test
 and mailbox review. IMAP can verify interrupted sends against a unique
@@ -58,13 +52,13 @@ and re-add accounts to test the new path.
 - [x] Decide how advertised `X-GM-MSGID` becomes an external identity mapping
   without invalidating existing header-derived IMAP IDs: prefer stable internal
   IDs with external mappings over changing primary keys on reconnect.
-  Implemented in [identity mappings](imap-identity-mappings.md).
+  Implemented in [identity mappings](imap-gmail-extensions.md#message-and-thread-identity-mappings).
 - [x] Map advertised `X-GM-THRID` conversation identities for acquired IMAP
   mail. Use the binding for reply drafts and snoozed conversation lookup.
 - [x] Recheck retained UIDs on Gmail and repair verified legacy
   header-derived splits and merges. Keep stable message IDs, move links tied
   to those messages, and retain a thread alias for a proven whole merge.
-  [Gmail thread repair](imap-gmail-thread-repair.md)
+  [Gmail thread repair](imap-gmail-extensions.md#legacy-gmail-thread-repair)
 - [x] Define ambiguous identity handling: no subject-only matches and no silent
   reassociation when Message-ID headers are missing or duplicated. Preserve and
   expose unresolved references rather than deleting workflow data.
@@ -78,9 +72,10 @@ foundation, not a claim that all threading enhancements ship in this stage.
 
 ### 1. Complete archive and search access
 
-Implemented behavior and validation are recorded in [All Mail, archive, and
-search completeness](imap-all-mail.md). Ordinary physical-folder moves remain
-distinct from negotiated label membership operations.
+Implemented behavior and validation are recorded in
+[All Mail, archive, and search completeness](imap-gmail-extensions.md#all-mail-archive-and-search-completeness).
+Ordinary physical-folder moves remain distinct from negotiated label
+membership operations.
 
 - [x] Design aggregate mailbox acquisition and reconciliation without treating
   All Mail as an additional user label or downloading each body per location.
@@ -114,19 +109,18 @@ keywords on mailboxes that permit them.
 - [x] Apply/remove existing native labels with verified, additive membership
   writes; preserve unrelated labels and reconcile external membership changes.
 - [x] Create native labels, including hierarchy and non-ASCII names, with live
-  verification and retry-safe publication. Record the
-  [focused reference audit](imap-label-reference-audit.md).
+  verification and retry-safe publication.
 - [x] Rename and delete individual native Gmail labels. Keep a stable local
   identity for renames, preserve deleted rules for explicit relinking, and
   recover acknowledged edits through a durable local journal. Encrypted settings
   export carries the identity bindings.
 - [x] Rename native Gmail label hierarchies while preserving the IDs and
   Split Inboxes for each verified descendant. Delete a parent label while
-  confirming that the nested labels are still present. See [native label edits](imap-native-labels.md#editing-label-hierarchies).
+  confirming that the nested labels are still present. See [native label edits](imap-gmail-extensions.md#editing-label-hierarchies).
 - [x] Coordinate verified ID bindings across enrolled devices with one
   designated editor per account. A verified external disappearance or
   UIDVALIDITY change can leave a label unresolved for explicit relinking.
-  [Cross-device edits](imap-native-labels.md#cross-device-edits)
+  [Cross-device edits](imap-gmail-extensions.md#cross-device-edits)
 - [x] Create ordinary folders and rename or delete leaf folders and label
   folders with stable references. Reuse the edit journal to preserve Split
   Inboxes and retire deleted IDs so a new folder cannot inherit a saved rule.
@@ -141,7 +135,7 @@ keywords on mailboxes that permit them.
 - [ ] Add keyword rename and account-wide removal with resumable per-message
   reconciliation. Verify new membership before removing the original keyword,
   check every selectable mailbox that can contain it, and report coverage
-  gaps and partial results. See [keyword scope](imap-native-labels.md#keyword-edits).
+  gaps and partial results. See [keyword scope](imap-gmail-extensions.md#keyword-edits).
 
 Acceptance: labels created or changed elsewhere reconcile correctly; renaming
 does not orphan saved rules or duplicate mail; failures roll back coherently.
@@ -172,15 +166,18 @@ the same message and thread IDs as the Gmail API on converted devices. A
 snooze with an older provider-local ID stays recorded and can be acted on by
 the connection that recognizes it.
 
-The remaining checklist covers a fuller conversion with more workflow state
-and multi-device coordination.
+The remaining checklist covers a fuller, resumable conversion that also
+preserves drafts, outbox/queued/scheduled sends, delivery receipts, pending
+mutations, and device-local reader/UI state (`readerPresentation.ts`,
+`readingPositions.ts`, `returnNavigation.ts`, `useReaderState.ts`), as well as
+cached AI/triage/unsubscribe references before clearing old threads:
 
-- [ ] Add an explicit change-connection operation for the same mailbox/account.
-  Validate IMAP and SMTP before retiring the existing connection; keep Calendar
-  authorization independent.
-- [ ] Preserve tasks, goals, snoozes, Split Inboxes, sender rules, signatures,
-  drafts, queued/scheduled sends, mail links, and available reader presentation.
-  Resolve references using stage 0 mappings; report unresolved links explicitly.
+- [x] Provide a per-account connection-change entry point (**Switch to Gmail via
+  IMAP…**), validating IMAP and SMTP before retiring the existing connection and
+  keeping Calendar authorization independent.
+- [ ] Preserve drafts, queued/scheduled sends, pending mail mutations, delivery
+  receipts, and local reader presentation across conversion; resolve references
+  using stage 0 mappings and report unresolved links explicitly.
 - [ ] Freeze account mutations and sending during conversion; preserve delivery
   receipts and uncertain sends so switching cannot trigger duplicate delivery.
 - [ ] Define a resumable conversion journal and failure recovery. Keep the old
@@ -222,8 +219,8 @@ sync does not fetch bodies, and history import cannot starve Inbox updates.
 | Gap | Follow-up and priority |
 | --- | --- |
 | Sending identities | Manual addresses, default From, Reply-To, and reply address selection are available. Automatic Gmail Send mail as discovery still requires the API. Check alias acceptance in the live Gmail SMTP pilot. |
-| Unresolved conversation evidence | Cached groups with incomplete or contradictory Gmail evidence stay available with their existing links. A repair also waits for outstanding conversation-wide work to settle. [Repair and deferral rules](imap-gmail-thread-repair.md) |
-| Gmail signature import | Optional convenience. Existing ThreeStrands signatures and defaults should remain usable during conversion. |
+| Unresolved conversation evidence | Cached groups with incomplete or contradictory Gmail evidence stay available with their existing links. A repair also waits for outstanding conversation-wide work to settle. [Repair and deferral rules](imap-gmail-extensions.md#legacy-gmail-thread-repair) |
+| Gmail signature import over IMAP | Implemented for Gmail API connections (`gmail_signatures::import_gmail_signature`); optional convenience over IMAP remains unbuilt. Existing ThreeStrands signatures and defaults stay usable during conversion. |
 | IMAP OAuth | Separate authentication project. Useful for broader provider compatibility but not an escape from Google's scope verification. |
 
 ## Validation and delivery
@@ -238,8 +235,7 @@ dependency checks. Developers own hands-on app validation.
 
 Each user-visible slice gets a pending `changes/` entry and changelog validation;
 do not change application versions. Work in isolated branches/worktrees and
-leave Tart branches ready for host landing. This planning-only change needs no
-release note.
+leave Tart branches ready for host landing.
 
 ## References
 

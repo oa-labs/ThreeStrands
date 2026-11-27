@@ -9,18 +9,19 @@ No settings-write scope, custom SMTP credentials, or alias-creation flow is adde
 ## Discovery and local data
 
 A provider-neutral optional sync hook reads sending identities. Gmail refreshes
-on the first mail sync and every fifteen minutes thereafter; a failed discovery
-keeps the existing cache and does not fail the mail sync. Settings provides an
-explicit refresh. Only the account's own primary address and custom aliases with
+on the first mail sync and every fifteen minutes thereafter; failed refreshes
+back off from two minutes up to fifteen minutes, keeping the existing cache
+without failing mail sync. Settings provides an explicit refresh. Only the
+account's own primary address and custom aliases with
 `verificationStatus=accepted` enter the allowlist. Entries are normalized for
 comparison without stripping plus tags, deduplicated, and checked for header
 injection. The primary identity stays first, preserving the existing provider
 contract and primary account display-name preference.
 
-Since 0.192.2, primary-only accounts show an **Aliases…** disclosure instead of
-repeating the account address and default label. The disclosure keeps discovery
-and manual refresh accessible. Accounts with aliases show the full list
-automatically; a custom primary Reply-To remains visible when collapsed.
+Under **Settings → Mail Accounts**, open an account's **More actions** menu and
+choose **Aliases…** (`src/AccountsSettings.tsx`) to open the **Sending
+Addresses** modal (`src/GmailSendingSettings.tsx`), which shows the verified
+identities, defaults, Reply-To values, and manual refresh.
 
 Schema 92 stores a device-local, account-scoped cache and refresh time. Aliases,
 Reply-To addresses, and defaults are not imported from settings exports or

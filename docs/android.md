@@ -19,7 +19,7 @@ versions before you decide which text to keep.
    [Replicated Sync and S3 storage](cross-device-sync.md#s3-storage)
 2. In **Devices → Add a device**, choose only the S3 connector for the join
    code. Decide whether to include its credentials.
-3. On Android, open **Sync settings**, paste the code, and tap
+3. On Android, open **Settings → Sync settings**, paste the code, and tap
    **Review Join Code**. Check the connector and enter credentials if the
    code omitted them. Tap **Join Sync Group**.
 4. Sync once more on desktop to admit the phone. On Android, reopen the
@@ -31,7 +31,7 @@ workspaces. The application also preserves the rest of the group's records
 when it syncs. Android shows existing attachment references in note text.
 Use desktop to open their files.
 
-**Export Notes and Tasks** in **Sync settings** creates a ZIP with Markdown
+**Export Notes and Tasks** in **Settings → Sync settings** creates a ZIP with Markdown
 notes and a copy of the task records. Use it to save a copy of work stored
 on the phone before clearing the app's data. Export files contain readable
 text. Save them somewhere you control. **Disconnect and Keep Data** stops
@@ -45,7 +45,7 @@ root after `pnpm install --frozen-lockfile`.
 
 ```sh
 rustup target add aarch64-linux-android
-pnpm exec vitest run apps/mobile
+pnpm test apps/mobile
 pnpm tauri android build --apk --debug --target aarch64 --ci
 ```
 
@@ -57,10 +57,10 @@ existing database and sync implementation. The UI builds from
 APK in CI.
 
 Use the generated debug APK with an ARM64 test device and a current Android
-System WebView. For the native secure-store test, build the APK first, then
-run `./gradlew connectedUniversalDebugAndroidTest` from
-`src-tauri/gen/android` with the device connected. Verify these release
-scenarios on installed builds.
+System WebView. For the instrumented Android tests (`SyncSecretStoreTest.kt` and
+`WebViewLayoutTest.kt`), build the APK first, then run
+`./gradlew connectedUniversalDebugAndroidTest` from `src-tauri/gen/android` with
+the device connected. Verify these release scenarios on installed builds.
 
 - In airplane mode, write in a Daily Note, capture a round task and a square
   checklist, and confirm that the task appears once in **Tasks**. Stop the

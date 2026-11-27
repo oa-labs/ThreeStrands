@@ -1,12 +1,12 @@
 # Gmail connection implementation plan
 
-**Status** · Proposed, 2026-11-21
+**Status** · Phase 1 largely implemented (`0.211.0`); Phase 2 proposed.
 
-Start with Gmail over IMAP/SMTP using an app password. Close the gaps that
-affect everyday mail and give existing Gmail API users a way to switch without
+Start with Gmail over IMAP/SMTP using an app password, close the gaps that
+affect everyday mail, and give existing Gmail API users a way to switch without
 losing their work. In Phase 2, let users connect Google Workspace accounts using
-the OAuth Desktop client JSON supplied by each organization. An installation
-can then use different clients for different accounts.
+the OAuth Desktop client JSON supplied by each organization so an installation
+can use different clients for different accounts.
 
 Google's reviewer confirmed that the public ThreeStrands client requires CASA
 for `gmail.modify`, even when restricted data stays on the desktop and optional
@@ -20,76 +20,23 @@ scope. [CASA requirements](https://support.google.com/cloud/answer/13465431),
 
 ## Phase 1 Gmail over IMAP and SMTP
 
-ThreeStrands already supports reading, attachment retrieval, sending, draft
-sync through the account's Drafts mailbox, routine triage, All Mail, and
-archive search. With Gmail's advertised extensions it can create, apply, and
-remove native labels, and archive a message while keeping its other labels.
-The existing [IMAP parity plan](imap-parity-plan.md) holds the detailed protocol
-work and the backlog for ordinary IMAP servers.
+Most of Phase 1 has shipped across ThreeStrands' IMAP/SMTP provider and
+[Gmail IMAP extensions](imap-gmail-extensions.md):
 
-### App-password setup
-
-- Add a guided **Gmail with an app password** route through the existing IMAP
-  setup. Prefill Gmail's IMAP and SMTP settings, link to Google's app-password
-  instructions, and make the required credential clear. Verify both endpoints
-  before activating the account and store the credential in the OS keychain.
-- Use advertised capabilities and special-use mailboxes for behavior after
-  sign-in. Verify Inbox, All Mail, Sent, Drafts, Trash, and Spam mappings. Keep
-  manual setup and generic provider behavior available through the same IMAP
-  implementation. Report authentication or mailbox mapping problems with the
-  account intact. Keep Calendar authorization independent.
-- Document first sync, search coverage, Drafts and Sent behavior, and how to
-  replace a revoked app password through **Reconnect**. The new-account route
-  can ship independently of provider conversion.
-
-### Conversation identity and safe account conversion
-
-1. Add capability-gated `X-GM-THRID` retrieval and lookup. Bind Gmail's server
-   thread ID to stable internal conversations, reusing the established
-   `X-GM-MSGID` message mappings. Gmail exposes the same numeric IDs over IMAP
-   and the API, with different representations. Preserve existing internal IDs
-   and record conflicting evidence for review. Use verified thread or parent
-   message associations to surface a reply draft in its conversation.
-   [Identity mappings](imap-identity-mappings.md),
-   [Gmail IMAP extensions](https://developers.google.com/workspace/gmail/imap/imap-extensions).
-2. Add **Change connection** to the existing Gmail account. Stage and validate
-   the new IMAP and SMTP settings, verify that the mailbox matches the existing
-   account with authoritative Gmail identifiers, and preview unresolved links.
-   Keep the old provider binding recoverable until cutover commits. Keep
-   unmatched references visible for repair. A sender header or matching subject
-   alone provides insufficient evidence to move a reference.
-3. Journal the cutover so restart can resume it or recover the old binding.
-   Preserve the account row, tasks, goals, snoozes, notes and mail links, saved
-   searches, Split Inboxes, sender rules, signatures, reader state, drafts,
-   scheduled and queued sends, and existing delivery receipts. Rebind provider
-   references with verified IDs and reconcile server drafts before resuming
-   writes. Coordinate enrolled devices around the provider change and hold
-   writes and sends that could use old bindings or replay an uncertain delivery.
-   [Identity audit](imap-identity-audit.md),
-   [Conversion acceptance criteria](imap-parity-plan.md#3-offer-safe-connection-conversion).
-
-### Triage, sending, and sync parity
-
-| Gap | Implementation and acceptance |
-| --- | --- |
-| Native label rename and delete | Add verified IMAP `RENAME` and `DELETE` for native user labels. Give saved labels stable references or explicit aliases, preserve Split Inboxes and pending actions across rename, and retain a deleted or unresolved state across devices. An externally renamed label with ambiguous identity needs explicit relinking. Verify that deleting a Gmail label preserves messages and unrelated labels. Keep ordinary folder deletion safeguards. [Label reference audit](imap-label-reference-audit.md) |
-| Uncertain SMTP delivery | Reconcile against the provider's own Sent copy where it saves one. Use the outgoing RFC Message-ID, sender, and reliable server evidence to confirm the copy. A missing or ambiguous copy keeps delivery uncertain and leaves the retry decision with the user. Exercise a lost SMTP reply and delayed Sent visibility. [Gmail Sent behavior](https://support.google.com/mail/answer/78892) |
-| Sending addresses and signatures | Build on the existing manual sending addresses with a default From, Reply-To, and reply selection from original recipients or delivery headers. Keep local per-address signature defaults and test which configured aliases Gmail SMTP accepts. Automatic discovery and verification of Gmail's Send mail as settings and importing Gmail's saved signatures remain Gmail API features. [Gmail SendAs settings](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.settings.sendAs) |
-| Search and sync at scale | Exercise large All Mail, overlapping labels, recent Inbox changes during backfill, offline search, and reconnect. Record commands, bytes, and time before tuning. Build on Inbox IDLE and use incremental flag reconciliation such as CONDSTORE/QRESYNC where advertised and supported. Retain visible partial-search feedback when a query hits a coverage limit. [All Mail and search](imap-all-mail.md), [IMAP resynchronization extensions](https://www.rfc-editor.org/rfc/rfc7162.html) |
-
-**Phase 1 release checks**
-
-- Verify the full workflow on a Gmail test account with an app password and on
-  a plain IMAP account. Cover setup, reconnect, receive and search, archive and
-  undo, labels, Drafts across clients, SMTP and Sent, and scheduled sends.
-- Use scripted protocol tests for capability loss, conflicting identity,
-  UIDVALIDITY reset, interrupted conversion with an enrolled second device,
-  and uncertain SMTP delivery. Use focused UI tests for setup, conversion
-  review, and partial results. Exercise an existing Gmail API account with
-  linked workflow data and a nonempty Outbox before offering conversion widely.
-- Keep general IMAP folder and keyword work in the parity backlog. Report the
-  capabilities available on the connected server and the Gmail-specific
-  conveniences that still require the API.
+- **Implemented:** guided **Gmail with an app password** setup (`ImapAccountSetup.tsx`),
+  reading, attachment retrieval, All Mail acquisition, `X-GM-RAW` / server search,
+  server draft sync, `X-GM-MSGID` / `X-GM-THRID` identity mappings and legacy
+  thread repair, native Gmail label create/apply/remove/rename/delete (including
+  hierarchies and cross-device authority), label-based archive/undo/snooze return,
+  **Switch to Gmail via IMAP…** per-device conversion (`SwitchGmailToImap.tsx`,
+  preserving tasks, goals, account preferences, sender rules, signatures, and
+  reviewed Split Inboxes while keeping Calendar independent), Sent-copy
+  reconciliation for uncertain SMTP sends, and manual sending addresses with
+  default From, Reply-To, and per-address signatures.
+- **Remaining in Phase 1:** tracked in the [IMAP parity plan](imap-parity-plan.md)
+  (Stage 3 resumable, draft/outbox/receipt/localStorage-preserving conversion;
+  Stage 4 scale benchmarks and `CONDSTORE`/`QRESYNC` reconciliation), plus
+  developer live-account release checks with a real Gmail app-password account.
 
 ## Phase 2 Organization supplied OAuth clients
 

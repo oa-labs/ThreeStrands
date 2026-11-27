@@ -128,13 +128,12 @@ particular platform package, or always-on service behavior.
   send qualifying conversations after the reader stays on them. Settings show
   requests, tokens, and estimated costs, with an optional fast model for
   summaries, reply drafts, and contact enrichment.
-- Delegate read-only web research in **Agents** after configuring separate
-  Anthropic and Exa keys and reviewing public search subjects. Answer clarification
-  questions, discuss saved evidence, and explicitly revise reports with retained
-  versions and sources. Research has cumulative usage limits and per-task data
-  sharing choices; mailbox search, routing, and automatic invitation evaluation
-  are not included. A local demonstration works without external requests. See
-  [the delegated agents plan](docs/delegated-agents-plan.md).
+- Configure standing **Inbox Assistants** in **Agents** (`7`): Stale Reads
+  Summarizer, Expired & Already-Handled Sweeper, and Aging Reply Drafter.
+  Assistants run against local SQLite candidates and the configured AI provider,
+  producing evidence-cited proposals for explicit user review before archiving,
+  saving to Notes, creating tasks, or opening a draft reply. See
+  [the Inbox Assistants design](docs/inbox-assistants-design.md).
 
 ### Keep notes connected to the work
 
@@ -239,8 +238,8 @@ execution while devices are closed, and proactive assistance.
 | Conversation snooze | Gmail and IMAP conversations can be snoozed individually or in batches, with rescheduling, undo, new-reply return, and optional encrypted schedule sync. Returns need a running, connected installation. | Complete developer live-account validation alongside the existing release checks. | Implemented in 0.190.0; see [snooze design](docs/snooze-design.md). |
 | Gmail sending aliases | Verified aliases, Gmail defaults, addressed replies, per-address signatures, and alias-preserving server drafts are implemented. | Complete developer live-account checks with an alias, including queued and scheduled delivery. | Implemented in 0.191.0; see [Gmail alias design](docs/gmail-aliases-design.md). |
 | General rules and richer saved views | Account-specific Split Inboxes match a domain, label, or address pattern. Sender muting archives and marks mail read. Named searches are reusable tabs within Split Inboxes, with shared rename/edit/reorder/delete management, an explicit single-account or All accounts scope, Inbox Only, and quick filters. Existing saved searches appear automatically. Saved views remain device-local and do not route mail out of Main. Compound automation rules remain a gap. | Build on named saved searches: define a first rules contract with explicit conditions and actions, previews, and account scope. Decide whether rules run locally or at the provider. | Saved-search foundation implemented; rule execution still requires scoping. |
-| Connected address books | macOS builds read selected system address books for names, email addresses, companies, and job titles, with local caching, automatic refresh, and recipient suggestions. Saved ThreeStrands profiles remain independent. Direct provider connections, Windows/Linux adapters, provider write-back, and richer source fields remain missing. | Validate permission, source selection, refresh, and disconnect in an installed Mac build. Keep Google Contacts API integration deferred during existing OAuth approval. Consider CardDAV and Windows/Linux adapters later; do not request new Google scopes for the current Mac connection. | macOS foundation implemented in 0.192.0; broader integration deferred. See [Mac Contacts design](docs/macos-contacts-design.md). |
-| Mobile access and workflow continuity | Desktop encrypted sync already carries Tasks and Notes between installations. | The Android app supports Daily Notes, Notes, Tasks, local use, and HTTPS S3 pairing. Verify the installed app and desktop sync before releasing through Play. See the [Android guide](docs/android.md) and [implementation plan](docs/android-notes-tasks-plan.md). | Android app implemented. Device and Play test-track validation pending. |
+| Connected address books | macOS builds read selected system address books for names, email addresses, phone numbers, companies, and job titles, with local caching, automatic refresh, and recipient suggestions. Saved ThreeStrands profiles remain independent. Direct provider connections, Windows/Linux adapters, provider write-back, and richer source fields remain missing. | Validate permission, source selection, refresh, and disconnect in an installed Mac build. Keep Google Contacts API integration deferred during existing OAuth approval. Consider CardDAV and Windows/Linux adapters later; do not request new Google scopes for the current Mac connection. | macOS foundation implemented in 0.192.0 (phone numbers added later); broader integration deferred. See [contact management](docs/address-book.md#mac-contacts-macos). |
+| Mobile access and workflow continuity | Desktop encrypted sync already carries Tasks and Notes between installations. | The Android app supports Daily Notes, Notes, Tasks, local use, and HTTPS S3 pairing. Verify the installed app and desktop sync before releasing through Play. See the [Android guide](docs/android.md). | Android app implemented. Device and Play test-track validation pending. |
 | Microsoft 365 / Exchange | Gmail sign-in and password/app-password IMAP exist; dedicated Microsoft authentication, mail, and calendar integration do not. IMAP is not a substitute for modern authentication or delegation. | Define Microsoft authentication and provider contracts first, then mail and calendar support. Scope delegated/shared mailbox support explicitly rather than assuming basic account support includes it. | Expansion; planned, unscoped. |
 | Broader calendar support | Google Calendar supports event editing, invitations, availability, and task time blocking. Microsoft calendars and CalDAV/iCloud connections remain missing. | Define a calendar-provider contract and invitation/availability semantics; prioritize Microsoft with the Microsoft 365 work, then evaluate CalDAV/iCloud. | Expansion; discovery needed. |
 | Scheduled sending while devices are closed | Send Later uses one fixed sending computer, which must be awake, online, and running the app; missed times require review. | Evaluate provider-native scheduling or an explicitly authorized execution service. Record the architecture and privacy decision before promising delivery while every device is closed. Preserve uncertain-send reconciliation and duplicate prevention. | Architecture decision required. |
@@ -362,14 +361,13 @@ For **Meeting preparation and follow-through**, the next design should settle:
 
 This update records the next feature and its scoping questions; it does not
 freeze the meeting UX or implement the feature. Delivery dates remain unset.
-The proposed [implementation plan](docs/meeting-preparation-design.md) now records
-the initial UX and data contracts, delivery stages, compatibility work, and
-acceptance coverage. Local preparation comes first, then manual follow-through
-and durable drafts, followed by privacy prerequisites and optional AI synthesis.
-Its daily-planning entry points, readiness summary, and shutdown follow-through
-state are specified there. The [daily planning design](docs/daily-planning-design.md)
-specifies the plan's storage in the daily note, carry/defer/drop, and Today's
-new layout. Its Plan Today routine and Shut Down evening view were built and then
+[Meeting preparation and follow-through](docs/meeting-preparation-design.md)
+records the implemented local preparation, reviewed decisions and actions,
+durable follow-up drafts, privacy prerequisites, and on-demand AI agenda briefs
+(Stages 1–4 and 5a), with text-based AI follow-through remaining proposed.
+The [Today design](docs/today-design.md) specifies the daily-note `## Plan`
+section, Planning Inbox, Done Today, inline Daily Note, and compose-planning
+link; its Plan Today routine and Shut Down evening view were built and then
 removed before release (2026-11-18) in favor of a simpler Today.
 
 ### Reliability and expansion alongside this sequence
@@ -514,10 +512,11 @@ flowchart LR
 ## Work remaining before broader release
 
 1. **Validate the native workflow end to end.** The repository has substantial
-   automated unit, integration, and Playwright coverage. The
-   [features document](docs/features.md) explicitly leaves live Gmail OAuth, synchronization, sending,
-   attachment, and recovery checks to controlled real-account validation.
-   Keep those checks as release gates until they are recorded as complete.
+   automated unit, integration, and Playwright coverage. [Developing
+   ThreeStrands](DEVELOPERS.md) and [compatibility notes](site/docs/compatibility.md)
+   explicitly leave live Gmail OAuth, synchronization, sending, attachment, and
+   recovery checks to controlled real-account validation. Keep those checks as
+   release gates until they are recorded as complete.
 2. **Harden the current scope.** Continue testing large mailboxes, provider
    rate limits, offline/reconnect behavior, uncertain send outcomes, database
    recovery, and cross-device sync compatibility. Report progress in user
@@ -552,21 +551,15 @@ flowchart LR
 
 ## Source documents
 
-- [Co-recipient suggestions plan](docs/archive/co-recipient-suggestions-plan.md) —
-  local relationship-aware autocomplete for composing mail and building contact
-  groups, including ranking, privacy boundaries, implementation steps, and tests;
-  implemented in 0.194.0.
-- [Scheduled send plan](docs/scheduled-send-design.md) — fixed sending-device ownership, local scheduling, and encrypted summary visibility across devices; implemented in 0.98.1, with
-  Command/Ctrl+Shift+L added in 0.98.2.
+- [Scheduled send plan](docs/scheduled-send-design.md) — fixed sending-device ownership, local scheduling, and encrypted summary visibility across devices; implemented in 0.98.1 (with Command/Ctrl+Shift+L in 0.98.2) for Gmail and extended to IMAP/SMTP.
 - [Design principles](DESIGN.md) — current keyboard, workspace, form, and AI
   review decisions.
 - [Cross-device sync](docs/cross-device-sync.md) and [replicated sync design](docs/replicated-sync-design.md) — sync scope and trust model.
-- [Settings transfer](docs/settings-transfer.md) and [email rendering policy](docs/email-rendering-policy.md) — persistent-format and reader boundaries.
-- [Features and known limitations](docs/features.md) and [contact management](docs/address-book.md) — current capabilities, shortcuts, and outstanding live-account checks.
-- [IMAP/SMTP provider design](docs/imap-design.md) — provider design and phase progress.
-- [Today view design](docs/today-design.md) — what Today works out without AI, the planned reshaping around daily planning and meeting preparation, and the deferred AI layer.
+- [Settings transfer](docs/settings-transfer.md), [email rendering policy](docs/email-rendering-policy.md), and [crash reporting policy](docs/crash-reporting.md) — persistent-format, reader, and diagnostic boundaries.
+- [Developing ThreeStrands](DEVELOPERS.md), [compatibility notes](site/docs/compatibility.md), and [contact management](docs/address-book.md) — developer checks, current capabilities, macOS Contacts, and contact management boundaries.
+- [IMAP/SMTP provider design](docs/imap-design.md) and [Gmail IMAP extensions](docs/imap-gmail-extensions.md) — provider design, `X-GM-EXT-1`, All Mail, and native labels.
+- [Today view design](docs/today-design.md) — Planning Inbox, Done Today, Agenda and inline Daily Note, `## Plan` format, compose-planning link, and deferred Phase 2 AI layer.
 - [Notes workspace design](docs/notes-design.md) — implemented daily and regular Markdown notes, wiki links, backlinks, attachments, import/export, linked entities, note-derived tasks, and meeting notes; later work remains explicitly separated.
-- [Meeting preparation and follow-through](docs/meeting-preparation-design.md) — proposed implementation plan for local preparation, reviewed decisions and actions, durable follow-up drafts, and optional source-backed AI assistance.
-- [Daily planning and shutdown](docs/daily-planning-design.md) — the plan stored in the daily note, carry/defer/drop decisions, and Today's reshaped layout; its Plan Today and Shut Down routines were built and then removed before release.
-- [Delegated agents plan](docs/delegated-agents-plan.md) — implemented local demonstration and configured read-only web research; later routing and invitation evaluation remain proposed.
-- [Archived plans](docs/archive/) — completed plans (multi-account, database recovery, modularization, and layer boundary, Phase 2 compose, IMAP spike, Files workspace) kept for design history.
+- [Meeting preparation and follow-through](docs/meeting-preparation-design.md) — implemented local preparation, reviewed decisions and actions, durable follow-up drafts, privacy prerequisites, and AI agenda briefs (Stages 1–4 and 5a); Stage 5b AI follow-through remains proposed.
+- [Meeting recording and transcription](docs/meeting-recording-plan.md) — active plan for menu-bar recording, on-device transcription, and AI recap into follow-through review (with Stage 0 [spike findings](docs/meeting-recording-spike-findings.md)).
+- [Inbox Assistants](docs/inbox-assistants-design.md) — implemented standing Inbox Assistants (`stale_reads`, `resolved_and_expired`, `aging_replies`) and future inbox-decay ideas.

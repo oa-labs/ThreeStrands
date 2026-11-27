@@ -13,13 +13,18 @@ external reporting destination.
 Reports contain:
 
 - a random report ID and timestamp;
-- error or unhandled-rejection category;
+- error or unhandled-rejection category (covering `window` `error`,
+  `unhandledrejection`, and React `ErrorBoundary` catches via `reportCaughtError`);
 - sanitized error message and stack;
 - application version; and
 - browser/webview user-agent string.
 
-Email addresses and URLs are redacted. Reports must never intentionally contain
-message bodies, subjects, recipients, OAuth tokens, search terms, attachment
-names, or SQLite contents. Reporting failures are retained locally and never
+Email addresses, URLs, single- and double-quoted strings, and header-style
+lines (`subject|to|cc|bcc|from:`) are redacted, and messages/stacks are bounded
+to 4,000 characters (`src/crashReporting.ts`). Reports must never intentionally
+contain message bodies, subjects, recipients, OAuth tokens, search terms,
+attachment names, or SQLite contents. Redacted warnings/errors are always written
+to the device-local Tauri log (`writeNativeLog`), which stays on the device even
+when crash reporting is off. Reporting failures are retained locally and never
 interrupt an email action. Disabling reporting stops collection; clearing
 locally retained reports is a separate explicit action.

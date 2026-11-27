@@ -54,7 +54,7 @@ unsupported addresses remain visible and do not get silently rewritten.
 | --- | --- | --- |
 | Shared incoming MIME | `crates/mail-mime/src/mime.rs`, `provider/imap/rfc822.rs` | Extract requests and reports before ordinary body normalization; retain raw metadata |
 | Message ingestion | `src-tauri/src/db/ingestion.rs` | Store parsed metadata and receipt associations transactionally |
-| Compose and durable sends | `src-tauri/src/correspondence.rs`, `src/Composer.tsx`, `src/correspondence.ts` | Freeze an explicit receipt-request choice and record sent recipient identities |
+| Compose and durable sends | `src-tauri/src/correspondence/{mime,model,service}.rs`, `src/Composer.tsx`, `src/correspondence.ts` | Freeze an explicit receipt-request choice and record sent recipient identities |
 | Provider contracts | `src-tauri/src/provider.rs` | Separate request-header support, report parsing, response transport, and coordination capabilities |
 | SMTP | `provider/imap/send.rs`, `provider/imap/smtp.rs` | Add a typed null reverse path reserved for validated receipt jobs |
 | Privacy controls | `src/PrivacySettings.tsx`, native settings storage | Add native-authoritative, device-local response policy |
@@ -351,9 +351,9 @@ by providers and recipients.
    A sender-controlled Authentication-Results field or missing trusted evidence
    cannot satisfy this gate, even for an allowlisted address.
 
-Release each shipped feature with an appropriate minor bump from the then-current
-version, matching package.json, tauri.conf.json, Cargo.toml, and the threestrands
-Cargo.lock entry. This planning-only change requires no version bump.
+Add a user-facing `changes/` entry for each shipped increment per `AGENTS.md`;
+do not change the application version manually (`pnpm release` sets it from
+`changes/`). This planning-only document requires no changelog entry.
 
 ## Automated acceptance coverage
 

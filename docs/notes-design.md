@@ -1,15 +1,16 @@
 # Notes workspace design
 
-**Status:** Built and shipped in 0.208.0: all five v1 steps with the
-meowdown editor, [images and attachments](#images-and-attachments),
-[Import Markdown Folder](#import-markdown-folder), and the
-[linked notes and tasks proposal](#linked-notes-and-tasks-proposal).
-So is the [meeting notes proposal](#meeting-notes-proposal).
-What's still open is under [Later](#later).
-**Date:** 2026-11-09, updated 2026-11-10
+**Status:** Built and shipped (`0.208.0`–`0.211.0`), including the meowdown
+editor, [images and attachments](#images-and-attachments),
+[Import Markdown Folder](#import-markdown-folder),
+[linked notes and tasks](#linked-notes-and-tasks),
+[meeting notes](#meeting-notes), starred notes, per-note `excludeFromAi`, `@`
+autocomplete across contacts/mail/tasks, embedded meeting preparation in the
+Notes context rail, and inline daily note editing in Today. What remains open
+is under [Later](#later).
+**Date:** 2026-11-09, updated 2026-11-27
 **Scope:** a Notes workspace for Markdown notes that travel through
-replicated sync. The [linked notes and tasks proposal](#linked-notes-and-tasks-proposal)
-below records the linked-notes and task integration built after v1.
+replicated sync, plus Today's inline daily note (`TodayDailyNote.tsx`).
 
 Notes adds a fourth kind of content beside mail, calendar, and tasks: the
 user's own Markdown notes, with a daily note, `[[wiki links]]`, and
@@ -66,9 +67,9 @@ snapshot budget with notes.
 
 ### Replicated entity
 
-Add `EntityType::Note` as the last variant in
-`crates/sync-protocol/src/lib.rs`. The derived order is the snapshots'
-canonical field order, so a new variant must go last.
+`EntityType::Note` lives in `crates/sync-protocol/src/lib.rs` (followed by
+`EntityType::NoteAttachment`). The derived order is the snapshots' canonical
+field order, so new variants go last.
 
 | Field | Meaning |
 | --- | --- |
@@ -79,6 +80,8 @@ canonical field order, so a new variant must go last.
 | `dailyDate` | `YYYY-MM-DD` for a daily note, absent otherwise |
 | `createdAt` | when a regular note was created; absent for a daily note |
 | `trashed` | `true` while the note is in Trash |
+| `starred` | `true` when the note is starred (`set_note_starred`) |
+| `excludeFromAi` | `true` when excluded from AI features (`set_note_exclude_from_ai`) |
 
 Fields a later version adds are accepted and ignored, so it can add one
 without older devices refusing its notes.
@@ -308,8 +311,11 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
   do (200 to 480px, with arrow keys on the focused divider and double-click
   to reset). The width is kept on this device. Narrow windows keep the list
   at its fixed narrow width.
-- **Today** is pinned at the top. Selecting it creates the daily note only
-  once the user types, so browsing never writes an empty note.
+- **Today** is pinned at the top (and also embedded inline in Today via
+  `TodayDailyNote.tsx`). Selecting it creates the daily note only once the user
+  types, so browsing never writes an empty note.
+- **Starred** tab and filter (`s` shortcut, `Tab`/`Shift+Tab` list switching,
+  `list_starred_notes`, `set_note_starred`) show starred notes.
 - **Recent** comes next: notes opened on this device, newest first. Each
   row's preview is the note's text without Markdown syntax (`plain_text`
   natively, `notePlainText` in the page, kept to the same cases).
@@ -356,9 +362,10 @@ Notes follows the layout and command rules in [DESIGN.md](../DESIGN.md#workspace
 
 Use `WorkspaceContextRail`, with `ContextSection` and `ContextRow` for every
 list, under the panel rules in DESIGN.md: empty sections are left out, lists
-show three rows before **Show more**, and headings collapse. Step 2 shows
-**Note details** (when the note was created, and last changed on this
-device), and the sections below follow it.
+show three rows before **Show more**, and headings collapse. The panel shows
+**Note Details** (created/updated timestamps and the **Exclude from AI**
+checkbox), unified **Links**, embedded **Meeting Preparation** when viewing an
+event's context from Today/Notes, and the sections below:
 
 Two sections come before Note details, borrowed from Reflect's sidebar:
 
@@ -404,9 +411,10 @@ Reflect, is left for later (see [Later](#later)).
 - Typing `[[` opens a title picker with existing notes
   (`suggest_note_titles`: regular notes outside Trash whose title contains
   the typed text, prefix matches first, then recent). Typing a new title
-  and pressing Enter links to a note that doesn't exist yet. meowdown also
-  opens the picker for `@` at the start of a word, and inserts the same
-  `[[Title]]` link.
+  and pressing Enter links to a note that doesn't exist yet. Typing `@` at the
+  start of a word opens autocomplete across **Contacts, Mail, and Tasks**
+  (`noteLinkChoices("contact" | "conversation" | "task")` in
+  `NotesWorkspace.tsx` and `TodayDailyNote.tsx`).
 - `[[Title|shown text]]` shows the shown text and follows Title.
 - Links resolve by normalized title. Daily notes resolve by date
   (`[[2026-11-09]]`).
@@ -702,9 +710,12 @@ Known gaps:
 - Notes are encrypted in snapshots like every other synchronized type.
   Storage providers see only ciphertext.
 - Note text never goes into crash reports or diagnostics.
-- v1 sends notes to no AI provider. If v2 adds "ask your notes", it needs
-  its own consent, and a note-level private flag like Reflect's
-  `private: true`.
+- Notes carry a persistent **Exclude from AI** (`excludeFromAi` /
+  `exclude_from_ai`) flag across SQLite, replicated sync, Markdown
+  export/import (`exclude_from_ai: true` front matter), and the **Note
+  Details** sidebar. Features such as [Meeting preparation](meeting-preparation-design.md)
+  enforce this flag natively so excluded notes cannot be selected or sent. General
+  "ask your notes" chat remains future work under [Later](#later).
 
 ## Tests
 
@@ -732,29 +743,11 @@ Known gaps:
   deleting the note removes the objects from the connector; size and count
   limits below, at, and above; export file names and rewritten links.
 
-## Order of work
+## Linked notes and tasks
 
-1. **Sync and storage.** The entity type, local tables, projection, search
-   index, size limits, and daily-note ids, with the Rust tests above.
-2. **Workspace shell.** The workspace, list, editor, write cadence, today's
-   note, and the new view keys. Built with the plain text area; adopt the
-   WYSIWYG editor after its dependency review.
-3. **Links.** Wiki links, backlinks, unlinked links, people, and rename
-   rewriting.
-4. **Safety.** The conflict banner and Trash.
-5. **Export.** Export to Markdown Folder.
-
-Each step ships with its tests. Steps 2 through 5 each add a changelog entry
-under `### New` or `### Improved` as they become visible.
-
-## Linked notes and tasks proposal
-
-**Status: implemented and shipped in 0.208.0.** This extends the built Notes
-workspace. Where the built UI differs from the proposal, the
-[implementation notes](#implementation-notes) say so.
-It covers **Add to Today's Note** from Mail, explicit links between notes
-and conversations, tasks, and calendar events, and Markdown tasks in the
-existing **Tasks** workspace. It adds no AI processing.
+**Status: built (`0.208.0`).** Covers **Add to Note…** from Mail, explicit
+links between notes and conversations, tasks, events, and contacts, and
+Markdown tasks in **Tasks**. It adds no AI processing.
 
 ### User contract
 
@@ -791,60 +784,11 @@ One native write (`add_to_note`) appends to the end of the note after a blank
 line, copies the chosen files as note attachments without passing their bytes
 through the page, and shares the version, conflict, Trash, and open-code-fence
 refusals of the capture it replaced. A bare link already in the note adds
-nothing (**Already in <note>**); a quote is always added. Undo
-(`undo_add_to_note`) restores the body and deletes the files only while the
-note is as the addition left it, moves a note the action created to Trash, and
-for a meeting note also takes back the meeting's line. Limits live in
-`src/addToNotePolicy.ts` and `src-tauri/src/note_additions.rs`.
-
-### Add to Today's Note (replaced)
-
-The first release shipped **Add to Today's Note**, which is now one choice in
-Add to Note. Its design follows. Add **Add to Today's Note** to the conversation actions menu and command
-palette, enabled for the focused conversation. No default keyboard shortcut
-in this release. It appends a bullet containing the subject as an internal
-conversation link; an empty subject displays **(No subject)**. Escape
-Markdown punctuation in the label. Do not copy message HTML, quoted text,
-attachments, or an AI summary. The result is a reference, not a task:
-
-```markdown
-- [Project proposal](threestrands:conversation/<encoded-reference>)
-```
-
-- Resolve today's date in the device's local timezone once when the action
-  starts. Use the existing `daily:YYYY-MM-DD` identity, including offline.
-  Crossing midnight while the action saves does not change its destination.
-- Append at the end, separated from existing text by a newline. If the body
-  ends inside an unclosed fenced code block, refuse the append and offer
-  **Open Today's Note**; never hide the capture inside code or repair the
-  user's Markdown automatically.
-- On success, stay in Mail with the same focused message and expansion
-  state. Announce **Added to today's note**, with **Open Note** and **Undo**.
-  Opening selects the inserted reference. Returning to Mail restores the
-  conversation and message focus. The action does not mark mail read.
-- Repeating the action for a conversation already linked in that day's
-  saved note adds nothing; show **Already in today's note** with **Open
-  Note**. Compare canonical targets, not labels. A deliberate second link
-  typed by the user is allowed.
-- Flush an open daily-note draft before appending, using the existing save
-  guard. If it cannot save, leave the draft intact and refuse the append.
-  A dirty draft found while its editor is closed also requires resolution
-  before capture; never append behind an unsaved draft.
-- Use a version-checked native transaction to create/append and rebuild the
-  indexes. A stale version returns a retryable result, without overwriting
-  text. Retry only after reading the new body and checking for a duplicate.
-  A body conflict, Trash, permanent deletion racing the write, or a size
-  limit refuses the action with the existing resolution/open-note path.
-  Do not restore or recreate a deleted note silently. Show success only
-  after the local transaction commits; offline sync may follow later.
-- **Undo** removes only this capture, with the same version check. If the
-  note has changed since capture, offer to open it instead of restoring an
-  old body. If capture created the daily note, Undo may leave an empty note;
-  it must not delete unrelated edits.
-
-Two offline devices capturing different conversations into the same daily
-note still produce the existing whole-body conflict. This proposal does
-not introduce an append CRDT or promise automatic text merging.
+nothing (**Already in <note>**); a quote is always added. Undo (`undo_add_to_note`) restores the body and deletes the files only while
+the note is as the addition left it, moves a note the action created to Trash,
+and for a meeting note also takes back the meeting's line. Limits live in
+`src/addToNotePolicy.ts` and `src-tauri/src/note_additions.rs`. (This replaced
+the initial **Add to Today's Note** single-destination action.)
 
 ### Explicit links and backlinks
 
@@ -890,13 +834,13 @@ stays unavailable until it can be resolved safely.
   imports and conflict resolutions. Deduplicate by note and canonical
   target for backlinks; retain occurrences for navigation. Derive these
   rows from Markdown rather than synchronizing a second relationship list.
-- Notes' context panel adds **Conversations**, **Tasks**, and **Events**
-  sections for explicit outgoing references. Mail, task detail, and event
-  detail add **Notes** backlinks showing the note title and referring
-  excerpt. Exclude notes in Trash; restore rebuilds their visibility.
-  Use the existing context rail components, collapse behavior, and
-  three-row **Show more** limit. Keep explicit links distinct from
-  automatically suggested related context.
+- Notes' context panel adds a unified **Links** section for explicit outgoing
+  references (conversations, tasks, events, and contacts). Mail, task detail,
+  and event detail add **Notes** backlinks showing the note title and referring
+  excerpt. Exclude notes in Trash; restore rebuilds their visibility. Use the
+  existing context rail components, collapse behavior, and three-row **Show
+  more** limit. Keep explicit links distinct from automatically suggested
+  related context.
 - Opening a backlink selects its occurrence in the note. A title rename
   does not break entity links. Deleting a target leaves a broken link;
   unlinking never deletes either item.
@@ -1149,18 +1093,12 @@ behavior, and keep the user-facing changelog entry current.
   Conversions keep each row mounted while its refreshed projection loads, so
   keyboard focus is retained.
 
-## Meeting notes proposal
+## Meeting notes
 
-**Status: built.**
-Notes for a calendar event are among the
-most common notes people write. Today a user can link a note to an event
-(**Link to… → Event**), and the event's **Meeting context** lists the notes
-that link to it. But there is no way to start a note from the event itself.
-This proposal adds that, following
-Reflect's calendar flow: an **Add Note** button on
-each event writes one line about the meeting into that day's note, and can
-also link a note named after the meeting. Attendees link to their contact
-records.
+**Status: built.** Notes for calendar events link from agendas and event details:
+an **Add Note** action writes one line about the meeting into that day's note
+and optionally creates/links a meeting note, with attendees linked to their
+contact records.
 
 ### User contract
 
@@ -1177,11 +1115,10 @@ records.
 
 ### Add Note
 
-**Entry points.** An **Add Note** button on each event row in the agendas
-(`CalendarAgenda` in Calendar's rail and in Today, and Today's next-meeting
-card), in the event's **Meeting context**, and the palette command **Add
-Meeting to Daily Note**, enabled when an event is selected. No default
-keyboard shortcut in this release.
+**Entry points.** An **Add Note** button on agenda rows (`CalendarAgenda` in
+Calendar's rail and in Today), in the event's **Meeting context**, and the
+palette command **Add Meeting to Daily Note**, enabled when an event is
+selected. No default keyboard shortcut in this release.
 
 **The dialog** opens over the current view, with focus in **Meeting name**:
 
@@ -1318,21 +1255,20 @@ A fourth kind of note reference, beside `conversation`, `task`, and
 - **Labels** are the name written at insertion and don't change when the
   contact is renamed, like other references.
 - **Inserting links.** In the Markdown editor, a standalone `@` opens
-  autocomplete for **Contacts** and **Mail**. Search contacts by name or
-  address and conversations by subject or participant. Results are grouped
-  by type, with contact addresses and conversation participants, account,
-  and date to distinguish similar matches. Contacts share the Contacts view's
-  ordering: favorites first, then most recent correspondence across accounts.
-  Conversations are newest first. Choosing one inserts the person's
-  name or conversation subject as a standard Markdown application link.
-  **Link to…** also offers **Contact** alongside its existing choices, and
-  **Add Note** continues to write attendee references.
+  autocomplete across **Contacts, Mail, and Tasks** (`noteLinkChoices` in
+  `NotesWorkspace.tsx` and `TodayDailyNote.tsx`). Search contacts by name or
+  address, conversations by subject or participant, and tasks by title. Results
+  are grouped by type, with addresses, participants/accounts, and dates to
+  distinguish similar matches. Choosing one inserts the person's name,
+  conversation subject, or task title as a standard Markdown application link.
+  **Link to…** also offers **Contact**, **Conversation**, **Task**, and
+  **Event**, and **Add Note** writes attendee references.
 - **Separate note links.** `[[` autocomplete searches notes and can name a
-  new note. `@` does not offer notes, tasks, or events. An `@` inside an
-  ordinary email address, or inside code, stays literal. Autocomplete uses
-  local data, supports keyboard selection and Escape, and ignores stale
-  search results when the query or open note changes. No new reference
-  format or sync entity is introduced.
+  new note. `@` does not offer notes or events. An `@` inside an ordinary
+  email address, or inside code, stays literal. Autocomplete uses local data,
+  supports keyboard selection and Escape, and ignores stale search results when
+  the query or open note changes. No new reference format or sync entity is
+  introduced.
 
 **Backlinks.** The entity-link index keys a contact reference by its address,
 so references written before and after a merge, or with and without a
@@ -1450,11 +1386,11 @@ Step 3, as built:
   from contacts and the people the user emails; the user's own account and
   calendar addresses are left out. A saved contact's id goes in the reference;
   derived ids don't.
-- Add Note appears on agenda rows (Calendar's rail and Today), Today's
-  next-meeting card, and the open event's **Event details** heading. Events
-  without a calendar id can't be linked and don't offer it. The palette's
-  **Add Meeting to Daily Note** is enabled while Calendar has an event's
-  details open (`addMeetingNote` in the command context).
+- Add Note appears on agenda rows (Calendar's rail and Today) and the open
+  event's **Event details** heading. Events without a calendar id can't be
+  linked and don't offer it. The palette's **Add Meeting to Daily Note** is
+  enabled while Calendar has an event's details open (`addMeetingNote` in the
+  command context).
 - The notice says **Added to today's note** (or tomorrow's, yesterday's, or
   "the note for <date>"), with **Open Note** and Undo, or **Already in the
   note**. A refusal keeps the dialog open with its reason and **Open Note**.
@@ -1520,8 +1456,9 @@ Nothing below is planned for the next release.
 - **v2: Folder mirror.** Keep a chosen folder in step with notes in both
   directions, for users who edit in other tools.
 - Tags beyond plain-text search.
-- Asking AI about notes, with a private flag per note. See the sketch
-  below for summaries of a recurring meeting.
+- Asking AI across all notes ("ask your notes"); `excludeFromAi` already
+  protects private notes for Meeting Assistance. See the sketch below for
+  long-series summaries.
 - Merging concurrent text edits.
 - Note tasks with due dates, waiting, recurrence, and the other task states
   (see [Tasks integration](#markdown-checklists-and-tasks)).
@@ -1537,10 +1474,10 @@ Nothing below is planned for the next release.
 
 ### Sketch: summarizing a meeting series
 
-The proposed [Meeting preparation and follow-through implementation plan](meeting-preparation-design.md)
-now scopes the next meeting workflow, including local preparation, reviewed
-capture, optional AI, and privacy prerequisites. Use that plan for delivery stages.
-This sketch remains context for later long-series synthesis and incremental batches.
+[Meeting preparation and follow-through](meeting-preparation-design.md)
+implements local preparation, reviewed capture, per-note `excludeFromAi`, and
+on-demand AI agenda briefs (Stages 1–4 and 5a). This sketch remains context for
+later long-series synthesis and incremental batches.
 
 Thirty notes for one weekly meeting are less useful than a view of its
 themes, decisions, and open issues. The data to build one is in place: a

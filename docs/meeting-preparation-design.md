@@ -1,42 +1,31 @@
 # Meeting preparation and follow-through
 
-**Status:** Stages 1 (contracts and extraction), 2 (local preparation), and 3
-(manual follow-through and durable drafts) implemented. Follow-through is
-reviewed from the preparation view; the Shut Down list that showed it in Today's
-evening view was removed with that view (2026-11-18). Later stages remain proposed.
-**Baseline:** 0.210.0 repository, reviewed 2026-11-15; daily-loop entry points
-added 2026-11-16.
-**Priority:** Next feature in the [product plan](../PLAN.MD#recommended-sequence-and-next-feature),
-delivered alongside a first daily plan and shutdown.
+**Status:** Stages 1 (contracts and extraction), 2 (local preparation), 3
+(manual follow-through and durable drafts), 4 (privacy prerequisites:
+`meetingAssistance`, per-note `exclude_from_ai`, `meeting_source_preview`), and
+5a (on-demand AI agenda brief: `prepare_meeting_brief`, `save_meeting_agenda`,
+`undo_meeting_agenda`) are implemented. Stage 5b (text-based AI **Suggest
+Follow-through** inside `MeetingFollowThroughDialog`) remains unbuilt; transcript
+AI recap is scoped separately in [Meeting recording and transcription](meeting-recording-plan.md).
+*(Note: the **Plan Today** and **Shut Down** UI views, `MeetingReadinessList`,
+`MeetingFollowThroughList`, **Reserve Prep Time** UI button, **No Prep Needed**,
+and **No Follow-through** were removed before release on 2026-11-18.)*
+**Priority:** Core workflow alongside [Today](today-design.md).
 
 ## Outcome and scope
 
-Open an upcoming meeting and see the relevant notes, conversations, and open
-commitments without assembling them across workspaces. After the meeting, review
-its decisions and actions, keep them in the linked note, and prepare an email
-through the normal composer. Every source remains reachable and every write is
-an explicit user action.
+Open an upcoming meeting and see the relevant notes, conversations, open
+promises, files, and commitments without assembling them across workspaces.
+After the meeting, review its decisions and actions, keep them in the linked
+note, and prepare an email through the normal composer. Every source remains
+reachable and every write is an explicit user action.
 
-Preparation and follow-through are part of the user's day, not only buttons on an
-event. The product plan pairs this feature with a guided **Plan Today** routine
-and a **Shutdown** in a reshaped Today view: the plan's meeting step shows each of
-the day's meetings with its readiness and opens preparation, and Shutdown lists
-the day's meetings still awaiting follow-through. This design owns the meeting
-contracts those steps use. The routine itself (where the plan is stored, its
-other steps, carry/defer/drop, and Today's layout) is specified in the
-[daily planning design](daily-planning-design.md). Every meeting entry point must
-still work without the routine.
-
-Deliver a useful local workflow first, then optional, on-demand AI assistance.
-The complete first version includes preparation, reviewed note/task capture,
-reviewed follow-up drafting, and optional synthesis. Each stage below must work
-without the later stages. Do not describe AI synthesis as available after only
-the local stages land.
-
-Recording, transcription, background briefs, autonomous sending, automatic calendar
-changes, a full relationship timeline, workspace-wide semantic search, and hosted
-execution are outside this implementation. Long-series incremental summaries from
-the Notes sketch are later work; the first AI request uses a bounded selection.
+Recording and transcription are scoped separately in
+[Meeting recording and transcription](meeting-recording-plan.md). Autonomous
+sending, background briefs without user action, automatic calendar changes, a
+full relationship timeline, workspace-wide semantic search, and hosted execution
+are outside this implementation. Long-series incremental summaries are later
+work; AI agenda generation uses a bounded selection.
 
 ## Existing contracts to reuse
 
@@ -49,67 +38,39 @@ the Notes sketch are later work; the first AI request uses a bounded selection.
 | Tasks | Round `( )` items in saved Markdown project into Tasks; square `[ ]` checklists stay note-local. Note tasks have no mail account and do not support every standalone task field. No second synchronized task record should represent a note task. |
 | Drafts | `src/useCorrespondence.tsx` owns composition, autosave, provider drafts, and safe composer replacement. Its `replyWithText` currently uses the visible thread; it is not a general event-to-thread drafting API. |
 | Navigation | `useWorkspaces`, acknowledged Notes requests, and App navigation preserve targets. Sidebar transitions save a draft before replacing its composer. Failed saves retain the current work. |
-| AI | `src-tauri/src/commands/ai.rs` loads native data; `src-tauri/src/ai/` owns provider requests, structured output, and usage recording. AI results are proposals. Notes AI and per-note exclusion are not implemented yet. |
+| AI | `src-tauri/src/commands/ai.rs` and `commands/meetings.rs` load native data; `src-tauri/src/ai/meeting.rs` owns meeting agenda synthesis, structured output, and `ai::with_purpose` usage recording. `meetingAssistance` (`meetings` AI area) and per-note `exclude_from_ai` are implemented. |
 
 ## User experience
 
-### Prepare during daily planning
+### Prepare from Calendar or Notes
 
-Plan Today's meeting step lists the day's meetings, excluding declined events, in
-time order. Its evening variant lists tomorrow's. Each row shows the meeting's
-readiness from the batch summary below, without loading message or note bodies:
-
-- whether this occurrence has a linked note, and whether earlier occurrences of
-  the exact series have notes;
-- the number of open commitments linked through those notes or the event's
-  originating conversation, with candidate counts kept separate;
-- the date of the most recent cached conversation with an attendee in the
-  meeting's mail scope, or that the scope needs choosing.
-
-Row actions are **Prepare** (opens the meeting view below), **Open Note / Add
-Note**, **Reserve Prep Time**, and **No Prep Needed**. Readiness is a description,
-not a score: a meeting with no notes is not marked as failing.
-
-**Reserve Prep Time** adds a round task, "Prepare for <meeting title>", nested under
-the meeting's line in today's daily note, using the existing meeting capture to
-add the line first if it is missing. The user can then book the task before the
-meeting with task time blocking, once booking is extended to note tasks as the
-[daily planning design](daily-planning-design.md#booking-note-tasks) specifies;
-today it offers only mail and standalone tasks. Both steps are explicit. Repeating the
-action finds the existing prep task under that occurrence's line and offers it
-instead of adding a second one. Prep tasks are ordinary note tasks with their
-current completion semantics.
-
-**No Prep Needed** hides the meeting from the step's outstanding count for that day
-on this device, like a dismissed promise, and can be undone. It never changes the
-event or its notes.
-
-### Prepare from Calendar or Today
-
-Add **Prepare** to timed and all-day event details in Calendar and to event actions
-in Today's agenda. A command-palette action is available when a concrete event is selected.
-Do not allocate a new single-letter shortcut in v1. Meetings without attendees can
-still use their own notes; writable-calendar access is not required for reading
-context or writing a local note.
+Open **Prepare** from timed and all-day event details in Calendar, or from an
+event link's action in Notes (on Today, clicking a meeting's note icon or `p`
+opens or creates its occurrence note in Notes, where preparation opens in the
+context rail beside the editor). A command-palette action is available when a
+concrete event is selected. Meetings without attendees can still use their own
+notes; writable-calendar access is not required for reading context or writing
+a local note.
 
 Prepare opens a read-only meeting view within the current workspace, using its
 existing detail/side-panel surface rather than another permanent panel or a new
-primary workspace. Show the event title, date/time, account/calendar, and attendees,
-then the following sections using shared `ContextSection` and `ContextRow` patterns:
+primary workspace. Show the event title, date/time, account/calendar, attendees,
+and invite description, then sections using shared `ContextSection` and
+`ContextRow` patterns:
 
 1. **This meeting:** the occurrence's linked note and daily-note meeting excerpt.
 2. **Previous meetings:** earlier occurrences from this exact series, newest first,
    with their linked excerpts. Separate other series context from prior occurrences;
    do not describe future meetings as history.
-3. **Conversations:** the event's originating message, if cached, followed by recent
+3. **Related notes:** non-occurrence notes linked to or relevant to the event (`MAX_RELATED_NOTES = 8`).
+4. **Conversations:** the event's originating message, if cached, followed by recent
    attendee-related conversation candidates. Explain why each candidate appears.
-4. **Open commitments:** tasks in the selected meeting material and tasks linked
-   to selected conversations. Attendee-related tasks are clearly marked candidates,
-   not asserted meeting commitments.
+5. **Open commitments & promises:** tasks in the selected meeting material, tasks linked
+   to selected conversations (`MAX_MEETING_COMMITMENTS = 25`), and open promises (`MAX_MEETING_PROMISES = 10`).
+6. **Files:** attachments/files linked to related conversations (`MAX_MEETING_FILES = 10`).
 
-Open source records using existing navigation. Provide a return action to the
-same event/date and origin (Calendar, Today, or the planning step it came from,
-at the same meeting), without losing mail selection,
+Open source records using existing navigation. Provide a return action (**Back to
+Meeting**) to the same event/date and origin without losing mail selection,
 reader state, Notes search, or unsaved work. Closing preparation returns focus to
 its trigger. Forms and source selection open explicit modals; merely opening the
 view must not autofocus an input, create a note, or call an AI provider.
@@ -121,9 +82,6 @@ available; do not add a competing meeting notebook or silently merge notes.
 ### Review after the meeting
 
 Offer **Review Follow-through** in the same meeting view, including for past events.
-Shutdown lists the day's meetings that have ended, excluding declined events, and
-offers the same action for each one that has not been reviewed, plus **No
-Follow-through** to set it aside for that day on this device.
 
 A meeting counts as reviewed when a note contains a follow-through section linked
 to that occurrence. Derive this from saved note content, which syncs, so the state
@@ -234,84 +192,67 @@ edited results. Native writes and AI calls must revalidate, not trust a UI snaps
 
 ## Optional AI and privacy
 
-Add a separate **Meeting Assistance** switch, off by default for new and existing
-settings, using the user's existing provider/key configuration. Add a per-note
-**Exclude from AI** flag before enabling any note-bearing AI request. It excludes
-the note from preparation synthesis and follow-through generation, not from local
-reading or ordinary search. Do not reuse Trash or a display-only toggle as privacy.
+Stage 4 implemented the **Meeting Assistance** (`meetingAssistance`) switch under
+**Settings → AI** (`meetings` area, off by default for new and existing settings;
+**Enable Meeting AI in Settings…** in the prep view when disabled) and the
+persistent per-note **Exclude from AI** (`exclude_from_ai` / `excludeFromAi`)
+flag across SQLite (`schema.rs`), replicated sync (`sync-protocol`), Markdown
+export/import (`notes_export.rs` / `notes_import.rs`), and the Notes sidebar
+(`NotesWorkspace.tsx`). `meeting_source_preview` (`db/meetings.rs`) enforces
+note exclusion natively at query and request time—excluded notes are never
+selectable or sent.
 
-The flag is persistent note metadata carried through sync and Markdown interchange;
-it is not a Markdown task marker or a convention the model interprets. The native
-request builder enforces it at request time, including direct note IDs and restored
-review sessions. Do not attach the flag to settings transfer, which excludes notes.
-Metadata compatibility is a stage-4 deliverable below, not an assumption that current
-protocols already support this field.
+**Prepare Agenda…** opens `MeetingPrepSourcesDialog` (`src/MeetingPrepBrief.tsx`),
+backed by `meeting_source_preview`. Nothing is sent until the user reviews the
+manifest and clicks **Generate Agenda**. Non-excluded notes, top related
+conversations, event description (`MAX_EVENT_DESCRIPTION_BYTES = 2048`), open
+commitments, promises, and file metadata are pre-selected within the 36,000-character
+budget (`meeting_policy.rs`) for one-step confirmation; attachment binary
+contents and linked web pages are excluded. Excluded notes, omissions, and size
+caps are disclosed explicitly.
 
-**Summarize Preparation** and **Suggest Follow-through** open a source-selection
-modal. Nothing is sent until the user confirms the exact material. Notes and mail
-bodies start unselected. Show included excerpts, dates/accounts, text amounts, and
-omissions; enable explicit excerpt selection where a full note is too broad. Include
-only reviewed event fields, not the entire calendar, contact profile, or contact's
-private notes. Attachments and linked web pages are excluded in v1. Selection is
-request-specific; opening the meeting again does not authorize a new request.
+On confirmation, `prepare_meeting_brief` (`commands/meetings.rs`,
+`src-tauri/src/ai/meeting.rs`) re-validates source revisions, privacy exclusions,
+and `MAX_AI_PREP_*` / `MAX_AGENDA_*` limits, builds a `PreparedContext` manifest
+treating all source text as untrusted evidence with no tool access, and logs
+usage via `ai::with_purpose("meeting_prep", ...)`. It returns `MeetingPrepBrief`
+(`payloadRevision`, `agendaItems`, `followUps`, `recentContext`, `withheldCount`),
+rendered in `MeetingPrepBriefCard`. Unverified citations are withheld individually
+and counted. Saving an accepted agenda uses `save_meeting_agenda` and
+`undo_meeting_agenda` (`src-tauri/src/db/meeting_agenda.rs`) with operation
+receipts and guarded writes.
 
-On confirmation, resolve the selected references natively, check source revisions,
-privacy exclusions and limits, and build a bounded manifest. Reject stale selections
-for re-review. Treat all source content as untrusted evidence; instructions inside
-mail, notes, and event descriptions cannot authorize tools or writes. The model has
-no sending, browsing, database-write, calendar, or attachment tools.
+Text-based AI **Suggest Follow-through** inside `MeetingFollowThroughDialog`
+(Stage 5b) remains unbuilt; transcript-based recap uses the same follow-through
+dialog under [Meeting recording and transcription](meeting-recording-plan.md).
 
-Return structured proposals for summary, decisions, open questions, and actions,
-with source references per claim. Validate reference membership and cited excerpts
-against the actual manifest. Exact source validation does not establish that an
-interpretation is correct; display the evidence and retain user review. Withhold
-invalid claims individually with a count/reason; do not present an invalid response
-as an empty successful analysis. Preserve the last good review on request failure.
+## Implemented architecture and persistence
 
-Use existing structured-output/provider support and `ai::with_purpose` usage logging,
-with distinct preparation and follow-through purposes. Enforce request/source/output
-limits in one native policy module, with a typed UI disclosure of those limits and
-below/exact/above-limit tests. Choose concrete budgets using existing provider context
-allowances during stage 1; freeze them before AI implementation. Do not silently
-truncate selected text or automatically batch/retry costly synthesis. No new AI SDK
-or agent runner is needed.
-
-Provider output is transient until explicitly kept. Saving accepted material uses
-the same guarded note mutation as manual follow-through. Changes after selection,
-including exclusions, invalidate the result for applying until re-reviewed. Requests
-already sent cannot be recalled; changing an exclusion prevents subsequent requests.
-
-## Proposed implementation and persistence
-
-Names below are proposed contracts to add, not existing APIs.
-
-| Layer | Work |
+| Layer | Implementation |
 | --- | --- |
-| UI/controller | `MeetingPreparation` and `useMeetingPreparation` share the event view between Calendar, Today, and the planning steps; `MeetingFollowThroughDialog` owns explicit editing and source selection. `MeetingReadinessList` and `useMeetingReadiness` render a day's meetings for the plan's meeting step and Shutdown, so the routine reuses them instead of querying meeting data itself. App only wires navigation and compose handoff. |
-| Typed client/demo | Extend `src/domain.ts`, `src/data/client.ts`, and `src/data/demoClient.ts` with context, source-selection, review, and mutation results. Demo fixtures exercise the same shape without real mail or AI. |
-| Native retrieval | `commands/meetings.rs` and a meeting-context service query existing calendar, note-link, contact-history, mail, and task data. Add narrowly scoped DB helpers and indexes only where query evidence requires them. Register commands in `src-tauri/src/lib.rs`. |
-| Markdown | Extend the shared note parsing/capture layer with meeting block extraction and guarded follow-through insertion. Reuse note indexing, task markers, sync budget checks, and change notifications. |
-| AI | Add a meeting module under `src-tauri/src/ai/` and native command wrappers; extend existing feature settings, activity purposes, structured output, and exclusion checks. |
-| Draft handoff | Extend the correspondence controller with an explicit target/account and durable draft seed; return a promise/result so callers can wait for save/open failures. Reuse existing composer/outbox authority. |
+| UI/controller | `MeetingPreparation`, `useMeetingPreparation`, `MeetingPrepSourcesDialog`, `MeetingPrepBriefCard`, and `MeetingFollowThroughDialog` share the event view between Calendar Event Details and Notes' context rail. App wires navigation and compose handoff. |
+| Typed client/demo | `src/domain.ts`, `src/data/client.ts`, and `src/data/demoClient.ts` (`src/data/demoMeetings.ts`) cover context, source preview, agenda brief synthesis, follow-through, and mutation results. |
+| Native retrieval & writes | `commands/meetings.rs`, `db/meetings.rs`, `db/meeting_agenda.rs`, `db/meeting_follow_through.rs`, `meeting_policy.rs`, and `meeting_excerpt.rs` query calendar, note-link, contact-history, mail, promise, file, and task data (`operation_receipts` and `draft_handoffs` in schema v109). |
+| Markdown | `meeting_excerpt.rs`, `meeting_follow_through.rs`, `src/meetingExcerpt.ts`, and `src/meetingFollowThrough.ts` share fixtures (`fixtures/meeting-excerpts.json`, `fixtures/meeting-follow-through.json`). |
+| AI | `src-tauri/src/ai/meeting.rs` and `commands/meetings.rs` (`meeting_source_preview`, `prepare_meeting_brief`) implement agenda synthesis with `exclude_from_ai` and manifest validation. |
+| Draft handoff | Correspondence controller and `draft_handoffs` create/resume durable drafts with idempotency guards. |
 
-Suggested command boundaries:
+Native commands in `src-tauri/src/commands/meetings.rs`:
 
 - `meeting_context(reference, mailScope)` returns the event snapshot,
   categorized source candidates, revision tokens, and per-section availability.
-- `meeting_readiness(references, mailScope)` returns, per event, note presence,
-  commitment and candidate counts, latest correspondence date, follow-through
-  state, and per-event availability or errors, without bodies. One failing event
-  does not fail the batch.
-- `reserve_meeting_prep(reference, dailyNote, expectedRevision, operationId)`
-  adds or returns the occurrence's prep task under its meeting line, using the same
-  guarded note mutation and receipts as follow-through capture.
-- `meeting_source_preview(reference, selections)` resolves bounded local excerpts
-  and produces the exact source manifest without a provider request.
-- `analyze_meeting(reference, selectionRevision, selections, purpose)` performs
-  native validation and returns validated proposals with evidence references.
-- `save_meeting_follow_through(reference, destination, expectedRevision,
-  operationId, acceptedItems)` validates and atomically appends accepted decisions,
-  new task/checklist markers, and links to existing tasks.
+- `meeting_readiness(references, mailScope)` returns batch note/commitment/follow-through
+  summary state without loading bodies (available in backend; planning UI removed).
+- `reserve_meeting_prep(date, expected, entry)` adds/finds a prep task under an
+  occurrence line (backend command retained; UI button removed).
+- `meeting_source_preview(reference, mailScope)` resolves bounded local excerpts,
+  blocks excluded notes, and produces the pre-selected source manifest.
+- `prepare_meeting_brief(reference, mailScope, selected, requestId)` runs
+  native validation and returns `MeetingPrepBrief` (`agendaItems`, `followUps`,
+  `recentContext`, `withheldCount`).
+- `save_meeting_agenda(...)` / `undo_meeting_agenda(...)` and
+  `save_meeting_follow_through(...)` / `undo_meeting_follow_through(...)`
+  atomically append and undo occurrence-linked Markdown with operation receipts.
 
 Keep context and generated text device-local until the user saves it into a note
 or draft. Save in-progress follow-through edits in a bounded local recovery record,
@@ -413,13 +354,19 @@ as `limits`):
 | --- | --- |
 | Events per readiness request | 50 |
 | Note sources per section | 20 |
+| Related notes listed | `MAX_RELATED_NOTES = 8` |
 | Earlier occurrences listed | 8, newest first |
 | Text per meeting block | 4,096 bytes, cut at a character boundary and flagged |
 | Preview of a linked reusable note | 1,024 bytes |
+| Event description bytes | `MAX_EVENT_DESCRIPTION_BYTES = 2,048` |
+| Conversation snippet chars | `MAX_CONVERSATION_SNIPPET_CHARS = 180` |
 | Attendees used to look for mail | 50 |
 | Conversations listed | 10, the originating one first |
 | Attendee mail lookback | 90 days |
 | Commitments listed | 25, definite before candidates |
+| Open promises listed | `MAX_MEETING_PROMISES = 10` |
+| Files listed | `MAX_MEETING_FILES = 10` |
+| AI prep & agenda budgets | 36,000-char source budget (`MAX_AI_PREP_*`, `MAX_AGENDA_*`) |
 
 Stage 3's follow-through recovery records keep at most 50 reviews for at most 14
 days after their last edit, with **Discard**; that stage implements the limit.
@@ -435,25 +382,24 @@ without duplicate notes or prep tasks, focus theft, or lost draft/editor state.
 Missing mail accounts or one failing section or event do not prevent access to
 available notes.
 
-**As built.** `MeetingPreparation` with `useMeetingPreparation` renders the view;
-`MeetingReadinessList` with `useMeetingReadiness` renders a day's meetings.
+**As built (Stage 2).** `MeetingPreparation` with `useMeetingPreparation` renders the view:
 
 - In Calendar, **Prepare** sits beside Open Note / Add Note in the event details
   and on each agenda row. While preparing, the view takes the place of the
   details' note backlinks and related mail, which it covers. **Prepare for
   Meeting** (<kbd>p</kbd>, and the palette) toggles it while an event's details
   are open; <kbd>Escape</kbd> closes it before any other Escape action.
-- Today keeps a planning inbox beside a larger calendar. Meeting titles open
-  Calendar; note icons and <kbd>p</kbd> open the occurrence’s note, creating an
-  entry in its daily note only when no existing occurrence note is found.
-  Preparation is opened from the event link’s action in Notes and stays in its
-  context rail beside the editor. **Close Preparation** or <kbd>Escape</kbd>
-  returns to note details; **Back to Meeting** restores the original note and
-  preparation after opening a source. Working locations offer no meeting-note
-  action. `MeetingReadinessList` remains in Plan Today’s meeting step.
-- Under the title, an action row offers the next steps: Add Note / Open Note,
-  **Reserve Prep Time**, Join, and Open in Calendar on Today (Calendar's details
-  already offer Open Note and Join). An empty **This meeting** offers Add Note.
+- On Today, meeting titles open Calendar; note icons and <kbd>p</kbd> open the
+  occurrence’s note, creating an entry in its daily note only when no existing
+  occurrence note is found. Preparation is opened from the event link’s action
+  in Notes and stays in its context rail beside the editor. **Close
+  Preparation** or <kbd>Escape</kbd> returns to note details; **Back to
+  Meeting** restores the original note and preparation after opening a source.
+  Working locations offer no meeting-note action.
+- Under the title, an action row offers Add Note / Open Note and Join (plus Open
+  in Calendar on Today). An empty **This meeting** offers Add Note. *(Note:
+  `MeetingReadinessList`, **Reserve Prep Time** UI, and **No Prep Needed** were
+  removed on 2026-11-18 with the Plan Today / Shut Down views.)*
 - **Conversations** lead with the originating message, then recent conversations
   whose subject contains the meeting's title (at least four characters; invitations
   and their replies), then attendee mail that is `related`: its subject shares a
@@ -581,20 +527,22 @@ preparation view.
   characters per item, follow-up subject 998 characters on one line, body
   64 KiB, 100 recipients; handoffs are kept 90 days, at most 500.
 
-### 4. Ship privacy and compatibility prerequisites
+### 4. Ship privacy and compatibility prerequisites (Implemented)
 
-Implement Meeting Assistance settings and persistent per-note exclusion across
-all storage/interchange paths. Add the source-preview manifest and native deny
-checks. Gate: prior settings exports/snapshots import safely, excluded notes
-cannot enter a request by any supported selection path, and no source-selection
-UI can bypass native validation. No note-bearing AI ships before this gate.
+Implemented: `meetingAssistance` setting (`meetings` AI area, off by default,
+transfer v5 migration fixture), persistent per-note `exclude_from_ai` across
+SQLite, sync, Markdown import/export, and Notes UI, plus `meeting_source_preview`
+enforcing exclusions natively.
 
-### 5. Ship optional synthesis
+### 5. Ship optional synthesis (Stage 5a Implemented; 5b Proposed)
 
-Add preparation and follow-through structured requests, source-backed review cards,
-usage reporting, failure recovery, and apply-time revision checks. Gate: a user can
-select evidence, request help, inspect sources, edit/reject proposals, and explicitly
-keep them through stage 3. Disabling AI preserves the whole local workflow.
+- **Stage 5a (Implemented):** On-demand preparation agenda brief via
+  `meeting_source_preview`, `prepare_meeting_brief`, `src-tauri/src/ai/meeting.rs`,
+  `MeetingPrepSourcesDialog` / `MeetingPrepBriefCard`, and `save_meeting_agenda` /
+  `undo_meeting_agenda`.
+- **Stage 5b (Proposed):** Text-based AI **Suggest Follow-through** inside
+  `MeetingFollowThroughDialog`. (Transcript-based AI recap is tracked in
+  [Meeting recording and transcription](meeting-recording-plan.md).)
 
 ### 6. Validate and document the complete feature
 

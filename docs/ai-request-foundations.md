@@ -1,7 +1,9 @@
 # AI requests and evaluations
 
-General AI features use one native request lifecycle. Delegated Web Research
-retains its separate runner, credentials, permissions, budgets, and cancellation.
+AI features—including **Inbox Assistants** (`call_provider_reply` in
+`src-tauri/src/agents/analyzer.rs`)—use one native request lifecycle
+(`ai::requests::RUNTIME`, sharing concurrency, retry, and journal limits while
+`src-tauri/src/agents/runner.rs` owns assistant scheduling and pausing).
 No settings-export or sync format changes are involved: these controls and the
 request journal are device-local.
 
@@ -24,9 +26,9 @@ one lifecycle and allowance. Unrelated requests do not cancel each other.
 
 There are at most two transient retries across a provider call's fallback sequence,
 for explicit HTTP 429, 502, 503, and 504 responses. Retries retain the schema and
-reasoning options. Retry-After is honored up to five seconds; longer, malformed,
-and unsupported values are returned as errors. Without a header the delay is one
-second. Transport failures/timeouts are not automatically replayed, because the
+reasoning options. `Retry-After` supports both integer seconds and RFC 2822
+HTTP-dates up to five seconds; longer, malformed, and unsupported values are
+returned as errors. Without a header the delay is one second. Transport failures/timeouts are not automatically replayed, because the
 provider may already have generated an answer. Existing parameter-compatibility
 fallbacks remain separate; every HTTP attempt reserves cost before dispatch.
 
@@ -92,7 +94,9 @@ writes are introduced here.
 ## Evaluation foundation
 
 `evals/ai/cases.json` contains synthetic cases across summaries, suggestions,
-briefs, chat, reply generation, draft review, contact enrichment and Find Times.
+briefs, chat, reply generation, draft review, contact enrichment and Find Times
+(`MeetingPrep` and the three `Agent*` features also use `PreparedContext` and
+`RUNTIME` in production, and are excluded from offline replay evaluations).
 They cover revised facts, explicit and ambiguous deadlines, Spanish requests,
 multiple events, unknown event times, DST, superseded requests, missing context,
 retrieved sources, truncated attachments, prompt injection and Writing Profiles.
@@ -145,7 +149,8 @@ History polling returns status only while closed and at most 20 records when ope
 Record JSON is encoded and sized at insertion or update, reused during pruning and
 persistence, and written outside the state lock. A separate write gate serializes
 durable financial mutations without blocking status reads or cancellation during fsync.
-Cancel controls match both command and the displayed record owner. Cached generation
-details load on demand beside the conversation brief. Context limits are 16 MB and
+Cancel controls match both command and the displayed record owner (cached
+generation details still persist in SQLite `ai_result_provenance`, though the
+Brief card no longer displays them on demand). Context limits are 16 MB and
 16,384 fields, above the existing bounded feature inputs. Test Connection remains
 metered; Settings explains the price prerequisite when a daily limit is enabled.
