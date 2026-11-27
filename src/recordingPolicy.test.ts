@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { MeetingRecording, RecordingStatus, ScheduleEvent } from "./domain";
+import type { MeetingRecording, RecordingStatus, ScheduleEvent, TranscriptionModelStatus } from "./domain";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { adHocRecordingTitle, canRecordEvent, formatElapsed, isRecordingOf, RECORD_LEAD_MS, recordingDetail, recordOffer, stopReasonNotice } from "./recordingPolicy";
+import { adHocRecordingTitle, canRecordEvent, canRetryTranscription, canShowTranscript, transcriptCopyText, formatElapsed, isRecordingOf, RECORD_LEAD_MS, recordingDetail, recordOffer, stopReasonNotice } from "./recordingPolicy";
 
 const event = (overrides: Partial<ScheduleEvent> = {}): ScheduleEvent => ({
   id: "evt", accountId: "me@example.com", calendarId: "work", title: "Weekly Sync",
@@ -14,7 +14,7 @@ const status = (overrides: Partial<RecordingStatus> = {}): RecordingStatus => ({
 });
 const recording = (overrides: Partial<MeetingRecording> = {}): MeetingRecording => ({
   id: "r1", eventRef: null, title: "Weekly Sync", startedAt: "2026-11-27T15:00:00Z", endedAt: "2026-11-27T15:42:00Z",
-  durationMs: 42 * 60_000, state: "recorded", error: null,
+  durationMs: 42 * 60_000, state: "recorded", error: null, audioDeleted: false, transcriptionPercent: null,
   tracks: [
     { track: "mic", state: "active", deviceName: "Mic", firstFrameOffsetMs: 0, error: null },
     { track: "system", state: "active", deviceName: null, firstFrameOffsetMs: 0, error: null },
@@ -75,10 +75,10 @@ describe("isRecordingOf", () => {
 
 describe("recordingDetail", () => {
   it("describes each state", () => {
-    expect(recordingDetail(recording())).toBe("42 min · Recorded");
+    expect(recordingDetail(recording())).toBe("42 min · Waiting to transcribe");
     expect(recordingDetail(recording({ state: "recording", durationMs: 0 }))).toBe("Recording…");
     expect(recordingDetail(recording({ state: "interrupted", durationMs: 18 * 60_000 }))).toBe("Interrupted · 18 min saved");
-    expect(recordingDetail(recording({ state: "failed" }))).toBe("Failed");
+    expect(recordingDetail(recording({ state: "failed" }))).toBe("Transcription failed");
   });
 
   it("says when only the microphone was recorded", () => {
@@ -86,13 +86,65 @@ describe("recordingDetail", () => {
       { track: "mic", state: "active", deviceName: "Mic", firstFrameOffsetMs: 0, error: null },
       { track: "system", state: "unavailable", deviceName: null, firstFrameOffsetMs: null, error: null },
     ] });
-    expect(recordingDetail(micOnly)).toBe("42 min · Recorded · Microphone only");
-    expect(recordingDetail({ ...micOnly, tracks: micOnly.tracks.slice(0, 1) })).toBe("42 min · Recorded · Microphone only");
+    expect(recordingDetail(micOnly)).toBe("42 min · Waiting to transcribe · Microphone only");
+    expect(recordingDetail({ ...micOnly, tracks: micOnly.tracks.slice(0, 1) })).toBe("42 min · Waiting to transcribe · Microphone only");
     expect(recordingDetail({ ...micOnly, state: "interrupted", durationMs: 18 * 60_000 })).toBe("Interrupted · 18 min saved · Microphone only");
   });
 
   it("never shows less than a minute as zero", () => {
-    expect(recordingDetail(recording({ durationMs: 10_000 }))).toBe("1 min · Recorded");
+    expect(recordingDetail(recording({ durationMs: 10_000 }))).toBe("1 min · Waiting to transcribe");
+  });
+});
+
+describe("recordingDetail with transcription", () => {
+  const model = (state: TranscriptionModelStatus["state"]): TranscriptionModelStatus => ({ model: "fast", bytes: 190_000_000, state, receivedBytes: 0, error: null });
+
+  it("tells waiting for a model from waiting to transcribe, by the chosen model's state", () => {
+    expect(recordingDetail(recording({ durationMs: 18 * 60_000 }), model("absent"))).toBe("18 min · Waiting for a transcription model");
+    expect(recordingDetail(recording({ durationMs: 18 * 60_000 }), model("downloading"))).toBe("18 min · Waiting for a transcription model");
+    expect(recordingDetail(recording({ durationMs: 18 * 60_000 }), model("failed"))).toBe("18 min · Waiting for a transcription model");
+    expect(recordingDetail(recording({ durationMs: 18 * 60_000 }), model("ready"))).toBe("18 min · Waiting to transcribe");
+    expect(recordingDetail(recording({ durationMs: 18 * 60_000 }), null)).toBe("18 min · Waiting to transcribe");
+  });
+
+  it("shows transcribing with the live percent over the listed one", () => {
+    expect(recordingDetail(recording({ state: "transcribing", transcriptionPercent: 40 }))).toBe("Transcribing… 40%");
+    expect(recordingDetail(recording({ state: "transcribing", transcriptionPercent: 40 }), null, 55)).toBe("Transcribing… 55%");
+    expect(recordingDetail(recording({ state: "transcribing" }))).toBe("Transcribing…");
+    expect(recordingDetail(recording({ state: "transcribed" }))).toBe("42 min · Transcribed");
+  });
+
+  it("calls a failed recording without audio Failed, and one with audio a failed transcription", () => {
+    // The native side reports a capture that saved nothing as audioDeleted.
+    expect(recordingDetail(recording({ state: "failed", audioDeleted: true }))).toBe("Failed");
+    // Every track can fail after audio was saved; that audio's transcription is what failed.
+    const failedTracks = [{ track: "mic" as const, state: "failed" as const, deviceName: null, firstFrameOffsetMs: null, error: "x" }];
+    expect(recordingDetail(recording({ state: "failed", tracks: failedTracks }))).toBe("Transcription failed");
+    expect(canRetryTranscription(recording({ state: "failed", tracks: failedTracks }))).toBe(true);
+  });
+});
+
+describe("transcript actions", () => {
+  it("offers Show Transcript only once transcribed", () => {
+    expect(canShowTranscript(recording({ state: "transcribed" }))).toBe(true);
+    for (const state of ["recording", "interrupted", "recorded", "transcribing", "failed"] as const) expect(canShowTranscript(recording({ state }))).toBe(false);
+  });
+
+  it("offers Retry only for a failed recording whose audio exists", () => {
+    expect(canRetryTranscription(recording({ state: "failed" }))).toBe(true);
+    expect(canRetryTranscription(recording({ state: "failed", audioDeleted: true }))).toBe(false);
+    expect(canRetryTranscription(recording({ state: "recorded" }))).toBe(false);
+  });
+});
+
+describe("transcriptCopyText", () => {
+  const line = (startMs: number, speaker: "you" | "others" | null, text: string) => ({ startMs, endMs: startMs + 1000, speaker, text });
+  it("writes one labelled line per transcript line, with hours past an hour", () => {
+    const text = transcriptCopyText({ recordingId: "r", speakerLabels: true, lines: [line(754_000, "you", "Hello"), line(3_723_000, "others", "Hi there"), line(0, null, "Unlabelled")] });
+    expect(text).toBe("[12:34] You: Hello\n[1:02:03] Others: Hi there\n[0:00] Unlabelled");
+  });
+  it("leaves labels out when there are none", () => {
+    expect(transcriptCopyText({ recordingId: "r", speakerLabels: false, lines: [line(754_000, null, "Hello"), line(3_723_000, null, "Again")] })).toBe("[12:34] Hello\n[1:02:03] Again");
   });
 });
 

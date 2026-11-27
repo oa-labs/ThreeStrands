@@ -3149,6 +3149,22 @@ input.sync-join-code[aria-invalid="true"] { height: var(--control-h); border-col
 .settings-field.settings-field-row > span { color: var(--text); }
 .settings-field-row select, .settings-field-row input { width: 100%; max-width: 420px; }
 .ai-key-row { grid-template-columns: minmax(0, 1fr) auto; max-width: calc(var(--settings-label-width) + var(--settings-label-gap) + 420px + 90px); }
+.transcription-models { display: grid; gap: var(--space-2); }
+.transcription-model { display: grid; max-width: 420px; gap: var(--space-1-5); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.transcription-model-text { display: grid; gap: var(--space-0-5); }
+.transcription-model-name { color: var(--text); font-size: var(--text-body); }
+.transcription-model-progress { width: 100%; height: var(--space-1-5); accent-color: var(--accent); }
+.transcription-model-actions { display: flex; align-items: center; gap: var(--space-2); }
+.transcription-model-actions:empty { display: none; }
+.transcription-model .form-error { margin: 0; }
+.transcript-modal { width: min(var(--dialog-w-lg), calc(100vw - var(--dialog-edge))); display: flex; flex-direction: column; }
+.transcript-modal .modal-form { min-height: 0; grid-template-rows: minmax(0, 1fr) auto; }
+.transcript-lines { margin: 0; padding: 0; list-style: none; min-height: 0; max-height: 50vh; overflow-y: auto; display: grid; gap: var(--space-2); font-size: var(--text-body); }
+.transcript-line { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: var(--space-2); align-items: baseline; }
+.transcript-line-time { color: var(--muted); font-size: var(--text-meta); font-variant-numeric: tabular-nums; }
+.transcript-line-speaker { color: var(--muted); font-weight: var(--weight-semibold); }
+.transcript-line-text { overflow-wrap: anywhere; white-space: pre-wrap; }
+.transcript-line:not(:has(.transcript-line-speaker)) { grid-template-columns: auto minmax(0, 1fr); }
 .settings-field-detail { width: 100%; padding-left: calc(var(--settings-label-width) + var(--settings-label-gap)); }
 .wide-label-settings { --settings-label-width: 210px; }
 .settings-section .settings-field-offset { margin-left: calc(var(--settings-label-width) + var(--settings-label-gap)); }

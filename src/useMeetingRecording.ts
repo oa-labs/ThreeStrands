@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mailClient } from "./data/client";
-import type { RecordingCapabilities, RecordingSettings, RecordingStartRequest, RecordingStatus } from "./domain";
+import type { RecordingCapabilities, RecordingSettings, RecordingStartRequest, RecordingStatus, TranscriptionModelStatus } from "./domain";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { adHocRecordingTitle, RECORDING_REMINDER, stopReasonNotice } from "./recordingPolicy";
 import { announceRecordingSettingsChanged, listenForRecordingEvent, listenForRecordingSettingsChanged } from "./recordingEvents";
 import type { Notice } from "./useNotice";
+import { useTranscriptionModels } from "./useTranscriptionModels";
 
 export const IDLE_RECORDING_STATUS: RecordingStatus = {
   state: "idle", recordingId: null, title: null, eventRef: null, elapsedMs: 0, tracks: [],
@@ -19,6 +20,8 @@ export type RecordingController = {
   /** Supported and switched on in Settings: Record, Start Recording, and the like are offered. */
   enabled: boolean;
   status: RecordingStatus;
+  /** The model chosen in Settings, or null until known. */
+  transcriptionModel: TranscriptionModelStatus | null;
   /** Changes when a recording's rows may have changed, so lists read them again. */
   recordingsVersion: number;
   /** A start is waiting on the first-use consent. */
@@ -37,7 +40,7 @@ export type RecordingController = {
 
 /** Context for a webview that cannot record: every capability is absent. */
 export const UNSUPPORTED_RECORDING: RecordingController = {
-  capabilities: null, supported: false, enabled: false, status: IDLE_RECORDING_STATUS, recordingsVersion: 0,
+  capabilities: null, supported: false, enabled: false, status: IDLE_RECORDING_STATUS, transcriptionModel: null, recordingsVersion: 0,
   consentPending: false, quitRequested: false,
   start: async () => {}, startAdHoc: async () => {}, stop: async () => {}, pause: async () => {}, resume: async () => {},
   acceptConsent: async () => {}, cancelConsent: () => {}, confirmQuit: async () => {}, cancelQuit: () => {},
@@ -175,9 +178,11 @@ export function useMeetingRecording({ onNotice, onOpenSettings }: {
   }, [supported]);
 
   const enabled = supported && settings?.recordMeetings === true;
+  const models = useTranscriptionModels(supported);
+  const transcriptionModel = models?.find((model) => model.model === (settings?.transcriptionModel ?? "fast")) ?? null;
   return useMemo(() => ({
-    capabilities, supported, enabled, status, recordingsVersion,
+    capabilities, supported, enabled, status, transcriptionModel, recordingsVersion,
     consentPending: pending !== null, quitRequested,
     start, startAdHoc, stop, pause, resume, acceptConsent, cancelConsent, confirmQuit, cancelQuit,
-  }), [capabilities, supported, enabled, status, recordingsVersion, pending, quitRequested, start, startAdHoc, stop, pause, resume, acceptConsent, cancelConsent, confirmQuit, cancelQuit]);
+  }), [capabilities, supported, enabled, status, transcriptionModel, recordingsVersion, pending, quitRequested, start, startAdHoc, stop, pause, resume, acceptConsent, cancelConsent, confirmQuit, cancelQuit]);
 }

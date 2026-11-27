@@ -130,6 +130,9 @@ import type {
   RecordingStatus,
   RecordingsUsage,
   MeetingRecording,
+  RecordingTranscript,
+  TranscriptionModelName,
+  TranscriptionModelStatus,
 } from "../domain";
 import type { AiProvider, AiReasoning } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
@@ -474,6 +477,14 @@ export interface MailClient extends CorrespondenceClient {
   recordingsUsage(): Promise<RecordingsUsage>;
   deleteAllRecordingAudio(): Promise<void>;
   deleteAllRecordings(): Promise<void>;
+  transcriptionModels(): Promise<TranscriptionModelStatus[]>;
+  /** Starts the download in the background; progress arrives as `transcription-models-changed`. */
+  downloadTranscriptionModel(model: TranscriptionModelName): Promise<void>;
+  cancelTranscriptionModelDownload(model: TranscriptionModelName): Promise<void>;
+  deleteTranscriptionModel(model: TranscriptionModelName): Promise<void>;
+  /** Queues a recorded, interrupted, or failed recording whose audio still exists. */
+  transcribeRecording(id: string): Promise<void>;
+  recordingTranscript(id: string): Promise<RecordingTranscript>;
   /** Asks the system for microphone access now; resolves with the answer. */
   requestRecordingPermissions(): Promise<RecordingPermissions>;
   /** Stops the recording and lets the app's quit continue. */
@@ -839,6 +850,12 @@ const tauriClient: MailClient = {
   recordingsUsage: () => read("recordings_usage"),
   deleteAllRecordingAudio: () => complete("delete_all_recording_audio"),
   deleteAllRecordings: () => complete("delete_all_recordings"),
+  transcriptionModels: () => read("transcription_models"),
+  downloadTranscriptionModel: (model) => complete("download_transcription_model", { model }),
+  cancelTranscriptionModelDownload: (model) => complete("cancel_transcription_model_download", { model }),
+  deleteTranscriptionModel: (model) => complete("delete_transcription_model", { model }),
+  transcribeRecording: (id) => complete("transcribe_recording", { id }),
+  recordingTranscript: (id) => read("recording_transcript", { id }),
   requestRecordingPermissions: () => complete("request_recording_permissions"),
   confirmRecordingQuit: () => complete("recording_confirm_quit"),
   meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),

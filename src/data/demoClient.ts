@@ -17,7 +17,7 @@ import { planBoardRanks } from "../taskBoardRank";
 import { goalPeriodMatches, parentCandidates } from "../goals";
 import type { MailClient } from "./client";
 import { DEMO_ACCOUNT_ID, defaultDemoDataset, type DemoDataset } from "./demoDataset";
-import { buildShowcaseDataset } from "./showcaseDataset";
+import { buildShowcaseDataset, SHOWCASE_WORK_ACCOUNT } from "./showcaseDataset";
 import { parseAddress, splitAddressList } from "../emailAddress";
 import { TODAY_MAIL_LIMIT } from "../todayMail";
 import { isCalendarAttachment } from "../calendarInvitations";
@@ -2155,7 +2155,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       recordingSettings = { ...DEFAULT_RECORDING_SETTINGS, ...settings };
     },
     ...demoSignatureClient,
-    ...createDemoRecordings(),
+    ...createDemoRecordings({ chosenModel: () => recordingSettings.transcriptionModel, seed: import.meta.env.VITE_DEMO_DATASET === "showcase" ? [{ version: 1, kind: "event", id: "one-on-one-prev", account: SHOWCASE_WORK_ACCOUNT, calendar: SHOWCASE_WORK_ACCOUNT, series: "series-one-on-one" }] : [] }),
     ...demoNotes,
     ...createDemoPlans({ tasks: () => tasks, goals: () => goals, contacts: () => client.listContactProfiles("", 5000), notes: demoNotes, threads: () => threads, latestMessageId: (id) => { const thread = threads.find((candidate) => candidate.id === id); return thread ? messagesFor(thread).at(-1)?.id ?? null : null; }, events: connectedEvents, promises: (accountId) => client.listOpenPromises(accountId) }),
     ...createDemoMeetings({

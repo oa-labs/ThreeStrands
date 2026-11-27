@@ -174,7 +174,7 @@ describe("CalendarWeekView", () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [underWay, later], errors: [] });
     const reference = meetingEventReference(underWay)!;
     vi.spyOn(mailClient, "listRecordings").mockResolvedValue([{
-      id: "r1", eventRef: reference, title: "Standup", startedAt: "2026-09-22T14:00:00Z", endedAt: null, durationMs: 0, state: "recording", error: null, tracks: [],
+      id: "r1", eventRef: reference, title: "Standup", startedAt: "2026-09-22T14:00:00Z", endedAt: null, durationMs: 0, state: "recording", error: null, audioDeleted: false, transcriptionPercent: null, tracks: [],
     }]);
     const controller = recordingController();
     render(<RecordingContext.Provider value={controller}><StatefulWeekView accounts={accounts} calendars={calendars} onToggleCalendar={vi.fn()} onAddCalendarAccount={vi.fn()} onOpenSettings={vi.fn()} onAddNote={vi.fn()} /></RecordingContext.Provider>);
