@@ -5,6 +5,7 @@ import { isHolidayCalendar } from "../calendarAvailability";
 import type { FindAvailabilityRequest, RecordingSettings } from "../domain";
 import type { CreatedScheduleEvent, SentInRange } from "../domain";
 import { demoSignatureClient } from "./demoSignatures";
+import { createDemoRecordings } from "./demoRecordings";
 import { createDemoNotes } from "./demoNotes";
 import { createDemoMeetings } from "./demoMeetings";
 import { createDemoPlans } from "./demoPlans";
@@ -2154,6 +2155,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       recordingSettings = { ...DEFAULT_RECORDING_SETTINGS, ...settings };
     },
     ...demoSignatureClient,
+    ...createDemoRecordings(),
     ...demoNotes,
     ...createDemoPlans({ tasks: () => tasks, goals: () => goals, contacts: () => client.listContactProfiles("", 5000), notes: demoNotes, threads: () => threads, latestMessageId: (id) => { const thread = threads.find((candidate) => candidate.id === id); return thread ? messagesFor(thread).at(-1)?.id ?? null : null; }, events: connectedEvents, promises: (accountId) => client.listOpenPromises(accountId) }),
     ...createDemoMeetings({

@@ -261,6 +261,38 @@ describe("command registry", () => {
     expect(addToNote).toHaveBeenCalledOnce();
   });
 
+  it("offers the recording commands only where recording is on, and only for the state they act on", () => {
+    const byId = (id: string) => commands.find((item) => item.id === id)!;
+    const recording = (state: "idle" | "recording" | "paused", enabled = true) => ({ enabled, state, start: vi.fn(), stop: vi.fn(), pause: vi.fn(), resume: vi.fn() });
+    const available = (id: string, context: Partial<CommandContext>) => byId(id).enabled({ ...noopContext(), ...context });
+    // Unsupported device: no recording controller at all.
+    for (const id of ["recording.start", "recording.stop", "recording.pause", "recording.resume"]) expect(available(id, {})).toBe(false);
+    // Supported but switched off in Settings: nothing to start.
+    expect(available("recording.start", { recording: recording("idle", false) })).toBe(false);
+    expect(available("recording.start", { recording: recording("idle") })).toBe(true);
+    expect(available("recording.start", { recording: recording("recording") })).toBe(false);
+    expect(available("recording.stop", { recording: recording("idle") })).toBe(false);
+    expect(available("recording.stop", { recording: recording("recording") })).toBe(true);
+    expect(available("recording.stop", { recording: recording("paused") })).toBe(true);
+    expect(available("recording.pause", { recording: recording("recording") })).toBe(true);
+    expect(available("recording.pause", { recording: recording("paused") })).toBe(false);
+    expect(available("recording.resume", { recording: recording("paused") })).toBe(true);
+    expect(available("recording.resume", { recording: recording("recording") })).toBe(false);
+    expect(available("recording.start", { recording: recording("idle"), composerActive: true })).toBe(false);
+  });
+
+  it("runs each recording command on the recorder and gives none a key", async () => {
+    const controller = { enabled: true, state: "idle" as const, start: vi.fn(), stop: vi.fn(), pause: vi.fn(), resume: vi.fn() };
+    const context = { ...noopContext(), recording: controller };
+    for (const [id, action] of [["recording.start", "start"], ["recording.stop", "stop"], ["recording.pause", "pause"], ["recording.resume", "resume"]] as const) {
+      const command = commands.find((item) => item.id === id)!;
+      expect(command.keys).toEqual([]);
+      await command.run(context);
+      expect(controller[action]).toHaveBeenCalledOnce();
+    }
+    expect(commands.filter((item) => item.id.startsWith("recording.")).map((item) => item.title)).toEqual(["Start Recording", "Stop Recording", "Pause Recording", "Resume Recording"]);
+  });
+
   it("keeps shortcut collisions limited to commands in mutually exclusive focused panes", () => {
     const owners = new Map<string, string[]>();
     for (const command of commands) {

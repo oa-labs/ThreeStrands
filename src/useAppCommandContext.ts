@@ -1,6 +1,6 @@
 import { runWorkspaceCommand } from "./workspaceCommands";
 import { useMemo, type Dispatch, type SetStateAction } from "react";
-import type { CommandContext, CommandResult, MailboxKind } from "./commands";
+import type { CommandContext, CommandResult, MailboxKind, RecordingCommands } from "./commands";
 import type { Message } from "./domain";
 import type { MutationTemplate } from "./threadMutations";
 import { adjacentContactsView } from "./contactsView";
@@ -44,6 +44,7 @@ type Options = {
   addMeetingNote?: () => void;
   prepareMeeting?: () => void;
   meetingPrepOpen?: boolean;
+  recording?: RecordingCommands;
   snoozeSelected?: (ids: string[]) => void;
   returnSnoozedSelected?: (ids: string[]) => Promise<CommandResult>;
   mutateIds: (ids: string[], template: MutationTemplate, options?: { includeUnloaded?: boolean }) => Promise<CommandResult>;
@@ -87,7 +88,7 @@ type Options = {
 
 /** Binds global commands to the current domain controllers and interaction scope. */
 export function useAppCommandContext({
-  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, addToNote, addMeetingNote, prepareMeeting, meetingPrepOpen, snoozeSelected, returnSnoozedSelected,
+  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, addToNote, addMeetingNote, prepareMeeting, meetingPrepOpen, recording, snoozeSelected, returnSnoozedSelected,
   recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox, mutateIds, view, ui,
 }: Options) {
   const outboxEditSource = useMemo(() => outboxEditAsNewSource(outboxSelection.selectedEntry), [outboxSelection.selectedEntry]);
@@ -199,6 +200,7 @@ export function useAppCommandContext({
     addMeetingNote,
     prepareMeeting,
     meetingPrepOpen,
+    recording,
     openAgentsView: workspaces.openAgentsView,
     snoozeSelected: () => snoozeSelected?.(targetIds),
     returnSnoozedSelected: () => returnSnoozedSelected?.(targetIds) ?? Promise.resolve({}),
@@ -346,7 +348,7 @@ export function useAppCommandContext({
     toggleMessageFilter,
   }), [
     createCalendarEvent,
-    addToNote, addMeetingNote, prepareMeeting, meetingPrepOpen, snoozeSelected, returnSnoozedSelected, correspondence.context, parkedDraft, openDraft, openDraftRow, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
+    addToNote, addMeetingNote, prepareMeeting, meetingPrepOpen, recording, snoozeSelected, returnSnoozedSelected, correspondence.context, parkedDraft, openDraft, openDraftRow, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
     selectedId, selected, canUnsubscribe, returnStep, goBack, canReturnFromCalendar, returnFromCalendar, canReturnFromContacts, returnFromContacts, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread, selectedTaskIsNote,

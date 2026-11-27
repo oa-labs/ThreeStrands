@@ -12,6 +12,7 @@ import {
   Clock,
   Inbox,
   Mail,
+  Mic,
   Network,
   NotebookPen,
   Palette,
@@ -37,6 +38,8 @@ import { DiagnosticsSettings } from "./DiagnosticsSettings";
 import { AppearanceSettings, StartupSettings, TodayBackdropSettings } from "./AppearanceSettings";
 import { ReadingSettings } from "./ReadingSettings";
 import { NotesSettings } from "./NotesSettings";
+import { MeetingRecordingSettings } from "./MeetingRecordingSettings";
+import { useRecording } from "./recordingContext";
 import { AccountsSettings } from "./AccountsSettings";
 import { AvailabilityProfilesSettings } from "./AvailabilitySettings";
 import { AvailabilityAccountDefaultsSettings, MeetingTypeProfilesSettings } from "./AvailabilityChoiceSettings";
@@ -89,6 +92,7 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
   { id: "writingProfile", label: "Writing Profile", group: "Workflow", description: "Tell Draft Review who you are and how to review your email, for each account.", keywords: "about you review instructions draft review feedback ai sales tone role company", icon: UserPen, autosaves: true },
   { id: "notes", label: "Notes", group: "Workflow", description: "Choose how the note editor shows Markdown, and import or export your notes.", keywords: "notes markdown syntax editor formatting hide hybrid show wysiwyg import export folder files backup reflect obsidian sync space storage", icon: NotebookPen, autosaves: true },
+  { id: "meetingRecording", label: "Meeting Recording", group: "Workflow", description: "Record meetings on this Mac and choose how long the audio is kept.", keywords: "record recording meeting microphone audio system sound consent keep delete retention participants remind", icon: Mic, autosaves: true },
   // Profiles define hours; accounts and meeting types choose profiles.
   { id: "availability", label: "Profiles", group: "Availability", description: "Set when you’re willing to meet, with a profile for each part of your life.", keywords: "availability profiles available working hours timezone duration slot increment drive time buffer default meetings", icon: Clock, autosaves: true },
   { id: "availabilityAccounts", label: "Account Defaults", group: "Availability", description: "Choose the profile each email account normally uses.", keywords: "availability profile mail account usual hours default", icon: UserCog, autosaves: true },
@@ -150,7 +154,8 @@ export function Settings({
   // itself (it shows the "enable replicated sync" toggle there) — the nav
   // entry must stay visible even before that toggle is on, or there would
   // be no way to reach the toggle at all.
-  const availableSections = SETTINGS_SECTIONS;
+  const recording = useRecording();
+  const availableSections = SETTINGS_SECTIONS.filter((item) => item.id !== "meetingRecording" || recording.supported);
   const normalizedSettingsQuery = settingsQuery.trim().toLocaleLowerCase();
   const visibleSections = availableSections.filter((item) =>
     !normalizedSettingsQuery
@@ -407,6 +412,7 @@ export function Settings({
             />
           ) : null}
           {section === "notes" ? <NotesSettings /> : null}
+          {section === "meetingRecording" && recording.capabilities?.supported ? <MeetingRecordingSettings capabilities={recording.capabilities} /> : null}
           {section === "ai" ? <AiProviderSettings onChange={() => { onAiConfigChange(); queuePortablePreferences(); }} /> : null}
           {section === "privacy" ? (
             <PrivacySettings

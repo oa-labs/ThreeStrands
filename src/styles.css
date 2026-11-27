@@ -4390,3 +4390,10 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 
 .pull-refresh-status { display: flex; align-items: center; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3); font-size: var(--text-secondary); }
 .calendar-hidden-events { border: 1px solid var(--border); background: var(--raised); box-shadow: var(--shadow-control); color: var(--text); font-size: var(--text-meta); }
+
+/* Meeting recording: the sidebar indicator, shown only while a recording is under way. */
+.recording-indicator { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); align-self: stretch; padding-block-end: var(--space-2); border-bottom: 1px solid var(--border); font-size: var(--text-meta); color: var(--muted); }
+.recording-indicator-dot { width: var(--dot-size); height: var(--dot-size); border-radius: var(--radius-circle); background: var(--error); }
+.recording-indicator.paused .recording-indicator-dot { background: var(--muted); }
+.recording-indicator-time { font-variant-numeric: tabular-nums; color: var(--body-text); }
+.recording-indicator-stop { min-width: 0; padding-inline: var(--space-1-5); }

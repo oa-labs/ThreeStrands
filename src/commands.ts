@@ -8,6 +8,17 @@ export type MailboxKind = "inbox" | "allMail" | "sent" | "trash" | "drafts" | "o
 export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
 export type FocusedPane = "mail" | "tasks" | "notes" | "contacts" | "files" | "calendar" | "today" | "agents";
 
+/** What the palette's recording commands act on; absent where the device cannot record. */
+export type RecordingCommands = {
+  /** Recording is supported and switched on in Settings. */
+  enabled: boolean;
+  state: "idle" | "recording" | "paused";
+  start(): void;
+  stop(): void;
+  pause(): void;
+  resume(): void;
+};
+
 export type CommandContext = {
   interactionScope: InteractionScope;
   focusedPane: FocusedPane;
@@ -139,6 +150,7 @@ export type CommandContext = {
   prepareMeeting?(): void;
   /** Whether meeting preparation is open in the workspace in view. */
   meetingPrepOpen?: boolean;
+  recording?: RecordingCommands;
   openAgentsView?(): void;
   openTodayView?(): void;
   openContactsView(): void;
@@ -761,6 +773,23 @@ export const commands: Command[] = [
     // On Today: the meeting in focus, else the next one. In Calendar: the event whose details are open.
     enabled: (c) => !c.composerActive && (c.focusedPane === "today" || (c.focusedPane === "calendar" && Boolean(c.prepareMeeting))),
     run: (c) => complete(() => c.focusedPane === "today" ? runWorkspaceCommand("meetings.prepare") : c.prepareMeeting?.()),
+  },
+  // No single-key shortcuts: these stay in the palette.
+  {
+    id: "recording.start", title: "Start Recording", keywords: ["record", "meeting", "microphone", "audio"], keys: [], group: "Application",
+    enabled: (c) => !c.composerActive && Boolean(c.recording?.enabled) && c.recording?.state === "idle", run: (c) => complete(() => c.recording?.start()),
+  },
+  {
+    id: "recording.stop", title: "Stop Recording", keywords: ["record", "meeting", "end"], keys: [], group: "Application",
+    enabled: (c) => !c.composerActive && Boolean(c.recording) && c.recording?.state !== "idle", run: (c) => complete(() => c.recording?.stop()),
+  },
+  {
+    id: "recording.pause", title: "Pause Recording", keywords: ["record", "meeting"], keys: [], group: "Application",
+    enabled: (c) => !c.composerActive && c.recording?.state === "recording", run: (c) => complete(() => c.recording?.pause()),
+  },
+  {
+    id: "recording.resume", title: "Resume Recording", keywords: ["record", "meeting", "continue"], keys: [], group: "Application",
+    enabled: (c) => !c.composerActive && c.recording?.state === "paused", run: (c) => complete(() => c.recording?.resume()),
   },
   {
     id: "notes.today", title: "Open Today's Note", keywords: ["daily", "journal", "notes"], keys: [], group: "Navigation",

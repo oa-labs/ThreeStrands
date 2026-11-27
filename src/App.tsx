@@ -70,6 +70,10 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { AccountSwitcher } from "./AccountSwitcher";
+import { RecordingIndicator } from "./RecordingIndicator";
+import { RecordingDialogs } from "./RecordingDialogs";
+import { RecordingContext } from "./recordingContext";
+import { useMeetingRecording } from "./useMeetingRecording";
 import { AccountScopeChip, AccountScopeProvider } from "./AccountScope";
 import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, ShortcutHelp } from "./AppChrome";
 import { GettingStartedDialog, useGettingStarted } from "./GettingStarted";
@@ -81,7 +85,7 @@ import { CalendarSidebar } from "./CalendarSidebar";
 import { eventDate, startOfLocalDay } from "./calendarTime";
 import { chatAttachmentOptions } from "./chatAttachments";
 import { STARRED_INBOX_ID } from "./starredInbox";
-import { commands, labelCommand, undoResult, type CommandResult, type MailboxKind } from "./commands";
+import { commands, labelCommand, undoResult, type CommandResult, type MailboxKind, type RecordingCommands } from "./commands";
 import { FILES_CHANGED } from "./FileStarButton";
 import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
@@ -278,6 +282,16 @@ export function App() {
     toggleChecked,
   } = selection;
   const [notice, setNotice] = useNotice();
+  const openRecordingSettings = useCallback(() => openSettingsAt("meetingRecording"), [openSettingsAt]);
+  const recording = useMeetingRecording({ onNotice: setNotice, onOpenSettings: openRecordingSettings });
+  const recordingCommands = useMemo<RecordingCommands | undefined>(() => recording.supported ? {
+    enabled: recording.enabled,
+    state: recording.status.state,
+    start: () => void recording.startAdHoc(),
+    stop: () => void recording.stop(),
+    pause: () => void recording.pause(),
+    resume: () => void recording.resume(),
+  } : undefined, [recording]);
   const threadDetail = useThreadDetail(selectedId, threads, setNotice);
   const { detail, setDetail, visibleDetail, detailLoading } = threadDetail;
   const { applyThreadSummary } = useMailStateActions({ mailboxThreads, threadDetail });
@@ -888,6 +902,7 @@ export function App() {
     prepareMeeting: rightWorkspace === "week" && calendarSelectedEvent && meetingEventReference(calendarSelectedEvent)
       ? () => setCalendarPreparing((current) => current === preparationKey(calendarSelectedEvent) ? null : preparationKey(calendarSelectedEvent)) : undefined,
     meetingPrepOpen: rightWorkspace === "notes" ? notePreparationVisible : rightWorkspace === "week" ? Boolean(calendarSelectedEvent && calendarPreparing !== null && preparationKey(calendarSelectedEvent) === calendarPreparing) : false,
+    recording: recordingCommands,
     snoozeSelected: openSnooze, returnSnoozedSelected: conversationSnooze.returnToInbox,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox: outboxChecks.selectAll, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
@@ -1197,8 +1212,10 @@ export function App() {
   return (
     <AvailabilityProfileChoiceContext.Provider value={profileChoice(threadProfileKey, "conversation", visibleDetail?.thread.accountId)}>
     <AccountScopeProvider accounts={accounts} activeAccountId={activeAccountId}>
+    <RecordingContext.Provider value={recording}>
     <main className={`app-shell${rightWorkspace === "agents" ? " agents-open" : rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "notes" ? " notes-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}${mailInView && !narrowLayout && mailPanelCollapsed ? " side-panel-collapsed" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px`, "--side-panel-width": `${mailPanel.size.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
+        <RecordingIndicator status={recording.status} onStop={() => void recording.stop()} />
         <AccountSwitcher
           showAllAccounts={rightWorkspace === "tasks" || splitInboxCatalog.views.some(isSavedSearchView)}
           accounts={accounts}
@@ -2454,7 +2471,9 @@ export function App() {
       {lightboxImageSrc ? (
         <ImageLightbox src={lightboxImageSrc} onClose={() => setLightboxImageSrc(null)} />
       ) : null}
+      <RecordingDialogs />
     </main>
+    </RecordingContext.Provider>
     </AccountScopeProvider>
     </AvailabilityProfileChoiceContext.Provider>
   );

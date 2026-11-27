@@ -124,6 +124,12 @@ import type {
   SendingIdentity,
   SendingIdentityInput,
   RecordingSettings,
+  RecordingCapabilities,
+  RecordingPermissions,
+  RecordingStartRequest,
+  RecordingStatus,
+  RecordingsUsage,
+  MeetingRecording,
 } from "../domain";
 import type { AiProvider, AiReasoning } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
@@ -453,6 +459,25 @@ export interface MailClient extends CorrespondenceClient {
   /** Meeting Recording settings; device-local, so never part of settings transfer. */
   recordingSettings(): Promise<RecordingSettings>;
   setRecordingSettings(settings: RecordingSettings): Promise<void>;
+  /** Whether this device can record; `supported` is false off macOS. */
+  recordingCapabilities(): Promise<RecordingCapabilities>;
+  recordingStatus(): Promise<RecordingStatus>;
+  startRecording(request: RecordingStartRequest): Promise<RecordingStatus>;
+  pauseRecording(): Promise<RecordingStatus>;
+  resumeRecording(): Promise<RecordingStatus>;
+  stopRecording(): Promise<RecordingStatus>;
+  /** The recordings of one event occurrence, newest first. */
+  listRecordings(eventRef: NoteReference): Promise<MeetingRecording[]>;
+  deleteRecording(id: string): Promise<void>;
+  /** Deletes the audio but keeps the recording and anything made from it. */
+  deleteRecordingAudio(id: string): Promise<void>;
+  recordingsUsage(): Promise<RecordingsUsage>;
+  deleteAllRecordingAudio(): Promise<void>;
+  deleteAllRecordings(): Promise<void>;
+  /** Asks the system for microphone access now; resolves with the answer. */
+  requestRecordingPermissions(): Promise<RecordingPermissions>;
+  /** Stops the recording and lets the app's quit continue. */
+  confirmRecordingQuit(): Promise<void>;
   /** Local context for preparing one meeting; `mailScope` overrides the calendar's own mail account. */
   meetingContext(reference: NoteReference, mailScope?: string[] | null): Promise<MeetingContext>;
   /** Native preview of the bounded local sources for an AI meeting preparation brief. */
@@ -802,6 +827,20 @@ const tauriClient: MailClient = {
   noteBacklinks: (reference) => read("note_backlinks", { reference }),
   recordingSettings: () => read("recording_settings"),
   setRecordingSettings: (settings) => complete("set_recording_settings", { settings }),
+  recordingCapabilities: () => read("recording_capabilities"),
+  recordingStatus: () => read("recording_status"),
+  startRecording: (request) => complete("recording_start", request),
+  pauseRecording: () => complete("recording_pause"),
+  resumeRecording: () => complete("recording_resume"),
+  stopRecording: () => complete("recording_stop"),
+  listRecordings: (eventRef) => read("list_recordings", { eventRef }),
+  deleteRecording: (id) => complete("delete_recording", { id }),
+  deleteRecordingAudio: (id) => complete("delete_recording_audio", { id }),
+  recordingsUsage: () => read("recordings_usage"),
+  deleteAllRecordingAudio: () => complete("delete_all_recording_audio"),
+  deleteAllRecordings: () => complete("delete_all_recordings"),
+  requestRecordingPermissions: () => complete("request_recording_permissions"),
+  confirmRecordingQuit: () => complete("recording_confirm_quit"),
   meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),
   meetingSourcePreview: (reference, mailScope = null, selection = null) => read("meeting_source_preview", { reference, mailScope, selection }),
   prepareMeetingBrief: (reference, mailScope, selection, expectedPayloadRevision, provider, model, endpoint, reasoning = "default") =>

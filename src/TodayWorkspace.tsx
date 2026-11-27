@@ -49,6 +49,9 @@ import { isFinished, itemBlock, carriedLabel, linkKey, type PlanCandidate, type 
 import { PlanningInbox, readInboxFilter, uniqueInboxEntries, interleaveInboxCategories, type InboxCategory, type InboxEntry, type InboxFilter, type PlanningInboxHandle } from "./PlanningInbox";
 import { TodayDayView } from "./TodayDayView";
 import { EventNoteAction } from "./NoteEntityContext";
+import { RecordMeetingButton } from "./RecordMeetingButton";
+import { recordOffer } from "./recordingPolicy";
+import { useRecording } from "./recordingContext";
 import { refreshSyncedData } from "./refreshSyncedData";
 import { usePullToRefresh } from "./usePullToRefresh";
 import { PullToRefreshStatus } from "./PullToRefreshStatus";
@@ -268,6 +271,7 @@ function TodayLayout({
   const pull = usePullToRefresh(pageRef, refreshToday);
   const openPromises = promises.filter((promise) => !dismissed.includes(promise.messageId));
 
+  const recording = useRecording();
   const notice = (next: Notice) => { if (onNotice) onNotice(next); else setAnnouncement(next.message); };
   const openNoteAction = plan && onOpenNote ? { label: "Open Note", run: () => onOpenNote(plan.noteId) } : undefined;
   const planWriteFailed = (reason: unknown) => notice({ message: errorMessage(reason), action: openNoteAction });
@@ -366,7 +370,10 @@ function TodayLayout({
       unread ? <span key="unread" className="calendar-event-mark-count" title="Unread from attendees"><Mail size={ICON_SIZE.xs} />{unread}</span> : null,
     ].filter(Boolean);
     return {
-      action: onAddNote && meetingEventReference(event) ? <EventNoteAction occurrence={meetingEventReference(event)!} labelSuffix={event.title} onActivate={() => onAddNote(event)} /> : null,
+      action: (recording.enabled && recordOffer(recording.status, event, now) !== null) || (onAddNote && meetingEventReference(event)) ? <>
+        <RecordMeetingButton event={event} labelSuffix={event.title} />
+        {onAddNote && meetingEventReference(event) ? <EventNoteAction occurrence={meetingEventReference(event)!} labelSuffix={event.title} onActivate={() => onAddNote(event)} /> : null}
+      </> : null,
       rowKey: `meeting:${preparationKey(event)}`,
       description: [row ? readinessSummary(row) : null, unread ? `${unread} unread from attendees` : null].filter(Boolean).join(" · ") || null,
       mark: !onAddNote && marks.length ? <>{marks}</> : null,
