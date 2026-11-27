@@ -207,6 +207,7 @@ cmd_build() {
     printf 'build_args=(%s)\n' "$(printf '%q ' "${build_args[@]}")"
     cat <<'REMOTE'
 set -Eeuo pipefail
+export PATH="/opt/homebrew/bin:$PATH"
 [[ -e "$clone/.git" ]] || { echo "error: no clone at $clone; add a 'threestrands' project and run tart-vm mac sync" >&2; exit 1; }
 git -C "$clone" fetch --quiet --prune origin
 if [[ -e "$build/.git" ]]; then
