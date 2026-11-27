@@ -5,6 +5,9 @@
 //! Nothing here is sent anywhere. The model URLs are fetched only when the
 //! user chooses to download a model, and each download is checked against its
 //! pinned size and SHA-256 before it is used.
+// Offers (stage 5), transcription (stage 3), and the recap (stage 4) read
+// the limits here that nothing uses yet.
+#![allow(dead_code)]
 
 use std::time::Duration;
 
@@ -38,6 +41,30 @@ pub const RESTART_BACKOFF: [Duration; 3] = [
     Duration::from_secs(2),
     Duration::from_secs(4),
 ];
+/// A track's audio is treated as contiguous while each callback's host time
+/// lands within this much of where the previous callback's audio ended.
+/// Beyond it (sleep, a dropout, audio lost to an overrun) the segment ends
+/// and a gap is recorded, so timestamps stay true to the wall clock.
+pub const CAPTURE_GAP_TOLERANCE: Duration = Duration::from_millis(100);
+/// Audio a capture ring buffer holds between the device callback and the
+/// capture thread. Beyond it, new audio is dropped and counted.
+pub const CAPTURE_RING: Duration = Duration::from_secs(2);
+/// How often the capture thread drains its ring buffer.
+pub const CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// Quiet time after the last device notification (default input or output
+/// changed, a device added or removed) before capture follows the change,
+/// so a burst of notifications moves the track once.
+pub const DEVICE_CHANGE_DEBOUNCE: Duration = Duration::from_millis(500);
+
+/// How often the retention sweep runs while the app is open (it also runs
+/// at launch).
+pub const RETENTION_SWEEP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// Audio age, counted from when the recording ended, at which **Keep Audio**
+/// set to 7 days deletes it.
+pub const KEEP_AUDIO_SHORT: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// The same for **Keep Audio** set to 30 days.
+pub const KEEP_AUDIO_LONG: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
 /// How long before a meeting starts the app may offer to record it.
 pub const OFFER_WINDOW: Duration = Duration::from_secs(10 * 60);
 

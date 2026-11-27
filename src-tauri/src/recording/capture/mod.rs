@@ -1,20 +1,34 @@
 //! What the recording service needs from a platform's audio capture. The
-//! service never sees audio: a backend writes samples itself (stage 2) and
-//! reports only health, through [`CaptureEvent`]s. That keeps the state
-//! machine testable against [`fake`] and lets each platform implement one
-//! small trait.
+//! service never sees audio: a backend writes samples itself, through
+//! [`pipeline::TrackPipeline`] into `segments.rs`, and reports only health
+//! through [`CaptureEvent`]s. That keeps the state machine testable against
+//! [`fake`] and lets each platform implement one small trait.
 //!
-//! The macOS backend (a Core Audio process tap for system audio, `cpal` for
-//! the microphone; see `spikes/meeting-recording/src/tap.rs`) implements
-//! [`CaptureBackend`] with one [`CaptureSession`] per track. Its audio
-//! callbacks call the [`EventSink`] from their own threads, so sending an
-//! event must never block.
+//! The macOS backend ([`macos`]: an IOProc on the default input for the
+//! microphone, a Core Audio process tap for system audio) implements
+//! [`CaptureBackend`] with one [`CaptureSession`] per track. Each session
+//! has its own capture thread, which drains the device callback's ring
+//! buffer ([`ring`]), downmixes, resamples ([`resample`]), writes segments,
+//! and sends events, so sending an event never happens on the real-time
+//! audio thread.
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 #[cfg(test)]
 pub(crate) mod fake;
+#[cfg(target_os = "macos")]
+pub mod macos;
+// Only the macOS backend drives the capture pipeline so far; Windows and
+// Linux backends (stages 6 and 7) will reuse it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub mod pipeline;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub mod resample;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub mod ring;
 
 /// One of the two audio streams a recording keeps apart. "You" is the
 /// microphone and "Others" is the computer's audio.
@@ -60,6 +74,7 @@ pub enum SystemAudioSupport {
         minor: u32,
     },
     /// This platform has no system audio capture yet.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Unsupported,
 }
 
@@ -85,8 +100,24 @@ pub enum CaptureEvent {
 /// reads it from `tick()`.
 pub type EventSink = Sender<CaptureEvent>;
 
+/// Where a track's audio is written, and the clock it is placed on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackTarget {
+    /// The recording's directory; segments and manifests go here.
+    pub audio_dir: PathBuf,
+    /// When the recording started, on the backend's host clock
+    /// ([`CaptureBackend::host_time_ns`]). Segment start times are measured
+    /// from it.
+    pub origin_host_ns: u64,
+}
+
 /// A platform's capture capability.
 pub trait CaptureBackend: Send + Sync {
+    /// Whether this platform can record at all.
+    fn supported(&self) -> bool {
+        true
+    }
+
     /// Whether the system audio track can be started on this device.
     fn system_audio(&self) -> SystemAudioSupport;
 
@@ -95,10 +126,63 @@ pub trait CaptureBackend: Send + Sync {
     /// track's first audio on the recording's timeline.
     fn host_time_ns(&self) -> u64;
 
-    /// Starts capturing `track`, reporting through `events`. An error means
-    /// the track could not start (permission refused, no device); the
-    /// message is shown to the user.
-    fn start(&self, track: Track, events: EventSink) -> Result<Box<dyn CaptureSession>, String>;
+    /// Starts capturing `track` into `target`, reporting through `events`.
+    /// An error means the track could not start (permission refused, no
+    /// device); the message is shown to the user.
+    fn start(
+        &self,
+        track: Track,
+        target: &TrackTarget,
+        events: EventSink,
+    ) -> Result<Box<dyn CaptureSession>, String>;
+}
+
+/// Shown when a platform has no capture backend yet.
+pub const UNSUPPORTED_MESSAGE: &str = "Recording meetings isn't available on this platform yet.";
+
+/// The backend for platforms without capture: it reports itself unsupported
+/// and refuses every start.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub struct UnsupportedBackend;
+
+impl CaptureBackend for UnsupportedBackend {
+    fn supported(&self) -> bool {
+        false
+    }
+
+    fn system_audio(&self) -> SystemAudioSupport {
+        SystemAudioSupport::Unsupported
+    }
+
+    fn host_time_ns(&self) -> u64 {
+        // Any monotonic clock will do; nothing is ever placed on it.
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_nanos() as u64
+    }
+
+    fn start(
+        &self,
+        _track: Track,
+        _target: &TrackTarget,
+        _events: EventSink,
+    ) -> Result<Box<dyn CaptureSession>, String> {
+        Err(UNSUPPORTED_MESSAGE.into())
+    }
+}
+
+/// This platform's capture backend.
+pub fn platform_backend() -> Arc<dyn CaptureBackend> {
+    #[cfg(target_os = "macos")]
+    {
+        Arc::new(macos::MacBackend::new())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Arc::new(UnsupportedBackend)
+    }
 }
 
 /// One running track. Stopping is idempotent, and dropping a session stops

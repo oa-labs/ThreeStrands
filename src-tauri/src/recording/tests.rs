@@ -616,3 +616,40 @@ fn a_recording_keeps_its_event_reference() {
     assert_eq!(status.event_ref, Some(event.clone()));
     assert_eq!(h.database.list_recordings(&event).unwrap().len(), 1);
 }
+
+#[test]
+fn the_volume_probe_reads_free_space() {
+    let dir = super::test_support::TempDir::new();
+    let free = VolumeProbe(dir.path().to_path_buf()).free_bytes().unwrap();
+    assert!(free > 0);
+    assert!(VolumeProbe(PathBuf::from("/no/such/folder/here"))
+        .free_bytes()
+        .is_err());
+}
+
+#[test]
+fn a_restart_writes_to_the_same_folder_and_a_failed_first_retry_backs_off_again() {
+    let mut h = Harness::new();
+    let id = h.started();
+    let first = h.backend.target(Track::Mic).unwrap();
+    assert_eq!(first.audio_dir, PathBuf::from("/tmp/recordings").join(&id));
+    h.backend.fail_next_starts(Track::Mic, 1, "busy");
+    h.backend.emit_failed(Track::Mic, "gone");
+    h.service.tick();
+    assert_eq!(
+        h.backend.stop_count(Track::Mic),
+        1,
+        "the failed session stopped"
+    );
+    h.advance_secs(1);
+    h.service.tick();
+    assert_eq!(h.track_state(Track::Mic), TrackRunState::Restarting);
+    h.advance_secs(2);
+    h.service.tick();
+    assert_eq!(h.track_state(Track::Mic), TrackRunState::Active);
+    assert_eq!(
+        h.backend.target(Track::Mic).unwrap(),
+        first,
+        "a restarted track keeps the recording's folder and clock"
+    );
+}

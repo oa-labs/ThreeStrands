@@ -49,6 +49,8 @@ mod signatures;
 mod system_contacts;
 mod transport_limits;
 mod transport_validation;
+#[cfg(desktop)]
+mod tray;
 // Mail parsing and text handling live in their own crates; these keep `crate::mime::…` and the
 // other module paths the app already uses.
 use threestrands_mail_mime::{html_plain_text, mime, sender_trust};
@@ -248,6 +250,9 @@ struct AppState {
     /// The folder last chosen for Export to Markdown Folder.
     notes_export_folder: notes_export::ChosenFolder,
     notes_import: notes_import::PendingImport,
+    /// Meeting recording: the one active recording, recovery, retention,
+    /// and the tray's source of truth.
+    recording: Arc<recording::runtime::RecordingRuntime>,
 }
 
 /// SQLite and the mutex guarding its connection are synchronous. Run database
@@ -1241,6 +1246,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .spawn(app.handle().clone(), reconcile_account_registry);
     let agent_runner = agents::Runner::new(database.clone());
     agent_runner.start();
+    let recording = start_recording_runtime(&data_dir, &database, app.handle())?;
     app.manage(AppState {
         agent_runner,
         database,
@@ -1258,8 +1264,45 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         staged_import: transfer::StagedImport::default(),
         notes_export_folder: notes_export::ChosenFolder::default(),
         notes_import: notes_import::PendingImport::default(),
+        recording,
     });
     Ok(())
+}
+
+/// Builds the meeting recording runtime, recovers recordings a crash
+/// interrupted (before anything can start a new one), and starts the
+/// once-a-second tick that drives capture health, limits, the tray's
+/// elapsed time, and the daily retention sweep. The first tick also sweeps
+/// and shows the tray icon when Record Meetings is on.
+#[cfg(desktop)]
+fn start_recording_runtime(
+    data_dir: &std::path::Path,
+    database: &Arc<Database>,
+    handle: &tauri::AppHandle,
+) -> std::io::Result<Arc<recording::runtime::RecordingRuntime>> {
+    let audio_root = data_dir.join("recordings");
+    std::fs::create_dir_all(&audio_root)?;
+    restrict_dir_to_owner(&audio_root);
+    let runtime = Arc::new(recording::runtime::RecordingRuntime::new(
+        database.clone(),
+        recording::capture::platform_backend(),
+        Arc::new(clock::SystemClock),
+        Arc::new(recording::VolumeProbe(audio_root.clone())),
+        audio_root,
+        Arc::new(tray::AppNotifier::new(handle.clone())),
+    ));
+    let recovered = runtime.recover();
+    if recovered > 0 {
+        log::info!(target: "recording", "marked {recovered} interrupted recording(s)");
+    }
+    let ticking = runtime.clone();
+    std::thread::Builder::new()
+        .name("recording-tick".into())
+        .spawn(move || loop {
+            ticking.tick();
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        })?;
+    Ok(runtime)
 }
 
 /// A restored-from-backup database's cursors reflect whatever history state
@@ -1841,6 +1884,20 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::notes::note_backlinks,
         commands::recordings::recording_settings,
         commands::recordings::set_recording_settings,
+        commands::recordings::recording_capabilities,
+        commands::recordings::recording_status,
+        commands::recordings::recording_start,
+        commands::recordings::recording_pause,
+        commands::recordings::recording_resume,
+        commands::recordings::recording_stop,
+        commands::recordings::list_recordings,
+        commands::recordings::delete_recording,
+        commands::recordings::delete_recording_audio,
+        commands::recordings::recordings_usage,
+        commands::recordings::delete_all_recording_audio,
+        commands::recordings::delete_all_recordings,
+        commands::recordings::request_recording_permissions,
+        commands::recordings::recording_confirm_quit,
         commands::meetings::meeting_context,
         commands::meetings::meeting_source_preview,
         commands::meetings::prepare_meeting_brief,
@@ -1907,9 +1964,23 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
             ..
         } => {
             if let Some(state) = handle.try_state::<AppState>() {
-                if !state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
-                    api.prevent_close();
-                    let _ = handle.emit("compose-before-exit", ());
+                let exiting = state.exiting.load(std::sync::atomic::Ordering::SeqCst);
+                match tray::close_action(
+                    exiting,
+                    state.recording.hide_on_close(),
+                    state.recording.is_active(),
+                ) {
+                    tray::CloseAction::Close => {}
+                    tray::CloseAction::Hide => {
+                        api.prevent_close();
+                        if let Some(window) = handle.get_webview_window("main") {
+                            let _ = window.hide();
+                        }
+                    }
+                    tray::CloseAction::ExitHandshake => {
+                        api.prevent_close();
+                        let _ = handle.emit("compose-before-exit", ());
+                    }
                 }
             }
         }
@@ -1929,12 +2000,30 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
         }
         tauri::RunEvent::ExitRequested { api, .. } => {
             if let Some(state) = handle.try_state::<AppState>() {
-                if !state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
-                    api.prevent_exit();
-                    let _ = handle.emit("compose-before-exit", ());
+                let exiting = state.exiting.load(std::sync::atomic::Ordering::SeqCst);
+                match tray::exit_action(exiting, state.recording.is_active()) {
+                    tray::ExitAction::Exit => {}
+                    tray::ExitAction::ConfirmRecordingQuit => {
+                        // The webview asks first, then calls
+                        // `recording_confirm_quit` to continue.
+                        api.prevent_exit();
+                        focus_main_window(handle);
+                        let _ = handle.emit("recording-quit-requested", ());
+                    }
+                    tray::ExitAction::ExitHandshake => {
+                        api.prevent_exit();
+                        let _ = handle.emit("compose-before-exit", ());
+                    }
                 }
             }
         }
+        // The Dock icon brings back a window hidden while Record Meetings
+        // is on.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen {
+            has_visible_windows: false,
+            ..
+        } => focus_main_window(handle),
         tauri::RunEvent::Resumed => {
             update_mail_foreground(handle);
             if let Some(state) = handle.try_state::<AppState>() {
@@ -1965,6 +2054,9 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
         }
         tauri::RunEvent::Exit => {
             if let Some(state) = handle.try_state::<AppState>() {
+                // Finalize the open segments rather than leave them for
+                // crash recovery.
+                state.recording.stop_if_active();
                 state.agent_runner.request_stop();
                 log_failure(
                     "checkpointing the WAL at exit",

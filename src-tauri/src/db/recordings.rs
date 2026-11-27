@@ -2,7 +2,6 @@
 //! device-local Meeting Recording settings. Nothing here replicates or enters
 //! settings transfer. Transcript segments have their own table (transcription
 //! stage); deleting a recording cascades to tracks and segments.
-#![allow(dead_code)] // Stage 2 wires the recording service and commands to this layer.
 
 use super::{serialization_error, Database, DatabaseError, DbResult};
 use crate::note_entities::NoteReference;
@@ -128,6 +127,17 @@ pub struct MeetingRecording {
     pub tracks: Vec<MeetingRecordingTrack>,
 }
 
+/// A recording's audio, as retention and deletion see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordingAudio {
+    pub id: String,
+    pub state: RecordingState,
+    pub audio_dir: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub audio_deleted_at: Option<String>,
+}
+
 /// How an event occurrence is keyed: its reference without contact or series.
 fn event_target(reference: &NoteReference) -> DbResult<String> {
     if reference.kind != "event" {
@@ -244,6 +254,7 @@ impl Database {
         })
     }
 
+    #[allow(dead_code)] // The transcription stage moves recordings through states.
     pub fn set_recording_state(
         &self,
         id: &str,
@@ -284,6 +295,7 @@ impl Database {
         })
     }
 
+    #[allow(dead_code)] // Transcription and review look recordings up by ID.
     pub fn recording(&self, id: &str) -> DbResult<Option<MeetingRecording>> {
         self.with_connection(|c| {
             c.query_row(
@@ -313,6 +325,71 @@ impl Database {
     pub fn delete_recording(&self, id: &str) -> DbResult<bool> {
         self.with_connection(|c| {
             Ok(c.execute("DELETE FROM meeting_recordings WHERE id=?1", [id])? > 0)
+        })
+    }
+
+    /// Every recording's audio location and age, oldest first.
+    pub fn recording_audio(&self) -> DbResult<Vec<RecordingAudio>> {
+        self.with_connection(|c| {
+            let mut statement = c.prepare(
+                "SELECT id,state,audio_dir,started_at,ended_at,audio_deleted_at
+                 FROM meeting_recordings ORDER BY started_at, id",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })?;
+            let mut audio = Vec::new();
+            for row in rows {
+                let (id, state, audio_dir, started_at, ended_at, audio_deleted_at) = row?;
+                audio.push(RecordingAudio {
+                    id,
+                    state: RecordingState::parse(&state)?,
+                    audio_dir,
+                    started_at,
+                    ended_at,
+                    audio_deleted_at,
+                });
+            }
+            Ok(audio)
+        })
+    }
+
+    /// One recording's audio location, if the recording exists.
+    pub fn recording_audio_of(&self, id: &str) -> DbResult<Option<RecordingAudio>> {
+        Ok(self
+            .recording_audio()?
+            .into_iter()
+            .find(|audio| audio.id == id))
+    }
+
+    /// Notes that a recording's audio files were deleted.
+    pub fn mark_recording_audio_deleted(&self, id: &str, at: &str) -> DbResult<()> {
+        self.with_connection(|c| {
+            let changed = c.execute(
+                "UPDATE meeting_recordings SET audio_deleted_at=?2 WHERE id=?1",
+                params![id, at],
+            )?;
+            if changed == 0 {
+                return Err(DatabaseError::NotFound("Recording"));
+            }
+            Ok(())
+        })
+    }
+
+    pub fn recording_count(&self) -> DbResult<i64> {
+        self.with_connection(|c| {
+            Ok(
+                c.query_row("SELECT COUNT(*) FROM meeting_recordings", [], |row| {
+                    row.get(0)
+                })?,
+            )
         })
     }
 

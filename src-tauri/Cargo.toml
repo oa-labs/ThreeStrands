@@ -68,7 +68,7 @@ serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 serde_json = "1"
 sha2 = "0.11"
-tauri = { version = "2.12.1", features = [] }
+tauri = { version = "2.12.1", features = ["tray-icon"] }
 tauri-plugin-log = "2.9.2"
 tauri-plugin-opener = "2"
 thiserror = "2"
@@ -148,10 +148,16 @@ block2 = "0.6"
 objc2-contacts = "0.3"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSRunningApplication", "block2", "objc2-uniform-type-identifiers"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSBundle", "NSData", "NSDate", "NSDictionary", "NSError", "NSHTTPCookieStorage", "NSObject", "NSOperation", "NSString", "NSURL", "NSURLAuthenticationChallenge", "NSURLCache", "NSURLCredential", "NSURLCredentialStorage", "NSURLProtectionSpace", "NSURLRequest", "NSURLResponse", "NSURLSession"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSBundle", "NSData", "NSDate", "NSDictionary", "NSError", "NSHTTPCookieStorage", "NSObject", "NSOperation", "NSProcessInfo", "NSString", "NSURL", "NSURLAuthenticationChallenge", "NSURLCache", "NSURLCredential", "NSURLCredentialStorage", "NSURLProtectionSpace", "NSURLRequest", "NSURLResponse", "NSURLSession", "NSUUID", "NSValue"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
-objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes", "CFDictionary", "CFString"] }
 objc2-quick-look-thumbnailing = { version = "0.3", default-features = false, features = ["std", "block2", "QLThumbnailGenerator", "QLThumbnailGenerationRequest", "objc2-core-foundation", "objc2-uniform-type-identifiers"] }
+# Meeting recording: the microphone through a Core Audio IOProc and system
+# audio through a process tap (macOS 14.4+) inside a private aggregate device.
+# The resampler and WAV writer are written in the app (recording/capture/),
+# so no cpal, rubato, or hound.
+objc2-core-audio = { version = "0.3", default-features = false, features = ["std", "AudioHardware", "objc2", "objc2-foundation", "objc2-core-audio-types"] }
+objc2-core-audio-types = { version = "0.3", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
 
 # Files previews on Windows: the Shell thumbnail provider (IShellItemImageFactory,
 # the Explorer thumbnail pipeline — the same IThumbnailProvider extensions Quick

@@ -65,9 +65,11 @@ cmd_sign_app() {
   [[ -z "$(find "$app" -type l -print -quit)" ]] || die "$app contains symbolic links"
   local identity
   identity="$(signing_identity)"
-  # Match Tauri: hardened runtime and a secure timestamp, binary first.
-  codesign --force --options runtime --timestamp --sign "$identity" "$binary"
-  codesign --force --options runtime --timestamp --sign "$identity" "$app"
+  # Match Tauri: hardened runtime, the bundle's entitlements (microphone
+  # input for Meeting Recording), and a secure timestamp, binary first.
+  local entitlements="$repo_root/src-tauri/Entitlements.plist"
+  codesign --force --options runtime --timestamp --entitlements "$entitlements" --sign "$identity" "$binary"
+  codesign --force --options runtime --timestamp --entitlements "$entitlements" --sign "$identity" "$app"
   codesign --verify --deep --strict --verbose=2 "$app"
   echo "Signed $app with $identity"
 }

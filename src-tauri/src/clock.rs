@@ -16,7 +16,8 @@ pub(crate) trait Clock {
     }
 }
 
-struct SystemClock;
+/// The real clock (overridable in tests through `TEST_TIME`).
+pub(crate) struct SystemClock;
 impl Clock for SystemClock {
     fn now(&self) -> SystemTime {
         #[cfg(test)]

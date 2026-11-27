@@ -6,19 +6,26 @@
 //! a fake clock. Audio never passes through here; a [`capture::CaptureBackend`]
 //! writes samples itself and reports health, which is all the service uses.
 //!
-//! Stage 1 builds only this contract. Nothing constructs the service until
-//! stage 2 wires it to the app, hence the `dead_code` allowance below.
-#![allow(dead_code)] // Stage 2 wires the service, commands, and tray to this module.
+//! The app reaches it through [`runtime::RecordingRuntime`], which adds the
+//! tick thread's work, crash recovery, retention, and change events.
 
 pub mod capture;
+pub mod permissions;
 pub mod policy;
+pub mod retention;
+pub mod runtime;
+pub mod segments;
 pub mod settings;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use crate::clock::Clock;
 use crate::db::recordings::{NewRecording, RecordingState, TrackPatch, TrackState};
 use crate::db::Database;
 use crate::note_entities::NoteReference;
-use capture::{CaptureBackend, CaptureEvent, CaptureSession, EventSink, SystemAudioSupport, Track};
+use capture::{
+    CaptureBackend, CaptureEvent, CaptureSession, EventSink, SystemAudioSupport, Track, TrackTarget,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -29,6 +36,31 @@ use std::time::{Duration, SystemTime};
 /// Free space on the volume recordings are written to.
 pub trait DiskProbe: Send + Sync {
     fn free_bytes(&self) -> Result<u64, String>;
+}
+
+/// The real [`DiskProbe`]: free space on the volume holding `path`.
+pub struct VolumeProbe(pub PathBuf);
+
+impl DiskProbe for VolumeProbe {
+    #[cfg(unix)]
+    fn free_bytes(&self) -> Result<u64, String> {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::ffi::CString::new(self.0.as_os_str().as_bytes())
+            .map_err(|_| "The recordings folder has an invalid name.".to_string())?;
+        let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `path` is NUL-terminated and `stats` a valid out-pointer.
+        if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        // Space available to this (unprivileged) user.
+        Ok(stats.f_bavail as u64 * stats.f_frsize as u64)
+    }
+
+    #[cfg(not(unix))]
+    fn free_bytes(&self) -> Result<u64, String> {
+        // Recording isn't available on these platforms yet; nothing writes.
+        Ok(u64::MAX)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -104,6 +136,7 @@ struct Active {
     event_ref: Option<NoteReference>,
     started_at: SystemTime,
     start_host_ns: u64,
+    target: TrackTarget,
     paused_total: Duration,
     paused_since: Option<SystemTime>,
     tracks: HashMap<Track, TrackRun>,
@@ -120,6 +153,9 @@ pub struct RecordingService {
     inbox: Receiver<CaptureEvent>,
     active: Option<Active>,
     last_stop_reason: Option<StopReason>,
+    /// A recording row the last start created and then failed, so its
+    /// caller can announce it.
+    failed_start: Option<String>,
 }
 
 fn rfc3339(time: SystemTime) -> String {
@@ -145,6 +181,7 @@ impl RecordingService {
             inbox,
             active: None,
             last_stop_reason: None,
+            failed_start: None,
         }
     }
 
@@ -182,6 +219,12 @@ impl RecordingService {
             TrackState::Unavailable
         };
         let audio_dir = self.audio_root.join(&id);
+        // Taken before any track starts, so every segment and first frame
+        // is placed after it.
+        let target = TrackTarget {
+            audio_dir: audio_dir.clone(),
+            origin_host_ns: self.backend.host_time_ns(),
+        };
         self.database
             .create_recording(&NewRecording {
                 id: &id,
@@ -206,7 +249,7 @@ impl RecordingService {
                 tracks.insert(track, TrackRun::unavailable(now));
                 continue;
             }
-            match self.backend.start(track, self.events.clone()) {
+            match self.backend.start(track, &target, self.events.clone()) {
                 Ok(session) => {
                     tracks.insert(track, TrackRun::active(session, now));
                 }
@@ -226,6 +269,7 @@ impl RecordingService {
             self.database
                 .finish_recording(&id, &rfc3339(now), 0, RecordingState::Failed, Some(&error))
                 .map_err(String::from)?;
+            self.failed_start = Some(id);
             return Err(error);
         }
         self.active = Some(Active {
@@ -233,13 +277,19 @@ impl RecordingService {
             title: title.to_string(),
             event_ref,
             started_at: now,
-            start_host_ns: self.backend.host_time_ns(),
+            start_host_ns: target.origin_host_ns,
+            target,
             paused_total: Duration::ZERO,
             paused_since: None,
             tracks,
             any_audio: false,
         });
         Ok(self.status())
+    }
+
+    /// The recording the last start created and then ended as failed, once.
+    pub fn take_failed_start(&mut self) -> Option<String> {
+        self.failed_start.take()
     }
 
     pub fn pause(&mut self) -> Result<RecordingStatus, String> {
@@ -520,7 +570,10 @@ impl RecordingService {
     }
 
     fn restart(&mut self, track: Track, now: SystemTime) {
-        match self.backend.start(track, self.events.clone()) {
+        let Some(target) = self.active.as_ref().map(|a| a.target.clone()) else {
+            return;
+        };
+        match self.backend.start(track, &target, self.events.clone()) {
             Ok(session) => {
                 if let Some(run) = self.active.as_mut().and_then(|a| a.tracks.get_mut(&track)) {
                     run.state = RunState::Active;

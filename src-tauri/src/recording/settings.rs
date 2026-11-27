@@ -18,6 +18,7 @@ pub enum TranscriptionModelChoice {
 }
 
 impl TranscriptionModelChoice {
+    #[allow(dead_code)] // The transcription stage reads it.
     pub fn model(self) -> TranscriptionModel {
         match self {
             Self::Fast => TranscriptionModel::Fast,

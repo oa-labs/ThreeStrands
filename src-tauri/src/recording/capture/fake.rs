@@ -1,7 +1,9 @@
 //! A scriptable capture backend for the state machine's tests. Clone it
 //! before handing it to the service: both clones share one script.
 
-use super::{CaptureBackend, CaptureEvent, CaptureSession, EventSink, SystemAudioSupport, Track};
+use super::{
+    CaptureBackend, CaptureEvent, CaptureSession, EventSink, SystemAudioSupport, Track, TrackTarget,
+};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -12,6 +14,8 @@ struct TrackScript {
     /// Errors for the next starts, consumed one per start.
     fail_next: Vec<String>,
     sink: Option<EventSink>,
+    /// Where the last start was told to write.
+    target: Option<TrackTarget>,
     running: bool,
     paused: bool,
     starts: usize,
@@ -120,6 +124,10 @@ impl FakeBackend {
         self.with(track, |t| t.running)
     }
 
+    pub fn target(&self, track: Track) -> Option<TrackTarget> {
+        self.with(track, |t| t.target.clone())
+    }
+
     pub fn is_paused(&self, track: Track) -> bool {
         self.with(track, |t| t.paused)
     }
@@ -134,8 +142,14 @@ impl CaptureBackend for FakeBackend {
         self.script.lock().unwrap().host_time_ns
     }
 
-    fn start(&self, track: Track, events: EventSink) -> Result<Box<dyn CaptureSession>, String> {
+    fn start(
+        &self,
+        track: Track,
+        target: &TrackTarget,
+        events: EventSink,
+    ) -> Result<Box<dyn CaptureSession>, String> {
         self.with(track, |t| {
+            t.target = Some(target.clone());
             if !t.fail_next.is_empty() {
                 return Err(t.fail_next.remove(0));
             }

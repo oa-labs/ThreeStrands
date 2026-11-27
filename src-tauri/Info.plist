@@ -5,11 +5,17 @@
      and the .ics document type lets it open calendar invitations. Both arrive
      as RunEvent::Opened (see mail_links.rs and calendar_files.rs). The .ics
      rank is Alternate so installing never takes over calendar files; the
-     user chooses ThreeStrands in Settings → Default Apps or in Finder. -->
+     user chooses ThreeStrands in Settings → Default Apps or in Finder.
+     The microphone and audio capture descriptions are shown when Meeting
+     Recording asks for permission (recording/permissions.rs). -->
 <plist version="1.0">
 <dict>
 	<key>NSContactsUsageDescription</key>
 	<string>Use selected Mac address books to find people and suggest email recipients. ThreeStrands never changes your Apple Contacts.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record your side of meetings you choose to record. Recordings stay on this Mac.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Record what other people say in meetings you choose to record, from your Mac's audio. Recordings stay on this Mac.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
