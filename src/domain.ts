@@ -1891,7 +1891,30 @@ export type MeetingRecording = {
   durationMs: number;
   state: MeetingRecordingState;
   error: string | null;
+  /** True once the audio files were deleted (retention or Delete Audio). */
+  audioDeleted: boolean;
+  /** Whole percent 0-100 while state is "transcribing"; null otherwise. */
+  transcriptionPercent: number | null;
   tracks: { track: RecordingTrackName; state: "active" | "failed" | "unavailable"; deviceName: string | null; firstFrameOffsetMs: number | null; error: string | null }[];
+};
+
+export type TranscriptionModelName = TranscriptionModelChoice;
+export type TranscriptionModelStatus = {
+  model: TranscriptionModelName;
+  /** Pinned size of the model file, for size labels and progress. */
+  bytes: number;
+  state: "absent" | "downloading" | "verifying" | "ready" | "failed";
+  /** Bytes on disk so far. Above 0 while absent or failed means a partial download that Download resumes. */
+  receivedBytes: number;
+  /** Why the last download or load failed, in plain words; null otherwise. */
+  error: string | null;
+};
+export type TranscriptSpeaker = "you" | "others";
+export type RecordingTranscript = {
+  recordingId: string;
+  /** False when only the microphone was recorded; every line's speaker is then null. */
+  speakerLabels: boolean;
+  lines: { startMs: number; endMs: number; speaker: TranscriptSpeaker | null; text: string }[];
 };
 
 /** What this device can record, from `recording_capabilities`. `supported` is false off macOS, where all recording UI is hidden. */

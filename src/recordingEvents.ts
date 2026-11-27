@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { logBackgroundFailure } from "./errors";
-import type { RecordingStatus } from "./domain";
+import type { RecordingStatus, TranscriptionModelStatus } from "./domain";
 
 /** Events the native recorder sends the webview. */
 export type RecordingEvents = {
@@ -8,6 +8,10 @@ export type RecordingEvents = {
   "recording-state": RecordingStatus;
   /** A recording's row changed, such as when its state moved on. */
   "recordings-changed": { recordingId: string };
+  /** Whole-percent progress of a transcription, only when the percent changes. */
+  "transcription-progress": { recordingId: string; percent: number };
+  /** Every transcription model state change; the full list, fast then accurate. */
+  "transcription-models-changed": TranscriptionModelStatus[];
   /** A menu bar command that needs the app's own flow. */
   "recording-tray-command": { command: "start" | "openSettings" };
   /** The user tried to quit while recording. */

@@ -1,8 +1,23 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
-import type { RecordingCapabilities, RecordingSettings } from "./domain";
+import type { RecordingCapabilities, RecordingSettings, TranscriptionModelStatus } from "./domain";
+import type { RecordingEvents } from "./recordingEvents";
 import { MeetingRecordingSettings } from "./MeetingRecordingSettings";
+
+const bus = vi.hoisted(() => {
+  const handlers = new Map<string, Set<(payload: unknown) => void>>();
+  return { handlers, emit(name: string, payload: unknown) { for (const handler of handlers.get(name) ?? []) handler(payload); } };
+});
+vi.mock("./recordingEvents", async (original) => ({
+  ...(await original<typeof import("./recordingEvents")>()),
+  listenForRecordingEvent: (name: string, handler: (payload: unknown) => void) => {
+    const set = bus.handlers.get(name) ?? new Set();
+    set.add(handler);
+    bus.handlers.set(name, set);
+    return () => set.delete(handler);
+  },
+}));
 
 const available: RecordingCapabilities = { supported: true, systemAudio: { kind: "available" } };
 const defaults: RecordingSettings = {
@@ -10,7 +25,12 @@ const defaults: RecordingSettings = {
   summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: false,
 };
 
-function setup(capabilities = available, saved = defaults, usage = { recordings: 3, audioBytes: 5 * 1024 * 1024 }) {
+const model = (name: "fast" | "accurate", overrides: Partial<TranscriptionModelStatus> = {}): TranscriptionModelStatus => ({
+  model: name, bytes: name === "fast" ? 190_000_000 : 574_000_000, state: "absent", receivedBytes: 0, error: null, ...overrides,
+});
+
+function setup(capabilities = available, saved = defaults, usage = { recordings: 3, audioBytes: 5 * 1024 * 1024 }, models = [model("fast"), model("accurate")]) {
+  vi.spyOn(mailClient, "transcriptionModels").mockResolvedValue(models);
   vi.spyOn(mailClient, "recordingSettings").mockResolvedValue(saved);
   vi.spyOn(mailClient, "recordingsUsage").mockResolvedValue(usage);
   const save = vi.spyOn(mailClient, "setRecordingSettings").mockResolvedValue(undefined);
@@ -147,5 +167,104 @@ describe("MeetingRecordingSettings", () => {
     fireEvent.click(within(screen.getByRole("group", { name: "Confirm Delete All Recordings" })).getByRole("button", { name: "Delete All Recordings" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Disk is read-only");
     expect(screen.getByText("3 recordings, 5.0 MB of audio.")).toBeInTheDocument();
+  });
+});
+
+describe("Transcription Model", () => {
+  beforeEach(() => { vi.restoreAllMocks(); bus.handlers.clear(); });
+  afterEach(cleanup);
+
+  const pushModels = async (models: TranscriptionModelStatus[]) => {
+    await waitFor(() => expect(bus.handlers.get("transcription-models-changed")?.size).toBeGreaterThan(0));
+    act(() => bus.emit("transcription-models-changed" satisfies keyof RecordingEvents, models));
+  };
+  const group = async (name: string) => within(await screen.findByRole("group", { name }));
+
+  it("chooses Fast or Accurate, saves the choice, and describes the field", async () => {
+    const { save } = setup();
+    const field = await screen.findByRole("combobox", { name: "Transcription Model" });
+    expect(field).toHaveValue("fast");
+    expect(field).toHaveAccessibleDescription();
+    expect(within(field).getAllByRole("option").map((option) => option.textContent)).toEqual(["Fast", "Accurate"]);
+    fireEvent.change(field, { target: { value: "accurate" } });
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ ...defaults, transcriptionModel: "accurate" }));
+  });
+
+  it("shows each model's size, language note and state, and downloads nothing until Download is pressed", async () => {
+    setup();
+    const download = vi.spyOn(mailClient, "downloadTranscriptionModel").mockResolvedValue(undefined);
+    const fast = await group("Fast model");
+    await waitFor(() => expect(fast.getByText("190 MB, English only")).toBeInTheDocument());
+    expect(fast.getByText("Not downloaded")).toBeInTheDocument();
+    const accurate = await group("Accurate model");
+    expect(accurate.getByText("574 MB, many languages")).toBeInTheDocument();
+    expect(download).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Transcription Model" }), { target: { value: "accurate" } });
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Transcription Model" })).toHaveValue("accurate"));
+    expect(download).not.toHaveBeenCalled();
+    fireEvent.click(accurate.getByRole("button", { name: "Download" }));
+    await waitFor(() => expect(download).toHaveBeenCalledExactlyOnceWith("accurate"));
+  });
+
+  it("offers Download for a partial download and says how far it got", async () => {
+    setup(available, defaults, undefined, [model("fast", { receivedBytes: 95_000_000 }), model("accurate")]);
+    const fast = await group("Fast model");
+    await waitFor(() => expect(fast.getByText("Partly downloaded, 50%")).toBeInTheDocument());
+    expect(fast.getByRole("button", { name: "Download" })).toBeInTheDocument();
+  });
+
+  it("shows progress with Cancel while downloading, updating from the event", async () => {
+    setup(available, defaults, undefined, [model("fast", { state: "downloading", receivedBytes: 19_000_000 }), model("accurate")]);
+    const cancel = vi.spyOn(mailClient, "cancelTranscriptionModelDownload").mockResolvedValue(undefined);
+    const fast = await group("Fast model");
+    await waitFor(() => expect(fast.getByText("Downloading… 10%")).toBeInTheDocument());
+    expect(fast.getByRole("progressbar", { name: "Fast model download" })).toHaveValue(10);
+    expect(fast.queryByRole("button", { name: "Download" })).not.toBeInTheDocument();
+    await pushModels([model("fast", { state: "downloading", receivedBytes: 95_000_000 }), model("accurate")]);
+    expect(fast.getByText("Downloading… 50%")).toBeInTheDocument();
+    expect(fast.getByRole("progressbar", { name: "Fast model download" })).toHaveValue(50);
+    fireEvent.click(fast.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledExactlyOnceWith("fast"));
+  });
+
+  it("shows checking while verifying, with no way to cancel", async () => {
+    setup(available, defaults, undefined, [model("fast", { state: "verifying", receivedBytes: 190_000_000 }), model("accurate")]);
+    const fast = await group("Fast model");
+    await waitFor(() => expect(fast.getByText("Checking the download…")).toBeInTheDocument());
+    expect(fast.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("shows the failure with Try Again, which downloads again", async () => {
+    setup(available, defaults, undefined, [model("fast", { state: "failed", error: "Not enough free disk space to download the model." }), model("accurate")]);
+    const download = vi.spyOn(mailClient, "downloadTranscriptionModel").mockResolvedValue(undefined);
+    const fast = await group("Fast model");
+    expect(await fast.findByRole("alert")).toHaveTextContent("Not enough free disk space to download the model.");
+    fireEvent.click(fast.getByRole("button", { name: "Try Again" }));
+    await waitFor(() => expect(download).toHaveBeenCalledExactlyOnceWith("fast"));
+  });
+
+  it("asks before deleting a downloaded model, and deletes only when confirmed", async () => {
+    setup(available, defaults, undefined, [model("fast", { state: "ready", receivedBytes: 190_000_000 }), model("accurate")]);
+    const remove = vi.spyOn(mailClient, "deleteTranscriptionModel").mockResolvedValue(undefined);
+    const fast = await group("Fast model");
+    await waitFor(() => expect(fast.getByText("Downloaded")).toBeInTheDocument());
+    fireEvent.click(fast.getByRole("button", { name: "Delete Model" }));
+    const confirm = screen.getByRole("group", { name: "Confirm Delete Model" });
+    await waitFor(() => expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus());
+    expect(remove).not.toHaveBeenCalled();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(remove).not.toHaveBeenCalled();
+    fireEvent.click(fast.getByRole("button", { name: "Delete Model" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Confirm Delete Model" })).getByRole("button", { name: "Delete Model" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith("fast"));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Confirm Delete Model" })).not.toBeInTheDocument());
+  });
+
+  it("says why a command failed", async () => {
+    setup();
+    vi.spyOn(mailClient, "downloadTranscriptionModel").mockRejectedValue(new Error("This model is already downloading."));
+    const fast = await group("Fast model");
+    fireEvent.click(await fast.findByRole("button", { name: "Download" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("already downloading");
   });
 });

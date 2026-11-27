@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { mailClient } from "./data/client";
-import type { KeepAudio, RecordingCapabilities, RecordingSettings, RecordingsUsage } from "./domain";
+import type { KeepAudio, RecordingCapabilities, RecordingSettings, RecordingsUsage, TranscriptionModelName, TranscriptionModelStatus } from "./domain";
 import { errorMessage } from "./errors";
 import { InlineConfirm } from "./InlineConfirm";
 import { announceRecordingSettingsChanged } from "./recordingEvents";
 import { formatAttachmentSize } from "./threadPresentation";
+import { useTranscriptionModels } from "./useTranscriptionModels";
 
 const KEEP_AUDIO: { value: KeepAudio; label: string }[] = [
   { value: "days7", label: "7 Days" },
@@ -13,10 +14,62 @@ const KEEP_AUDIO: { value: KeepAudio; label: string }[] = [
   { value: "untilTranscribed", label: "Until Transcribed" },
 ];
 
+const MODELS: { value: TranscriptionModelName; label: string; note: string }[] = [
+  { value: "fast", label: "Fast", note: "English only" },
+  { value: "accurate", label: "Accurate", note: "many languages" },
+];
+/** Decimal megabytes, the way the model's download size is quoted. */
+const modelSize = (bytes: number) => `${Math.round(bytes / 1_000_000)} MB`;
+const modelPercent = (model: TranscriptionModelStatus) => (model.bytes > 0 ? Math.min(100, Math.floor((model.receivedBytes / model.bytes) * 100)) : 0);
+
 const MICROPHONE_DENIED = "Microphone access is off for ThreeStrands. Turn it on in System Settings → Privacy & Security → Microphone, then try again.";
 const MICROPHONE_RESTRICTED = "Microphone access is restricted on this Mac, so ThreeStrands can't record. Ask whoever manages this Mac to allow it in System Settings → Privacy & Security → Microphone.";
 
 type Confirming = "audio" | "recordings" | null;
+
+/** One transcription model: its size, its state, and the one thing the user can do next. Nothing downloads until Download is pressed. */
+function TranscriptionModelRow({ model, label, note, onDownload, onCancel, onDelete, busy }: {
+  model: TranscriptionModelStatus | undefined;
+  label: string;
+  note: string;
+  onDownload(): void;
+  onCancel(): void;
+  onDelete(): void;
+  busy: boolean;
+}) {
+  const id = useId();
+  const percent = model ? modelPercent(model) : 0;
+  const partial = model && model.receivedBytes > 0 && model.state !== "ready";
+  let status = "Checking…";
+  if (model) {
+    switch (model.state) {
+      case "absent": status = partial ? `Partly downloaded, ${percent}%` : "Not downloaded"; break;
+      case "downloading": status = `Downloading… ${percent}%`; break;
+      case "verifying": status = "Checking the download…"; break;
+      case "ready": status = "Downloaded"; break;
+      case "failed": status = "Download failed"; break;
+    }
+  }
+  return (
+    <div className="transcription-model" role="group" aria-label={`${label} model`} aria-describedby={id}>
+      <div className="transcription-model-text" id={id}>
+        <span className="transcription-model-name">{label}</span>
+        <span className="settings-hint">{model ? modelSize(model.bytes) : "…"}, {note}</span>
+        <span className="settings-hint" role="status">{status}</span>
+      </div>
+      {model?.state === "downloading" || model?.state === "verifying" ? (
+        <progress className="transcription-model-progress" max={100} value={model.state === "downloading" ? percent : undefined} aria-label={`${label} model download`} />
+      ) : null}
+      <div className="transcription-model-actions">
+        {model?.state === "absent" ? <button type="button" className="btn" disabled={busy} onClick={onDownload}>Download</button> : null}
+        {model?.state === "failed" ? <button type="button" className="btn" disabled={busy} onClick={onDownload}>Try Again</button> : null}
+        {model?.state === "downloading" ? <button type="button" className="btn" disabled={busy} onClick={onCancel}>Cancel</button> : null}
+        {model?.state === "ready" ? <button type="button" className="btn" disabled={busy} onClick={onDelete}>Delete Model</button> : null}
+      </div>
+      {model?.state === "failed" && model.error ? <p className="form-error" role="alert">{model.error}</p> : null}
+    </div>
+  );
+}
 
 /** Settings → Meeting Recording. Everything saves as it changes. */
 export function MeetingRecordingSettings({ capabilities }: { capabilities: RecordingCapabilities }) {
@@ -27,7 +80,9 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
   const [permissionNote, setPermissionNote] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<Confirming>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const ids = { record: useId(), keep: useId(), remind: useId(), usage: useId() };
+  const [deletingModel, setDeletingModel] = useState<TranscriptionModelName | null>(null);
+  const models = useTranscriptionModels();
+  const ids = { record: useId(), keep: useId(), remind: useId(), usage: useId(), model: useId() };
 
   const loadUsage = useCallback(async () => setUsage(await mailClient.recordingsUsage()), []);
   useEffect(() => {
@@ -81,6 +136,11 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
       setConfirming(null);
     }
   };
+  const modelCommand = async (run: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try { await run(); } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+  };
   const confirm = (kind: Confirming) => { setMessage(null); setConfirming(kind); };
 
   const system = capabilities.systemAudio;
@@ -112,6 +172,44 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
       <p className="settings-hint settings-field-detail" id={ids.keep}>
         How long a recording's audio stays on this Mac before ThreeStrands deletes it. Until Transcribed deletes it once its transcript exists.
       </p>
+
+      <label className="settings-field settings-field-row">
+        <span>Transcription Model</span>
+        <select value={settings?.transcriptionModel ?? "fast"} disabled={!settings} aria-describedby={ids.model}
+          onChange={(event) => void change({ transcriptionModel: event.target.value as TranscriptionModelName })}>
+          {MODELS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </label>
+      <p className="settings-hint settings-field-detail" id={ids.model}>
+        Recordings are transcribed on this Mac, never uploaded, once the chosen model is downloaded. Fast suits English meetings; Accurate is larger and slower but handles many languages.
+      </p>
+      <div className="settings-field-detail transcription-models">
+        {MODELS.map((option) => (
+          <TranscriptionModelRow
+            key={option.value}
+            model={models?.find((model) => model.model === option.value)}
+            label={option.label}
+            note={option.note}
+            busy={busy}
+            onDownload={() => void modelCommand(() => mailClient.downloadTranscriptionModel(option.value))}
+            onCancel={() => void modelCommand(() => mailClient.cancelTranscriptionModelDownload(option.value))}
+            onDelete={() => setDeletingModel(option.value)}
+          />
+        ))}
+      </div>
+      {deletingModel ? (
+        <InlineConfirm
+          ariaLabel="Confirm Delete Model"
+          title={`Delete the ${MODELS.find((option) => option.value === deletingModel)?.label} model?`}
+          cancelLabel="Cancel"
+          onCancel={() => setDeletingModel(null)}
+          disabled={busy}
+          focusCancel
+          actions={[{ label: "Delete Model", className: "btn-danger", onClick: () => void modelCommand(async () => { await mailClient.deleteTranscriptionModel(deletingModel); setDeletingModel(null); }) }]}
+        >
+          The model file is removed from this Mac. Recordings wait to be transcribed until a model is downloaded again.
+        </InlineConfirm>
+      ) : null}
 
       <label className="settings-switch">
         <span>Remind Me to Tell Participants</span>

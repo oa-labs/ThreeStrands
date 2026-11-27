@@ -1,8 +1,31 @@
-import type { MeetingRecording, MicrophonePermission, RecordingCapabilities, RecordingStatus, RecordingStartRequest } from "../domain";
+import type { MeetingRecording, MicrophonePermission, RecordingCapabilities, RecordingStatus, RecordingStartRequest, RecordingTranscript, TranscriptionModelName, TranscriptionModelStatus } from "../domain";
 import { noteReferenceKey, type NoteReference } from "../noteEntities";
 
 /** What the browser preview records into: in memory, with a fixed 1.4 MB per second of audio so Settings has sizes to show. */
 const AUDIO_BYTES_PER_MS = 1.4;
+
+/** Pinned sizes, matching the native model list. */
+const MODEL_BYTES: Record<TranscriptionModelName, number> = { fast: 190_000_000, accurate: 574_000_000 };
+/** How long a demo download takes from nothing to ready. */
+const DEMO_DOWNLOAD_MS = 6_000;
+
+const DEMO_LINES: { speaker: "you" | "others"; text: string }[] = [
+  { speaker: "others", text: "Thanks for making time. Let's start with where the launch checklist stands." },
+  { speaker: "you", text: "The release notes are drafted and QA signed off on Tuesday." },
+  { speaker: "others", text: "Great. Anything blocking the rollout?" },
+  { speaker: "you", text: "Only the migration dry run, which I'll finish today." },
+  { speaker: "others", text: "Then let's confirm Thursday and send the announcement tomorrow." },
+];
+
+/** A believable transcript: lines every 20 seconds, with speakers only when `labels`. */
+function demoTranscript(recordingId: string, durationMs: number, labels: boolean): RecordingTranscript {
+  const step = Math.max(1000, Math.min(20_000, Math.floor(durationMs / DEMO_LINES.length)));
+  return {
+    recordingId,
+    speakerLabels: labels,
+    lines: DEMO_LINES.map((line, index) => ({ startMs: index * step, endMs: (index + 1) * step - 500, speaker: labels ? line.speaker : null, text: line.text })),
+  };
+}
 
 const IDLE: RecordingStatus = {
   state: "idle", recordingId: null, title: null, eventRef: null, elapsedMs: 0, tracks: [],
@@ -10,9 +33,56 @@ const IDLE: RecordingStatus = {
 };
 
 /** In-memory equivalents of the native recording commands, for the browser preview and tests. */
-export function createDemoRecordings(options: { microphone?: MicrophonePermission } = {}) {
+export function createDemoRecordings(options: {
+  microphone?: MicrophonePermission;
+  /** The chosen transcription model; without it Fast is chosen. */
+  chosenModel?: () => TranscriptionModelName;
+  /** Meetings that start with a transcribed recording and a microphone-only one. */
+  seed?: NoteReference[];
+} = {}) {
   const recordings: MeetingRecording[] = [];
-  let audio = new Set<string>();
+  const transcripts = new Map<string, RecordingTranscript>();
+  const models: Record<TranscriptionModelName, { received: number; since: number | null; failed: string | null }> = {
+    fast: { received: 0, since: null, failed: null }, accurate: { received: 0, since: null, failed: null },
+  };
+  const modelStatus = (model: TranscriptionModelName): TranscriptionModelStatus => {
+    const entry = models[model];
+    const bytes = MODEL_BYTES[model];
+    if (entry.since !== null) {
+      const received = Math.min(bytes, entry.received + Math.round(((Date.now() - entry.since) / DEMO_DOWNLOAD_MS) * bytes));
+      if (received >= bytes) { entry.received = bytes; entry.since = null; }
+      else return { model, bytes, state: "downloading", receivedBytes: received, error: null };
+    }
+    if (entry.received >= bytes) return { model, bytes, state: "ready", receivedBytes: bytes, error: null };
+    return { model, bytes, state: entry.failed ? "failed" : "absent", receivedBytes: entry.received, error: entry.failed };
+  };
+  const track = (state: "active" | "unavailable") => [
+    { track: "mic" as const, state: "active" as const, deviceName: "MacBook Pro Microphone", firstFrameOffsetMs: 0, error: null },
+    { track: "system" as const, state, deviceName: null, firstFrameOffsetMs: state === "active" ? 0 : null, error: null },
+  ];
+  const transcribe = (recording: MeetingRecording) => {
+    const labels = recording.tracks.some((entry) => entry.track === "system" && entry.state === "active");
+    transcripts.set(recording.id, demoTranscript(recording.id, recording.durationMs, labels));
+    recording.state = "transcribed";
+  };
+  /** A recording waiting for a model is picked up as soon as the chosen one is ready. */
+  const pickUp = () => {
+    if (modelStatus(options.chosenModel?.() ?? "fast").state !== "ready") return;
+    for (const recording of recordings) if (recording.state === "recorded" && audio.has(recording.id)) transcribe(recording);
+  };
+  for (const [index, eventRef] of (options.seed ?? []).entries()) {
+    for (const [offset, micOnly] of [false, true].entries()) {
+      const id = `demo-seed-${index}-${offset}`;
+      const startedAt = Date.now() - (index * 2 + offset + 1) * 86_400_000;
+      const recording: MeetingRecording = {
+        id, eventRef, title: "Weekly Sync", startedAt: new Date(startedAt).toISOString(), endedAt: new Date(startedAt + 42 * 60_000).toISOString(),
+        durationMs: 42 * 60_000, state: "recorded", error: null, audioDeleted: false, transcriptionPercent: null, tracks: track(micOnly ? "unavailable" : "active"),
+      };
+      recordings.push(recording);
+      transcribe(recording);
+    }
+  }
+  let audio = new Set<string>(recordings.map((recording) => recording.id));
   let counter = 0;
   let active: { id: string; request: RecordingStartRequest; startedAt: number; accrued: number; resumedAt: number | null } | null = null;
   const elapsed = () => active ? active.accrued + (active.resumedAt === null ? 0 : Date.now() - active.resumedAt) : 0;
@@ -48,32 +118,61 @@ export function createDemoRecordings(options: { microphone?: MicrophonePermissio
         recordings.unshift({
           id: active.id, eventRef: active.request.eventRef, title: active.request.title,
           startedAt: new Date(active.startedAt).toISOString(), endedAt: new Date().toISOString(), durationMs: duration, state: "recorded", error: null,
-          tracks: [
-            { track: "mic", state: "active", deviceName: "MacBook Pro Microphone", firstFrameOffsetMs: 0, error: null },
-            { track: "system", state: "active", deviceName: null, firstFrameOffsetMs: 0, error: null },
-          ],
+          audioDeleted: false, transcriptionPercent: null, tracks: track("active"),
         });
         audio.add(active.id);
+        pickUp();
         active = null;
       }
       return status();
     },
     async listRecordings(eventRef: NoteReference) {
       const key = noteReferenceKey(eventRef);
+      pickUp();
       return structuredClone(recordings.filter((recording) => recording.eventRef && noteReferenceKey(recording.eventRef) === key));
     },
     async deleteRecording(id: string) {
       const index = recordings.findIndex((recording) => recording.id === id);
       if (index >= 0) recordings.splice(index, 1);
       audio.delete(id);
+      transcripts.delete(id);
     },
-    async deleteRecordingAudio(id: string) { audio.delete(id); },
+    async deleteRecordingAudio(id: string) {
+      audio.delete(id);
+      const recording = recordings.find((candidate) => candidate.id === id);
+      if (recording) recording.audioDeleted = true;
+    },
     async recordingsUsage() {
       const bytes = recordings.filter((recording) => audio.has(recording.id)).reduce((sum, recording) => sum + durationMs(recording) * AUDIO_BYTES_PER_MS, 0);
       return { recordings: recordings.length, audioBytes: Math.round(bytes) };
     },
-    async deleteAllRecordingAudio() { audio = new Set(); },
-    async deleteAllRecordings() { recordings.splice(0); audio = new Set(); },
+    async deleteAllRecordingAudio() { audio = new Set(); for (const recording of recordings) recording.audioDeleted = true; },
+    async deleteAllRecordings() { recordings.splice(0); audio = new Set(); transcripts.clear(); },
+    async transcriptionModels() { return [modelStatus("fast"), modelStatus("accurate")]; },
+    async downloadTranscriptionModel(model: TranscriptionModelName) {
+      const status = modelStatus(model);
+      if (status.state === "downloading") throw new Error("This model is already downloading.");
+      if (status.state === "ready") throw new Error("This model is already downloaded.");
+      models[model].failed = null;
+      models[model].since = Date.now();
+    },
+    async cancelTranscriptionModelDownload(model: TranscriptionModelName) {
+      const status = modelStatus(model);
+      if (status.state === "downloading") { models[model].received = status.receivedBytes; models[model].since = null; }
+    },
+    async deleteTranscriptionModel(model: TranscriptionModelName) { models[model] = { received: 0, since: null, failed: null }; },
+    async transcribeRecording(id: string) {
+      const recording = recordings.find((candidate) => candidate.id === id);
+      if (!recording || !audio.has(id) || recording.state === "transcribed") throw new Error("This recording can't be transcribed.");
+      recording.state = "recorded";
+      recording.error = null;
+      pickUp();
+    },
+    async recordingTranscript(id: string) {
+      const found = transcripts.get(id);
+      if (!found) throw new Error("This recording has no transcript.");
+      return structuredClone(found);
+    },
     async requestRecordingPermissions() { return { microphone: options.microphone ?? "granted" as const }; },
     async confirmRecordingQuit() { await api.stopRecording(); },
   };

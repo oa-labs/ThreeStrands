@@ -1,4 +1,4 @@
-import type { MeetingRecording, RecordingStatus, RecordingStopReason, ScheduleEvent } from "./domain";
+import type { MeetingRecording, RecordingStatus, RecordingStopReason, RecordingTranscript, ScheduleEvent, TranscriptionModelStatus } from "./domain";
 import { formatClockTime, isDeclined } from "./agendaEvents";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { noteReferenceKey, type NoteReference } from "./noteEntities";
@@ -56,22 +56,48 @@ export function formatElapsed(ms: number): string {
 
 const minutesLabel = (ms: number) => `${Math.max(1, Math.round(ms / 60_000))} min`;
 
-/** The detail line under a Recording row. */
-export function recordingDetail(recording: MeetingRecording): string {
+/** True when a failed recording never captured audio, as opposed to one whose transcription failed. */
+const failedWithoutAudio = (recording: MeetingRecording) => recording.tracks.every((track) => track.state !== "active");
+
+/**
+ * The detail line under a Recording row. `model` is the chosen transcription
+ * model, null until known; `percent` is the latest live progress, which beats
+ * the percent the list carried.
+ */
+export function recordingDetail(recording: MeetingRecording, model: TranscriptionModelStatus | null = null, percent: number | null = null): string {
   const minutes = minutesLabel(recording.durationMs);
   const parts: string[] = [];
   switch (recording.state) {
     case "recording": parts.push("Recording…"); break;
     case "interrupted": parts.push("Interrupted", `${minutes} saved`); break;
-    case "failed": parts.push("Failed"); break;
-    case "transcribing": parts.push(minutes, "Transcribing…"); break;
+    case "failed": parts.push(failedWithoutAudio(recording) ? "Failed" : "Transcription failed"); break;
+    case "transcribing": {
+      const shown = percent ?? recording.transcriptionPercent;
+      parts.push(shown === null ? "Transcribing…" : `Transcribing… ${shown}%`);
+      break;
+    }
     case "transcribed": parts.push(minutes, "Transcribed"); break;
-    case "recorded": parts.push(minutes, "Recorded"); break;
+    case "recorded": parts.push(minutes, model && model.state !== "ready" ? "Waiting for a transcription model" : "Waiting to transcribe"); break;
   }
   const system = recording.tracks.find((track) => track.track === "system");
   if (recording.state !== "recording" && recording.state !== "failed" && system?.state !== "active") parts.push("Microphone only");
   return parts.join(" · ");
 }
+
+/** Show Transcript is offered once there is a transcript. */
+export const canShowTranscript = (recording: MeetingRecording) => recording.state === "transcribed";
+
+/** Retry Transcription is offered for a failed recording whose audio still exists. */
+export const canRetryTranscription = (recording: MeetingRecording) => recording.state === "failed" && !recording.audioDeleted;
+
+/** `[12:34] You: text`, or `[1:02:03] text` without labels; one line per transcript line. */
+export function transcriptCopyText(transcript: RecordingTranscript): string {
+  return transcript.lines
+    .map((line) => `[${formatElapsed(line.startMs)}] ${transcript.speakerLabels && line.speaker ? `${speakerLabel(line.speaker)}: ` : ""}${line.text}`)
+    .join("\n");
+}
+
+export const speakerLabel = (speaker: "you" | "others") => (speaker === "you" ? "You" : "Others");
 
 /** The notice for a recording the app ended on its own, or null for a normal stop. */
 export function stopReasonNotice(reason: RecordingStopReason | null): string | null {
