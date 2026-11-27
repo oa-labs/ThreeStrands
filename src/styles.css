@@ -2647,6 +2647,14 @@ body.task-block-dragging, body.task-block-dragging * { cursor: grabbing !importa
 .follow-through-kind { color: var(--muted); font-size: var(--text-meta); }
 .follow-through-linked { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: var(--text-body); }
 .follow-through-add { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.follow-through-summary { width: 100%; resize: vertical; min-height: 4.5rem; }
+.follow-through-recap { display: grid; gap: var(--space-2); padding: var(--space-2-5) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--input); }
+.follow-through-recap-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2-5); }
+.follow-through-recap-range { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.follow-through-recap-range input { width: 5rem; }
+.follow-through-item-wrap { display: grid; gap: var(--space-1); }
+.follow-through-suggested-badge { display: inline-flex; align-items: center; padding: var(--space-0-5) var(--space-1-5); border-radius: var(--radius-sm); background: var(--hover); color: var(--muted); font-size: var(--text-meta); justify-self: start; }
+.follow-through-evidence { margin: 0 0 0 var(--space-2); padding: var(--space-1) var(--space-2); border-left: 2px solid var(--border); color: var(--muted); font-size: var(--text-meta); display: grid; gap: var(--space-0-5); }
 .follow-through-preview { max-height: 160px; margin: 0; padding: var(--space-2) var(--space-2-5); overflow: auto; border-left: 2px solid var(--border-strong); background: var(--input); color: var(--text); font-family: var(--font-mono); font-size: var(--text-meta); white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 560px) { .follow-through-item { grid-template-columns: minmax(0, 1fr) auto; } .follow-through-item > select { grid-column: 1 / -1; } }
 .modal-form-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); padding-top: var(--space-1); }

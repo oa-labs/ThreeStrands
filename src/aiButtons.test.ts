@@ -13,7 +13,7 @@ const source = (file: string) => readFileSync(resolve(process.cwd(), "src", file
 /** Client methods that send mail, drafts, or questions to the AI provider. */
 const AI_CLIENT_METHODS = [
   "summarizeThread", "analyzeThread", "briefThread", "threadChat",
-  "reviewDraft", "generateReply", "enrichContact", "findTimes", "prepareMeetingBrief",
+  "reviewDraft", "generateReply", "enrichContact", "findTimes", "prepareMeetingBrief", "summarizeRecording",
 ];
 
 /** Where each AI request starts, and the text of the button that starts it. */
@@ -30,11 +30,12 @@ const AI_BUTTONS: { file: string; label: string }[] = [
   { file: "RecipientSections.tsx", label: "/>Re-read" },
   { file: "FindTimesCard.tsx", label: "Adjust</button>" },
   { file: "MeetingPrepBrief.tsx", label: `"Generate Agenda"` },
+  { file: "MeetingFollowThroughDialog.tsx", label: `"Summarize"` },
 ];
 
 /** Files that start AI requests; a new one must add its buttons above. */
 const AI_CALL_SITES = [
-  "useThreadIntelligence.ts", "Composer.tsx", "DraftReviewSection.tsx", "ContactsWorkspace.tsx", "FindTimesCard.tsx", "MeetingPrepBrief.tsx",
+  "useThreadIntelligence.ts", "Composer.tsx", "DraftReviewSection.tsx", "ContactsWorkspace.tsx", "FindTimesCard.tsx", "MeetingPrepBrief.tsx", "MeetingFollowThroughDialog.tsx", "useMeetingRecording.ts",
 ];
 
 /** The `<button …>…</button>` element around `index`, or null when it isn't inside one. */

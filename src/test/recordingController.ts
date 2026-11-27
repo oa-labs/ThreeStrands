@@ -13,5 +13,8 @@ export const recordingController = (overrides: Partial<RecordingController> = {}
   stop: vi.fn().mockResolvedValue(undefined),
   pause: vi.fn().mockResolvedValue(undefined),
   resume: vi.fn().mockResolvedValue(undefined),
+  openReview: vi.fn(),
+  openLatestReview: vi.fn().mockResolvedValue(undefined),
+  closeReview: vi.fn(),
   ...overrides,
 });

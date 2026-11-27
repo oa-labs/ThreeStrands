@@ -1,6 +1,7 @@
 import type { FollowThroughItem, MeetingContext } from "./domain";
 import { fenceRun, indent, isListItem, itemEnd, lines, occurrenceBlocks } from "./meetingExcerpt";
 import { escapeMarkdownText, extractNoteEntityLinks, normalizeContactAddress, noteReferenceHref, noteReferenceKey, parseNoteReference, type NoteReference } from "./noteEntities";
+import { insertMeetingLine } from "./noteMeetings";
 
 /** Ends a follow-through section's line; mirrors `FOLLOW_THROUGH_MARKER`. */
 export const FOLLOW_THROUGH_MARKER = "<!-- threestrands-follow-through -->";
@@ -15,6 +16,8 @@ export type FollowThroughSection = { date: string | null; start: number; end: nu
 
 const collapse = (text: string) => text.split(/\s+/u).filter(Boolean).join(" ");
 const isDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().startsWith(value);
+const MAX_FOLLOW_THROUGH_SUMMARY_CHARS = 4_000;
+const MAX_RECAP_SUMMARY_WORDS = 400;
 
 function checkedText(text: string): string {
   const out = collapse(text);
@@ -33,12 +36,36 @@ export function itemLines(items: readonly FollowThroughItem[]): string[] {
       case "task": return `( ) ${escapeMarkdownText(checkedText(item.text))}`;
       case "checklist": return `[ ] ${escapeMarkdownText(checkedText(item.text))}`;
       case "action": return `Action: ${escapeMarkdownText(checkedText(item.text))}`;
+      case "question": return `Open question: ${escapeMarkdownText(checkedText(item.text))}`;
       case "link": {
         if (item.task.kind !== "task") throw new Error("Only a task can be linked as an action.");
         return `[${escapeMarkdownText(collapse(item.title) || "Task")}](${noteReferenceHref(item.task)})`;
       }
     }
   });
+}
+
+function checkedSummary(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const out = collapse(raw);
+  if (!out) return null;
+  if ([...out].length > MAX_FOLLOW_THROUGH_SUMMARY_CHARS) throw new Error(`Shorten the summary to ${MAX_FOLLOW_THROUGH_SUMMARY_CHARS} characters or fewer.`);
+  if (out.split(/\s+/u).filter(Boolean).length > MAX_RECAP_SUMMARY_WORDS) throw new Error(`Shorten the summary to ${MAX_RECAP_SUMMARY_WORDS} words or fewer.`);
+  return out;
+}
+
+function sectionBodyLines(summary: string | null | undefined, items: readonly FollowThroughItem[], transcript: { label: string; href: string } | null | undefined): string[] {
+  if (items.length > MAX_FOLLOW_THROUGH_ITEMS) throw new Error(`Save at most ${MAX_FOLLOW_THROUGH_ITEMS} decisions and actions at a time.`);
+  const linesOut: string[] = [];
+  const cleanSummary = checkedSummary(summary);
+  if (cleanSummary) linesOut.push(`Summary: ${escapeMarkdownText(cleanSummary)}`);
+  if (items.length) linesOut.push(...itemLines(items));
+  if (transcript) {
+    const label = collapse(transcript.label) || "Transcript";
+    linesOut.push(`Transcript: [${escapeMarkdownText(label)}](${transcript.href})`);
+  }
+  if (!linesOut.length) throw new Error("Add a decision or an action to save.");
+  return linesOut;
 }
 
 /** Whether `line` starts a follow-through section; mirrors `is_section_line`. */
@@ -84,15 +111,46 @@ export function followThroughSections(body: string, occurrence: NoteReference): 
 
 /** The section's Markdown as it will be written, without the line break or
  * blank line that separates it from the text before it. */
-export function followThroughSectionText(occurrence: NoteReference, name: string, date: string, items: readonly FollowThroughItem[]): string {
+export function followThroughSectionText(
+  occurrence: NoteReference,
+  name: string,
+  date: string,
+  items: readonly FollowThroughItem[],
+  extras?: { summary?: string | null; transcript?: { label: string; href: string } | null },
+): string {
   const label = escapeMarkdownText(collapse(name) || "Meeting");
-  return [`- ${FOLLOW_THROUGH_LABEL} ${date}: [${label}](${noteReferenceHref(occurrence)}) ${FOLLOW_THROUGH_MARKER}`, ...itemLines(items).map((line) => `  - ${line}`)].join("\n");
+  return [
+    `- ${FOLLOW_THROUGH_LABEL} ${date}: [${label}](${noteReferenceHref(occurrence)}) ${FOLLOW_THROUGH_MARKER}`,
+    ...sectionBodyLines(extras?.summary, items, extras?.transcript).map((line) => `  - ${line}`),
+  ].join("\n");
+}
+
+/** Formats an ad-hoc recording's follow-through section (no calendar occurrence link). */
+export function adhocFollowThroughSectionText(
+  timeLabel: string,
+  name: string,
+  items: readonly FollowThroughItem[],
+  extras?: { summary?: string | null; transcript?: { label: string; href: string } | null },
+): string {
+  const time = escapeMarkdownText(collapse(timeLabel) || "Meeting");
+  const label = escapeMarkdownText(collapse(name) || "Meeting");
+  return [
+    `- ${time} for ${label} ${FOLLOW_THROUGH_MARKER}`,
+    ...sectionBodyLines(extras?.summary, items, extras?.transcript).map((line) => `  - ${line}`),
+  ].join("\n");
 }
 
 /** `body` with the section added; mirrors `insert`. */
-export function insertFollowThrough(body: string, occurrence: NoteReference, name: string, date: string, items: readonly FollowThroughItem[]): { body: string; start: number; end: number } {
+export function insertFollowThrough(
+  body: string,
+  occurrence: NoteReference,
+  name: string,
+  date: string,
+  items: readonly FollowThroughItem[],
+  extras?: { summary?: string | null; transcript?: { label: string; href: string } | null },
+): { body: string; start: number; end: number } {
   if (!isDate(date)) throw new Error("Invalid date");
-  const section = followThroughSectionText(occurrence, name, date, items);
+  const section = followThroughSectionText(occurrence, name, date, items, extras);
   const all = lines(body);
   const blocks = occurrenceBlocks(body, occurrence).filter((block) => block.kind === "excerpt");
   const position = (start: number) => all.findIndex((line) => line.start === start);
@@ -120,6 +178,34 @@ export function insertFollowThrough(body: string, occurrence: NoteReference, nam
   return { body: next, start: at, end: at + chunk.length };
 }
 
+/** Inserts an ad-hoc recording's follow-through section under `## Meetings` in a daily note. */
+export function insertAdhocFollowThrough(
+  body: string,
+  timeLabel: string,
+  name: string,
+  date: string,
+  items: readonly FollowThroughItem[],
+  extras?: { summary?: string | null; transcript?: { label: string; href: string } | null },
+): { body: string; start: number; end: number } {
+  if (!isDate(date)) throw new Error("Invalid date");
+  const section = adhocFollowThroughSectionText(timeLabel, name, items, extras);
+  const next = insertMeetingLine(body, section);
+  if (next === null) throw new Error("This note has a code block that never closes. Open it before saving follow-through.");
+  let start = 0;
+  while (start < body.length && start < next.length && body[start] === next[start]) start += 1;
+  let suffix = 0;
+  while (
+    suffix < body.length - start
+    && suffix < next.length - start
+    && body[body.length - 1 - suffix] === next[next.length - 1 - suffix]
+  ) suffix += 1;
+  const end = next.length - suffix;
+  if (end < start || next.slice(0, start) !== body.slice(0, start) || next.slice(end) !== body.slice(start)) {
+    throw new Error("This note's layout changed. Open it before saving follow-through.");
+  }
+  return { body: next, start, end };
+}
+
 /** A local date as `YYYY-MM-DD`. */
 export function localDay(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -140,15 +226,20 @@ function writeList(key: string, values: unknown[]) {
 }
 
 
+export type ReviewEvidence = { segmentId: number; startMs: number; speaker: "you" | "others" | null; speakerLabel: string; text: string };
 /** An item being edited in the review: its kind and text, or the task it links. */
-export type ReviewItem = { id: string } & FollowThroughItem;
+export type ReviewItem = { id: string; suggested?: boolean; evidence?: ReviewEvidence[] } & FollowThroughItem;
 /** A review in progress, kept on this device until it is saved or discarded. */
 export type FollowThroughRecovery = {
-  reference: NoteReference;
+  reference: NoteReference | null;
   reviewId: string;
   /** Chosen before the first save attempt, so a retry after a restart replays nothing. */
   operationId: string;
   destinationNoteId: string | null;
+  summary?: string;
+  attachTranscript?: boolean;
+  recordingId?: string | null;
+  adhocTitle?: string;
   items: ReviewItem[];
   updatedAt: number;
 };
@@ -160,15 +251,20 @@ export const FOLLOW_THROUGH_REVIEW_RETENTION_MS = 14 * 86_400_000;
 const isRecovery = (value: unknown): value is FollowThroughRecovery => typeof value === "object" && value !== null
   && typeof (value as FollowThroughRecovery).reviewId === "string" && typeof (value as FollowThroughRecovery).operationId === "string"
   && Array.isArray((value as FollowThroughRecovery).items) && typeof (value as FollowThroughRecovery).updatedAt === "number"
-  && typeof (value as FollowThroughRecovery).reference === "object";
+  && ((value as FollowThroughRecovery).reference === null || typeof (value as FollowThroughRecovery).reference === "object");
 
 function recoveries(now: number): FollowThroughRecovery[] {
   return readList(RECOVERY_KEY, isRecovery).filter((record) => now - record.updatedAt <= FOLLOW_THROUGH_REVIEW_RETENTION_MS);
 }
-/** The review in progress for this occurrence, if one was kept. */
-export function readFollowThroughRecovery(reference: NoteReference, now = Date.now()): FollowThroughRecovery | null {
+/** The review in progress for this occurrence (or recording), if one was kept. */
+export function readFollowThroughRecovery(reference: NoteReference | null, now = Date.now(), recordingId: string | null = null): FollowThroughRecovery | null {
+  if (recordingId) {
+    const byRec = recoveries(now).filter((record) => record.recordingId === recordingId).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (byRec) return byRec;
+  }
+  if (!reference) return null;
   const key = noteReferenceKey(reference);
-  return recoveries(now).filter((record) => noteReferenceKey(record.reference) === key).sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
+  return recoveries(now).filter((record) => record.reference && noteReferenceKey(record.reference) === key).sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
 }
 /** Keeps a review's edits; the oldest and expired reviews go first. */
 export function saveFollowThroughRecovery(record: FollowThroughRecovery, now = Date.now()) {
@@ -229,6 +325,7 @@ export function itemsFromSection(text: string): FollowThroughItem[] {
     else if (/^\[[ xX]\]\s/.test(line)) items.push({ kind: "checklist", text: unescape(line.slice(4)) });
     else if (line.startsWith("Decision: ")) items.push({ kind: "decision", text: unescape(line.slice(10)) });
     else if (line.startsWith("Action: ")) items.push({ kind: "action", text: unescape(line.slice(8)) });
+    else if (line.startsWith("Open question: ")) items.push({ kind: "question", text: unescape(line.slice(15)) });
   }
   return items;
 }

@@ -142,7 +142,7 @@ describe("EventRecordings", () => {
     expect(detailOf(section)).toEqual(["Transcribing… 41%", "Transcribing… 10%"]);
   });
 
-  it("offers Show Transcript only when transcribed, and Retry Transcription only for a failed recording with audio", async () => {
+  it("offers Show Transcript and Review only when transcribed, and Retry Transcription only for a failed recording with audio", async () => {
     vi.spyOn(mailClient, "listRecordings").mockResolvedValue([
       row({ id: "t", state: "transcribed" }),
       row({ id: "f", state: "failed" }),
@@ -152,9 +152,19 @@ describe("EventRecordings", () => {
     ]);
     renderSection();
     await screen.findByRole("region", { name: "Recording" });
+    expect(screen.getAllByRole("button", { name: "Review" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Show Transcript" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Retry Transcription" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Delete Recording" })).toHaveLength(5);
+  });
+
+  it("opens review on the recording controller when Review is pressed", async () => {
+    const transcribed = row({ id: "t", state: "transcribed" });
+    vi.spyOn(mailClient, "listRecordings").mockResolvedValue([transcribed]);
+    const openReview = vi.fn();
+    renderSection(recordingController({ openReview }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    expect(openReview).toHaveBeenCalledExactlyOnceWith(transcribed);
   });
 
   it("retries a failed transcription and reads the rows again", async () => {

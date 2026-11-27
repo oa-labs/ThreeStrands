@@ -14,6 +14,7 @@ import { normalizeContactAddress, noteReferenceHref, type NoteReference } from "
 import { notePlainText } from "./notePreview";
 import { formatAttachmentSize } from "./threadPresentation";
 import { useMeetingPreparation } from "./useMeetingPreparation";
+import { EventRecordings } from "./EventRecordings";
 import { MeetingFollowThroughDialog, MeetingFollowUpDialog } from "./MeetingFollowThroughDialog";
 import { MeetingPrepBriefCard, MeetingPrepSourcesDialog } from "./MeetingPrepBrief";
 import { itemsFromSection, localDay } from "./meetingFollowThrough";
@@ -359,6 +360,7 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
           {onAddNote && context.thisMeeting.items.length === 0 && context.thisMeeting.status !== "unavailable"
             ? <p className="context-status"><button type="button" className="btn-link" onClick={onAddNote}>Add Note</button> to start this meeting's notes in its day's note.</p> : null}
         </>} />
+      {reference ? <EventRecordings occurrence={reference} /> : null}
       <ContextSection id="meeting-prep-previous" title="Previous meetings" count={context.previousMeetings.items.length}
         rows={occurrenceRows(context.previousMeetings.items)}
         footer={sectionStatus(context.previousMeetings, context.event?.seriesId ? "No notes from earlier meetings in this series." : "This meeting doesn't repeat.")} />

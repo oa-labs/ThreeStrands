@@ -1,4 +1,8 @@
-import type { AudioInputDevice, MeetingRecording, MicrophonePermission, RecordingCapabilities, RecordingStatus, RecordingStartRequest, RecordingTranscript, TranscriptionModelName, TranscriptionModelStatus } from "../domain";
+import type {
+  AudioInputDevice, MeetingRecap, MeetingRecording, MicrophonePermission, RecapTimeRange,
+  RecordingCapabilities, RecordingReviewContext, RecordingStartRequest, RecordingStatus,
+  RecordingTranscript, TranscriptionModelName, TranscriptionModelStatus,
+} from "../domain";
 import { noteReferenceKey, type NoteReference } from "../noteEntities";
 
 /** What the browser preview records into: in memory, with a fixed 1.4 MB per second of audio so Settings has sizes to show. */
@@ -44,6 +48,7 @@ export function createDemoRecordings(options: {
 } = {}) {
   const recordings: MeetingRecording[] = [];
   const transcripts = new Map<string, RecordingTranscript>();
+  const recaps = new Map<string, MeetingRecap>();
   const models: Record<TranscriptionModelName, { received: number; since: number | null; failed: string | null }> = {
     fast: { received: 0, since: null, failed: null }, accurate: { received: 0, since: null, failed: null },
   };
@@ -80,6 +85,7 @@ export function createDemoRecordings(options: {
       const recording: MeetingRecording = {
         id, eventRef, title: "Weekly Sync", startedAt: new Date(startedAt).toISOString(), endedAt: new Date(startedAt + 42 * 60_000).toISOString(),
         durationMs: 42 * 60_000, state: "recorded", error: null, audioDeleted: false, transcriptionPercent: null, tracks: track(micOnly ? "unavailable" : "active"),
+        hasRecap: false, reviewedOperationId: null,
       };
       recordings.push(recording);
       transcribe(recording);
@@ -125,7 +131,7 @@ export function createDemoRecordings(options: {
         recordings.unshift({
           id: active.id, eventRef: active.request.eventRef, title: active.request.title,
           startedAt: new Date(active.startedAt).toISOString(), endedAt: new Date().toISOString(), durationMs: duration, state: "recorded", error: null,
-          audioDeleted: false, transcriptionPercent: null, tracks: track("active"),
+          audioDeleted: false, transcriptionPercent: null, tracks: track("active"), hasRecap: false, reviewedOperationId: null,
         });
         audio.add(active.id);
         pickUp();
@@ -179,6 +185,77 @@ export function createDemoRecordings(options: {
       const found = transcripts.get(id);
       if (!found) throw new Error("This recording has no transcript.");
       return structuredClone(found);
+    },
+    async latestTranscribedRecording() {
+      pickUp();
+      const found = recordings.find((recording) => recording.state === "transcribed") ?? null;
+      return structuredClone(found);
+    },
+    async recordingReviewContext(id: string): Promise<RecordingReviewContext> {
+      const recording = recordings.find((candidate) => candidate.id === id);
+      if (!recording) throw new Error("Recording not found.");
+      const transcript = transcripts.get(id);
+      const transcriptBytes = transcript
+        ? transcript.lines.reduce((sum, line) => sum + line.text.length + 24, 0)
+        : 0;
+      const recap = recaps.get(id) ?? null;
+      return {
+        recording: structuredClone(recording),
+        recap: structuredClone(recap),
+        transcriptBytes,
+        overBudget: transcriptBytes > 400 * 1024,
+        durationMs: recording.durationMs,
+        hasUserNotes: Boolean(recording.eventRef),
+        notesExcludedFromAi: false,
+      };
+    },
+    async summarizeRecording(
+      id: string,
+      _provider: string,
+      _model: string,
+      _endpoint: string | null,
+      _reasoning?: string,
+      includeMyNotes = false,
+      range: RecapTimeRange | null = null,
+    ): Promise<MeetingRecap> {
+      const recording = recordings.find((candidate) => candidate.id === id);
+      if (!recording) throw new Error("Recording not found.");
+      const transcript = transcripts.get(id);
+      if (!transcript || recording.state !== "transcribed") {
+        throw new Error("Transcribe this recording before summarizing it.");
+      }
+      const inRange = range
+        ? transcript.lines.filter((line) => line.startMs >= range.startMs && line.startMs <= range.endMs)
+        : transcript.lines;
+      const lines = inRange.length ? inRange : transcript.lines;
+      const evidenceFor = (index: number) => {
+        const line = lines[index] ?? lines[0];
+        if (!line) return [];
+        const speakerLabel = line.speaker === "you" ? "You" : line.speaker === "others" ? "Other person" : "Speaker";
+        return [{ segmentId: index, startMs: line.startMs, speaker: line.speaker, speakerLabel, text: line.text }];
+      };
+      const recap: MeetingRecap = {
+        summary: `Reviewed status of ${recording.title}, confirmed release readiness, and aligned on shipping Thursday with the announcement Friday.`,
+        decisions: lines.length
+          ? [{ text: "Confirm Thursday launch and send the announcement tomorrow.", evidence: evidenceFor(lines.length - 1) }]
+          : [],
+        actions: lines.length >= 2
+          ? [{
+            text: "Finish the migration dry run today.",
+            owner: transcript.speakerLabels ? "you" : "unclear",
+            evidence: evidenceFor(Math.min(3, lines.length - 1)),
+          }]
+          : [],
+        openQuestions: lines.length >= 3
+          ? [{ text: "Anything still blocking the rollout after the dry run?", evidence: evidenceFor(Math.min(2, lines.length - 1)) }]
+          : [],
+        withheldCount: 0,
+        includedNotes: includeMyNotes,
+        range,
+      };
+      recaps.set(id, recap);
+      recording.hasRecap = true;
+      return structuredClone(recap);
     },
     async requestRecordingPermissions() { return { microphone: options.microphone ?? "granted" as const }; },
     async confirmRecordingQuit() { await api.stopRecording(); },

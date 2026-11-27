@@ -500,6 +500,41 @@ pub(super) fn occurrence_note_ids(
         .collect())
 }
 
+impl Database {
+    /// Collects non-excluded user-jotted notes for an occurrence for `Include My Notes`,
+    /// along with whether any occurrence note is marked `exclude_from_ai`.
+    /// Notes marked `exclude_from_ai` are never returned or included.
+    pub fn occurrence_notes_for_recap(
+        &self,
+        reference: &NoteReference,
+    ) -> DbResult<(Option<String>, bool)> {
+        let target = reference.target().map_err(DatabaseError::invalid)?;
+        self.with_connection(|c| {
+            let mut excerpts = Vec::new();
+            let items = this_meeting(c, reference, &target, &mut excerpts)?.items;
+            let mut any_excluded = false;
+            let mut parts = Vec::new();
+            let mut seen = HashSet::new();
+            for item in items {
+                if !seen.insert(item.note_id.clone()) {
+                    continue;
+                }
+                if note_excluded_from_ai(c, &item.note_id)? {
+                    any_excluded = true;
+                    continue;
+                }
+                let text = item.text.trim();
+                if !text.is_empty() {
+                    let (bounded, _) = bound_chars(text, policy::MAX_MEETING_EXCERPT_BYTES);
+                    parts.push(format!("{}: {}", item.title, bounded));
+                }
+            }
+            let combined = (!parts.is_empty()).then(|| parts.join("\n\n"));
+            Ok((combined, any_excluded))
+        })
+    }
+}
+
 /// Follow-through sections for this occurrence in every note linking it.
 fn follow_through(
     c: &Connection,

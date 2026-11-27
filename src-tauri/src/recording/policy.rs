@@ -365,6 +365,8 @@ pub fn download_fits(free_bytes: u64, remaining: u64) -> bool {
 pub const MAX_RECAP_TRANSCRIPT_BYTES: usize = 400_000;
 /// Longest recap summary, in words.
 pub const MAX_RECAP_SUMMARY_WORDS: usize = 400;
+/// Hard UTF-8 character limit for a summary stored inside a follow-through section.
+pub const MAX_FOLLOW_THROUGH_SUMMARY_CHARS: usize = 4_000;
 
 /// A pinned model file the app may download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -427,6 +429,11 @@ pub fn recap_transcript_fits(bytes: usize) -> bool {
     bytes <= MAX_RECAP_TRANSCRIPT_BYTES
 }
 
+/// Whether a recap summary of this many words fits within the summary cap.
+pub fn recap_summary_fits(words: usize) -> bool {
+    words <= MAX_RECAP_SUMMARY_WORDS
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +470,13 @@ mod tests {
         assert!(recap_transcript_fits(MAX_RECAP_TRANSCRIPT_BYTES - 1));
         assert!(recap_transcript_fits(MAX_RECAP_TRANSCRIPT_BYTES));
         assert!(!recap_transcript_fits(MAX_RECAP_TRANSCRIPT_BYTES + 1));
+    }
+
+    #[test]
+    fn recap_summary_words_are_checked_below_at_and_above() {
+        assert!(recap_summary_fits(MAX_RECAP_SUMMARY_WORDS - 1));
+        assert!(recap_summary_fits(MAX_RECAP_SUMMARY_WORDS));
+        assert!(!recap_summary_fits(MAX_RECAP_SUMMARY_WORDS + 1));
     }
 
     #[test]

@@ -11,6 +11,7 @@ pub mod evaluation;
 pub mod find_times;
 pub mod manifest;
 mod meeting;
+pub mod meeting_recap;
 pub(crate) mod output;
 mod proposals;
 pub(crate) mod provider;
@@ -36,6 +37,10 @@ pub use contact::{
 pub use context::{sent_message_count, ActionMessageInput, ThreadMessageInput};
 pub use meeting::{
     prepare_meeting_brief, MeetingPrepBrief, MeetingPrepBriefRequest, MeetingPrepSourceMeta,
+};
+pub use meeting_recap::{
+    summarize_meeting_recap, MeetingRecap, MeetingRecapRequest, RecapTimeRange,
+    RecapTranscriptSegment,
 };
 pub use provider::{
     configured, get_key, list_models, set, test_connection, AiProvider, ModelInfo, Reasoning,
@@ -148,6 +153,13 @@ mod tests {
         assert_eq!(
             contact["properties"]["suggestions"]["items"]["properties"]["field"]["enum"],
             json!(CONTACT_FIELDS)
+        );
+
+        let recap = crate::ai::meeting_recap::output_schema().schema;
+        assert_strict(&recap);
+        assert_eq!(
+            recap["properties"]["actions"]["items"]["properties"]["owner"]["enum"],
+            json!(["you", "attendee", "unclear"])
         );
     }
 

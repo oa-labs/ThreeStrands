@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { readAiProvider, readAiRequestConfig } from "./aiSettings";
 import { mailClient } from "./data/client";
-import type { RecordingCapabilities, RecordingSettings, RecordingStartRequest, RecordingStatus, TranscriptionModelStatus } from "./domain";
+import type { MeetingRecording, RecordingCapabilities, RecordingSettings, RecordingStartRequest, RecordingStatus, TranscriptionModelStatus } from "./domain";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { adHocRecordingTitle, RECORDING_REMINDER, stopReasonNotice } from "./recordingPolicy";
 import { announceRecordingSettingsChanged, listenForRecordingEvent, listenForRecordingSettingsChanged } from "./recordingEvents";
@@ -29,11 +30,16 @@ export type RecordingController = {
   /** A start is waiting on the first-use consent. */
   consentPending: boolean;
   quitRequested: boolean;
+  /** Non-null while the Review Follow-through modal is open for a recording. */
+  reviewTarget: MeetingRecording | null;
   start(request: RecordingStartRequest): Promise<void>;
   startAdHoc(): Promise<void>;
   stop(): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
+  openReview(recording: MeetingRecording): void;
+  openLatestReview(): Promise<void>;
+  closeReview(): void;
   acceptConsent(): Promise<void>;
   cancelConsent(): void;
   confirmQuit(): Promise<void>;
@@ -43,8 +49,9 @@ export type RecordingController = {
 /** Context for a webview that cannot record: every capability is absent. */
 export const UNSUPPORTED_RECORDING: RecordingController = {
   capabilities: null, supported: false, enabled: false, status: IDLE_RECORDING_STATUS, transcriptionModel: null, usingSpeechAnalyzer: false, recordingsVersion: 0,
-  consentPending: false, quitRequested: false,
+  consentPending: false, quitRequested: false, reviewTarget: null,
   start: async () => {}, startAdHoc: async () => {}, stop: async () => {}, pause: async () => {}, resume: async () => {},
+  openReview: () => {}, openLatestReview: async () => {}, closeReview: () => {},
   acceptConsent: async () => {}, cancelConsent: () => {}, confirmQuit: async () => {}, cancelQuit: () => {},
 };
 
@@ -64,8 +71,10 @@ export function useMeetingRecording({ onNotice, onOpenSettings }: {
   const [recordingsVersion, setRecordingsVersion] = useState(0);
   const [pending, setPending] = useState<RecordingStartRequest | null>(null);
   const [quitRequested, setQuitRequested] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<MeetingRecording | null>(null);
   const previousState = useRef<RecordingStatus["state"]>("idle");
   const starting = useRef(false);
+  const autoSummarized = useRef(new Set<string>());
   const supported = capabilities?.supported === true;
 
   const applyStatus = useCallback((next: RecordingStatus) => {
@@ -162,17 +171,56 @@ export function useMeetingRecording({ onNotice, onOpenSettings }: {
   }, [onNotice]);
   const cancelQuit = useCallback(() => setQuitRequested(false), []);
 
+  const openReview = useCallback((target: MeetingRecording) => setReviewTarget(target), []);
+  const closeReview = useCallback(() => setReviewTarget(null), []);
+  const openLatestReview = useCallback(async () => {
+    try {
+      const latestRec = await mailClient.latestTranscribedRecording();
+      if (!latestRec) {
+        onNotice({ message: "There is no transcribed recording to review yet." });
+        return;
+      }
+      setReviewTarget(latestRec);
+    } catch (reason) {
+      onNotice({ message: errorMessage(reason) });
+    }
+  }, [onNotice]);
+
+  const maybeAutoSummarize = useCallback(async (recordingId: string) => {
+    if (!settings?.summarizeWithAi || readAiProvider() === "none" || autoSummarized.current.has(recordingId)) return;
+    try {
+      const ctx = await mailClient.recordingReviewContext(recordingId);
+      if (ctx.recording.state !== "transcribed" || ctx.recap || ctx.recording.reviewedOperationId || ctx.overBudget) return;
+      autoSummarized.current.add(recordingId);
+      const cfg = readAiRequestConfig("summarizing a meeting recording", "meetingRecap");
+      await mailClient.summarizeRecording(recordingId, cfg.provider, cfg.model, cfg.endpoint, cfg.reasoning, false, null);
+    } catch (reason) {
+      logBackgroundFailure("Summarizing meeting recording")(reason);
+    }
+  }, [settings?.summarizeWithAi]);
+
   // The listeners call through a ref so they are set up once, not on each render.
-  const latest = useRef({ applyStatus, startAdHoc, onOpenSettings });
-  latest.current = { applyStatus, startAdHoc, onOpenSettings };
+  const latest = useRef({ applyStatus, startAdHoc, onOpenSettings, openLatestReview, maybeAutoSummarize, onNotice });
+  latest.current = { applyStatus, startAdHoc, onOpenSettings, openLatestReview, maybeAutoSummarize, onNotice };
   useEffect(() => {
     if (!supported) return;
     const stops = [
       listenForRecordingEvent("recording-state", (next) => latest.current.applyStatus(next)),
-      listenForRecordingEvent("recordings-changed", () => setRecordingsVersion((version) => version + 1)),
-      listenForRecordingEvent("recording-tray-command", ({ command: name }) => {
-        if (name === "start") void latest.current.startAdHoc();
-        else if (name === "openSettings") latest.current.onOpenSettings();
+      listenForRecordingEvent("recordings-changed", ({ recordingId }) => {
+        setRecordingsVersion((version) => version + 1);
+        void latest.current.maybeAutoSummarize(recordingId);
+      }),
+      listenForRecordingEvent("recording-tray-command", (payload) => {
+        if (payload.command === "start") void latest.current.startAdHoc();
+        else if (payload.command === "openSettings") latest.current.onOpenSettings();
+        else if (payload.command === "review") {
+          if (payload.recordingId) {
+            void mailClient.recordingReviewContext(payload.recordingId)
+              .then((ctx) => setReviewTarget(ctx.recording), (reason) => latest.current.onNotice({ message: errorMessage(reason) }));
+          } else {
+            void latest.current.openLatestReview();
+          }
+        }
       }),
       listenForRecordingEvent("recording-quit-requested", () => setQuitRequested(true)),
     ];
@@ -185,7 +233,7 @@ export function useMeetingRecording({ onNotice, onOpenSettings }: {
   const transcriptionModel = models?.find((model) => model.model === (settings?.transcriptionModel ?? "fast")) ?? null;
   return useMemo(() => ({
     capabilities, supported, enabled, status, transcriptionModel, usingSpeechAnalyzer, recordingsVersion,
-    consentPending: pending !== null, quitRequested,
-    start, startAdHoc, stop, pause, resume, acceptConsent, cancelConsent, confirmQuit, cancelQuit,
-  }), [capabilities, supported, enabled, status, transcriptionModel, usingSpeechAnalyzer, recordingsVersion, pending, quitRequested, start, startAdHoc, stop, pause, resume, acceptConsent, cancelConsent, confirmQuit, cancelQuit]);
+    consentPending: pending !== null, quitRequested, reviewTarget,
+    start, startAdHoc, stop, pause, resume, openReview, openLatestReview, closeReview, acceptConsent, cancelConsent, confirmQuit, cancelQuit,
+  }), [capabilities, supported, enabled, status, transcriptionModel, usingSpeechAnalyzer, recordingsVersion, pending, quitRequested, reviewTarget, start, startAdHoc, stop, pause, resume, openReview, openLatestReview, closeReview, acceptConsent, cancelConsent, confirmQuit, cancelQuit]);
 }

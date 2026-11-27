@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
-import type { DraftHandoff, FollowThroughSave, MeetingContext, MeetingSection, ScheduleEvent } from "./domain";
+import { saveAiModel, saveAiProvider } from "./aiSettings";
+import type { DraftHandoff, FollowThroughSave, MeetingContext, MeetingRecap, MeetingRecording, MeetingSection, RecordingReviewContext, RecordingSettings, ScheduleEvent } from "./domain";
 import { MeetingFollowThroughDialog, MeetingFollowUpDialog } from "./MeetingFollowThroughDialog";
 import { readFollowThroughRecovery, readFollowUpHandoff, rememberFollowUpHandoff, saveFollowThroughRecovery } from "./meetingFollowThrough";
 import { meetingEventReference } from "./meetingNoteEntry";
@@ -114,6 +115,135 @@ describe("MeetingFollowThroughDialog", () => {
     fireEvent.click(dialog.getByRole("button", { name: "Add Note" }));
     expect(onClose).toHaveBeenCalled();
     expect(onAddNote).toHaveBeenCalled();
+  });
+
+  const recSettings = (overrides: Partial<RecordingSettings> = {}): RecordingSettings => ({
+    recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast",
+    transcriptionLanguage: null, transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true,
+    remindToTell: true, summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true,
+    ...overrides,
+  });
+
+  const recording = (overrides: Partial<MeetingRecording> = {}): MeetingRecording => ({
+    id: "rec-1", eventRef: reference, title: "Sync", startedAt: "2026-11-16T09:00:00Z", endedAt: "2026-11-16T09:30:00Z",
+    durationMs: 30 * 60_000, state: "transcribed", error: null, audioDeleted: false, transcriptionPercent: null,
+    tracks: [
+      { track: "mic", state: "active", deviceName: "Mic", firstFrameOffsetMs: 0, error: null },
+      { track: "system", state: "active", deviceName: null, firstFrameOffsetMs: 0, error: null },
+    ],
+    hasRecap: false, reviewedOperationId: null, ...overrides,
+  });
+
+  const reviewContext = (overrides: Partial<RecordingReviewContext> = {}): RecordingReviewContext => ({
+    recording: recording(),
+    recap: null,
+    transcriptBytes: 2400,
+    overBudget: false,
+    durationMs: 30 * 60_000,
+    hasUserNotes: true,
+    notesExcludedFromAi: false,
+    ...overrides,
+  });
+
+  it("summarizes a recording with Include My Notes off by default, shows evidence, maps owners, persists Attach Transcript, and submits", async () => {
+    saveAiProvider("openai");
+    saveAiModel("gpt-4o");
+    vi.spyOn(mailClient, "recordingReviewContext").mockResolvedValue(reviewContext());
+    vi.spyOn(mailClient, "recordingSettings").mockResolvedValue(recSettings());
+    const setRecSettings = vi.spyOn(mailClient, "setRecordingSettings").mockResolvedValue(undefined);
+    const recap: MeetingRecap = {
+      summary: "Confirmed Friday launch and assigned deck follow-up.",
+      decisions: [{ text: "Ship on Friday", evidence: [{ segmentId: 1, startMs: 12_000, speaker: "others", speakerLabel: "Ann", text: "Let's ship on Friday." }] }],
+      actions: [
+        { text: "Send the deck", owner: "you", evidence: [{ segmentId: 2, startMs: 25_000, speaker: "you", speakerLabel: "You", text: "I'll send the deck." }] },
+        { text: "Dana: Check pricing", owner: "attendee", evidence: [{ segmentId: 3, startMs: 40_000, speaker: "others", speakerLabel: "Dana", text: "I will check pricing." }] },
+      ],
+      openQuestions: [{ text: "Does legal approve?", evidence: [{ segmentId: 4, startMs: 55_000, speaker: "others", speakerLabel: "Ann", text: "Does legal approve?" }] }],
+      withheldCount: 1,
+      includedNotes: false,
+      range: null,
+    };
+    const summarize = vi.spyOn(mailClient, "summarizeRecording").mockResolvedValue(recap);
+    const save = vi.spyOn(mailClient, "saveMeetingFollowThrough").mockImplementation(async (_ref, _dest, _rev, operationId) => saved(operationId));
+
+    const { dialog, onSaved } = renderReview({ recording: recording() });
+    const includeNotes = await dialog.findByRole("checkbox", { name: "Include My Notes" });
+    expect(includeNotes).not.toBeChecked();
+    expect(dialog.getByRole("textbox", { name: "Summary" })).toHaveValue("");
+
+    fireEvent.click(dialog.getByRole("button", { name: "Summarize" }));
+    await waitFor(() => expect(summarize).toHaveBeenCalledWith("rec-1", "openai", "gpt-4o", null, "default", false, null));
+
+    expect(await dialog.findByRole("textbox", { name: "Summary" })).toHaveValue("Confirmed Friday launch and assigned deck follow-up.");
+    expect(dialog.getByText(/1 suggestion was withheld/)).toBeInTheDocument();
+    expect(dialog.getAllByText("Suggested")).toHaveLength(4);
+    expect(dialog.getByText("[0:12] Ann: “Let's ship on Friday.”")).toBeInTheDocument();
+    expect(dialog.getByRole("combobox", { name: "Kind of Item 2" })).toHaveValue("task");
+    expect(dialog.getByRole("combobox", { name: "Kind of Item 3" })).toHaveValue("action");
+    expect(dialog.getByRole("textbox", { name: "Item 3" })).toHaveValue("Dana: Check pricing");
+    expect(dialog.getByRole("combobox", { name: "Kind of Item 4" })).toHaveValue("question");
+
+    // Re-summarize with Include My Notes checked passes includeMyNotes: true.
+    fireEvent.click(includeNotes);
+    expect(includeNotes).toBeChecked();
+    fireEvent.click(dialog.getByRole("button", { name: "Re-summarize" }));
+    await waitFor(() => expect(summarize).toHaveBeenLastCalledWith("rec-1", "openai", "gpt-4o", null, "default", true, null));
+
+    const attach = dialog.getByRole("checkbox", { name: "Attach Transcript" });
+    expect(attach).not.toBeChecked();
+    fireEvent.click(attach);
+    await waitFor(() => expect(setRecSettings).toHaveBeenCalledWith(expect.objectContaining({ attachTranscript: true })));
+    expect(dialog.getByLabelText("Insertion preview").textContent).toContain("Summary: Confirmed Friday launch");
+    expect(dialog.getByLabelText("Insertion preview").textContent).toContain("Transcript: [Transcript – Sync – 2026-11-16.md](attachment:pending)");
+
+    fireEvent.click(dialog.getByRole("button", { name: "Save Follow-through" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+    expect(save).toHaveBeenCalledWith(reference, { noteId: DAILY.noteId }, "r1", expect.any(String), expect.objectContaining({
+      summary: "Confirmed Friday launch and assigned deck follow-up.",
+      recordingId: "rec-1",
+      attachTranscript: true,
+    }));
+  });
+
+  it("never offers Include My Notes when the meeting's notes are excluded from AI", async () => {
+    vi.spyOn(mailClient, "recordingReviewContext").mockResolvedValue(reviewContext({ hasUserNotes: false, notesExcludedFromAi: true }));
+    vi.spyOn(mailClient, "recordingSettings").mockResolvedValue(recSettings());
+    const { dialog } = renderReview({ recording: recording() });
+    expect(await dialog.findByText("This meeting's note is excluded from AI.")).toBeInTheDocument();
+    expect(dialog.queryByRole("checkbox", { name: "Include My Notes" })).not.toBeInTheDocument();
+  });
+
+  it("saves an ad-hoc recording under None to the daily note and lets the user match it to today's meetings", async () => {
+    const adhocRec = recording({ id: "rec-adhoc", eventRef: null, title: "Ad-hoc Chat" });
+    vi.spyOn(mailClient, "recordingReviewContext").mockResolvedValue(reviewContext({ recording: adhocRec, hasUserNotes: false }));
+    vi.spyOn(mailClient, "recordingSettings").mockResolvedValue(recSettings());
+    vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(null);
+    const saveAdhoc = vi.spyOn(mailClient, "saveAdhocFollowThrough").mockImplementation(async (_date, _time, _rev, opId) => saved(opId));
+    const onSelectEvent = vi.fn();
+
+    const { dialog, onSaved } = renderReview({
+      recording: adhocRec,
+      event: null,
+      context: null,
+      todaysEvents: [event],
+      onSelectEvent,
+    });
+    const meetingPicker = dialog.getByRole("combobox", { name: "Meeting" });
+    expect(meetingPicker).toHaveValue("");
+    const titleInput = dialog.getByRole("textbox", { name: "Title" });
+    expect(titleInput).toHaveValue("Ad-hoc Chat");
+    fireEvent.change(titleInput, { target: { value: "Design Review" } });
+    fireEvent.change(dialog.getByRole("textbox", { name: "Summary" }), { target: { value: "Finalized color palette." } });
+    fireEvent.click(dialog.getByRole("button", { name: "Save Follow-through" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+    expect(saveAdhoc).toHaveBeenCalledWith("2026-11-16", expect.any(String), null, expect.any(String), expect.objectContaining({
+      meeting: "Design Review",
+      summary: "Finalized color palette.",
+      recordingId: "rec-adhoc",
+    }));
+
+    fireEvent.change(meetingPicker, { target: { value: event.id } });
+    expect(onSelectEvent).toHaveBeenCalledWith(event);
   });
 });
 

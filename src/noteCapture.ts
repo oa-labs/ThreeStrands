@@ -195,6 +195,26 @@ export async function saveFollowThrough(
   } };
 }
 
+/** Saves an ad-hoc recording's follow-through section under `## Meetings` in `date`'s daily note. */
+export async function saveAdhocFollowThrough(
+  date: string,
+  timeLabel: string,
+  expectedRevision: string | null,
+  operationId: string,
+  accepted: import("./domain").AcceptedFollowThrough,
+) {
+  const key = noteTargetKey({ kind: "daily", date });
+  const prepared = await prepareNoteMutation(key);
+  const expected = prepared.before === expectedRevision ? prepared.after ?? expectedRevision : expectedRevision;
+  const saved = await mailClient.saveAdhocFollowThrough(date, timeLabel, expected, operationId, accepted);
+  await notesChanged(key);
+  return { ...saved, async undo() {
+    await prepareNoteMutation(key);
+    await mailClient.undoMeetingFollowThrough(operationId);
+    await notesChanged(key);
+  } };
+}
+
 /** Adds accepted agenda bullets to an existing meeting note or the meeting's
  * daily note after flushing any open typing there. Undo removes exactly the
  * inserted text while the note is unchanged since. */

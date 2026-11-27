@@ -29,10 +29,17 @@ use crate::clock::Clock;
 use crate::db::recordings::{MeetingRecording, RecordingState};
 use crate::db::Database;
 use crate::note_entities::NoteReference;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime};
+
+/// Unreviewed transcribed recording ready for the tray's Review action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayReview {
+    pub recording_id: String,
+    pub title: String,
+}
 
 /// Where the runtime reports changes. The app sends Tauri events and
 /// refreshes the tray; tests record the calls.
@@ -47,6 +54,7 @@ pub trait RecordingNotifier: Send + Sync {
         status: &RecordingStatus,
         settings: &RecordingSettings,
         transcribing: Option<&TrayTranscription>,
+        review: Option<&TrayReview>,
         supported: bool,
     );
     /// A transcription's whole percent changed.
@@ -73,7 +81,7 @@ pub struct RecordingTranscript {
     pub lines: Vec<RecordingTranscriptLine>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TranscriptSpeaker {
     You,
@@ -246,21 +254,49 @@ impl RecordingRuntime {
             }
         }
         if changed || status.state != RecordingPhase::Idle {
+            let review = self.review_candidate();
             self.notifier.refresh_tray(
                 &status,
                 &self.settings(),
                 self.scheduler.tray().as_ref(),
+                review.as_ref(),
                 self.supported,
             );
         }
     }
 
-    /// Refreshes the tray outside a publish (transcription progress).
+    fn review_candidate(&self) -> Option<TrayReview> {
+        self.database
+            .latest_unreviewed_transcribed_recording()
+            .ok()
+            .flatten()
+            .map(|rec| TrayReview {
+                recording_id: rec.id,
+                title: rec.title,
+            })
+    }
+
+    pub fn latest_unreviewed_review(&self) -> Option<TrayReview> {
+        self.review_candidate()
+    }
+
+    pub fn notify_recordings_changed(&self, recording_id: &str) {
+        self.notifier.recordings_changed(recording_id);
+        self.refresh_tray_now();
+    }
+
+    pub fn refresh_tray_for_review(&self) {
+        self.refresh_tray_now();
+    }
+
+    /// Refreshes the tray outside a publish (transcription progress or review change).
     pub(super) fn refresh_tray_now(&self) {
+        let review = self.review_candidate();
         self.notifier.refresh_tray(
             &self.status(),
             &self.settings(),
             self.scheduler.tray().as_ref(),
+            review.as_ref(),
             self.supported,
         );
     }
@@ -763,6 +799,7 @@ mod tests {
             status: &RecordingStatus,
             settings: &RecordingSettings,
             _: Option<&TrayTranscription>,
+            _: Option<&TrayReview>,
             _: bool,
         ) {
             self.0

@@ -132,6 +132,9 @@ import type {
   RecordingsUsage,
   MeetingRecording,
   RecordingTranscript,
+  MeetingRecap,
+  RecapTimeRange,
+  RecordingReviewContext,
   TranscriptionModelName,
   TranscriptionModelStatus,
 } from "../domain";
@@ -488,6 +491,17 @@ export interface MailClient extends CorrespondenceClient {
   /** Queues a recorded, interrupted, or failed recording whose audio still exists. */
   transcribeRecording(id: string): Promise<void>;
   recordingTranscript(id: string): Promise<RecordingTranscript>;
+  latestTranscribedRecording(): Promise<MeetingRecording | null>;
+  recordingReviewContext(id: string): Promise<RecordingReviewContext>;
+  summarizeRecording(
+    id: string,
+    provider: AiProvider,
+    model: string,
+    endpoint: string | null,
+    reasoning?: AiReasoning,
+    includeMyNotes?: boolean,
+    range?: RecapTimeRange | null,
+  ): Promise<MeetingRecap>;
   /** Asks the system for microphone access now; resolves with the answer. */
   requestRecordingPermissions(): Promise<RecordingPermissions>;
   /** Stops the recording and lets the app's quit continue. */
@@ -525,6 +539,8 @@ export interface MailClient extends CorrespondenceClient {
   reserveMeetingPrep(date: string, expected: string | null, entry: MeetingEntry): Promise<PrepReservation>;
   /** Review Follow-through: appends the accepted items to one of the occurrence's notes, if it is still at `expectedRevision`. Retrying with the same `operationId` returns the first result without writing again. */
   saveMeetingFollowThrough(reference: NoteReference, destination: { noteId: string }, expectedRevision: string, operationId: string, accepted: AcceptedFollowThrough): Promise<FollowThroughSave>;
+  /** Saves an ad-hoc recording's follow-through section under `## Meetings` in `date`'s daily note. */
+  saveAdhocFollowThrough(date: string, timeLabel: string, expectedRevision: string | null, operationId: string, accepted: AcceptedFollowThrough): Promise<FollowThroughSave>;
   /** Removes exactly the section `operationId` saved, while its note is unchanged since. */
   undoMeetingFollowThrough(operationId: string): Promise<FollowThroughUndo>;
   /** The plan in `date`'s daily note with each item's state. */
@@ -861,6 +877,10 @@ const tauriClient: MailClient = {
   deleteTranscriptionModel: (model) => complete("delete_transcription_model", { model }),
   transcribeRecording: (id) => complete("transcribe_recording", { id }),
   recordingTranscript: (id) => read("recording_transcript", { id }),
+  latestTranscribedRecording: () => read("latest_transcribed_recording"),
+  recordingReviewContext: (id) => read("recording_review_context", { id }),
+  summarizeRecording: (id, provider, model, endpoint, reasoning = "default", includeMyNotes = false, range = null) =>
+    invokeAi("summarize_recording", { id, provider, model, endpoint, reasoning, includeMyNotes, range }, id),
   requestRecordingPermissions: () => complete("request_recording_permissions"),
   confirmRecordingQuit: () => complete("recording_confirm_quit"),
   meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),
@@ -873,6 +893,7 @@ const tauriClient: MailClient = {
   meetingReadiness: (references, mailScope = null) => read("meeting_readiness", { references, mailScope }),
   reserveMeetingPrep: (date, expected, entry) => complete("reserve_meeting_prep", { date, expected, entry }),
   saveMeetingFollowThrough: (reference, destination, expectedRevision, operationId, accepted) => complete("save_meeting_follow_through", { reference, destination, expectedRevision, operationId, accepted }),
+  saveAdhocFollowThrough: (date, timeLabel, expectedRevision, operationId, accepted) => complete("save_adhoc_follow_through", { date, timeLabel, expectedRevision, operationId, accepted }),
   undoMeetingFollowThrough: (operationId) => complete("undo_meeting_follow_through", { operationId }),
   dailyPlan: (date) => read("daily_plan", { date, dayStart: localDayStart(date) }),
   addToDailyPlan: (date, expected, additions) => complete("add_to_daily_plan", { date, expected, additions }),

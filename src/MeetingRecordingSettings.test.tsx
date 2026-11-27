@@ -336,4 +336,15 @@ describe("Transcription Model", () => {
     fireEvent.change(field, { target: { value: "" } });
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, transcriptionLanguage: null }));
   });
+
+  it("saves Summarize with AI as it changes and attaches its help text", async () => {
+    const { save } = setup();
+    const toggle = await screen.findByRole("checkbox", { name: "Summarize with AI" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toHaveAccessibleDescription();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, summarizeWithAi: true }));
+    expect(toggle).toBeChecked();
+  });
 });

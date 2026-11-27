@@ -1294,12 +1294,30 @@ export type FollowThroughRecord = { noteId: string; title: string; dailyDate: st
 export type FollowThroughState = "reviewed" | "notReviewed" | "unknown";
 /** One reviewed decision or action (`src-tauri/src/meeting_follow_through.rs`). */
 export type FollowThroughItem =
-  | { kind: "decision" | "task" | "checklist" | "action"; text: string }
+  | { kind: "decision" | "task" | "checklist" | "action" | "question"; text: string }
   | { kind: "link"; task: import("./noteEntities").NoteReference; title: string };
 /** What the user accepted: the review's date, the meeting's name for the section's link, and the items. */
-export type AcceptedFollowThrough = { date: string; meeting: string; items: FollowThroughItem[] };
+export type AcceptedFollowThrough = {
+  date: string;
+  meeting: string;
+  summary?: string | null;
+  items: FollowThroughItem[];
+  recordingId?: string | null;
+  attachTranscript?: boolean;
+};
 /** A saved follow-through as first committed; `replayed` when a retry returned it without writing. Offsets are the native note body's. */
-export type FollowThroughSave = { operationId: string; note: Note; section: string; start: number; end: number; taskIds: string[]; checklistIds: string[]; replayed: boolean };
+export type FollowThroughSave = {
+  operationId: string;
+  note: Note;
+  section: string;
+  start: number;
+  end: number;
+  taskIds: string[];
+  checklistIds: string[];
+  attachmentId?: string | null;
+  recordingId?: string | null;
+  replayed: boolean;
+};
 export type FollowThroughUndo = { note: Note };
 /** Where a follow-up handoff's one draft stands (`src-tauri/src/db/drafts.rs`). */
 export type DraftHandoffState = "open" | "outbox" | "sent" | "missing";
@@ -1903,7 +1921,33 @@ export type MeetingRecording = {
   audioDeleted: boolean;
   /** Whole percent 0-100 while state is "transcribing"; null otherwise. */
   transcriptionPercent: number | null;
+  hasRecap?: boolean;
+  reviewedOperationId?: string | null;
   tracks: { track: RecordingTrackName; state: "active" | "failed" | "unavailable"; deviceName: string | null; firstFrameOffsetMs: number | null; error: string | null }[];
+};
+
+export type RecapTimeRange = { startMs: number; endMs: number };
+export type RecapEvidence = { segmentId: number; startMs: number; speaker: TranscriptSpeaker | null; speakerLabel: string; text: string };
+export type RecapDecision = { text: string; evidence: RecapEvidence[] };
+export type RecapAction = { text: string; owner: "you" | "attendee" | "unclear"; evidence: RecapEvidence[] };
+export type RecapQuestion = { text: string; evidence: RecapEvidence[] };
+export type MeetingRecap = {
+  summary: string;
+  decisions: RecapDecision[];
+  actions: RecapAction[];
+  openQuestions: RecapQuestion[];
+  withheldCount: number;
+  includedNotes: boolean;
+  range: RecapTimeRange | null;
+};
+export type RecordingReviewContext = {
+  recording: MeetingRecording;
+  recap: MeetingRecap | null;
+  transcriptBytes: number;
+  overBudget: boolean;
+  durationMs: number;
+  hasUserNotes: boolean;
+  notesExcludedFromAi: boolean;
 };
 
 export type TranscriptionModelName = TranscriptionModelChoice;

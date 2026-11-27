@@ -291,6 +291,7 @@ export function App() {
     stop: () => void recording.stop(),
     pause: () => void recording.pause(),
     resume: () => void recording.resume(),
+    reviewLast: () => void recording.openLatestReview(),
   } : undefined, [recording]);
   const threadDetail = useThreadDetail(selectedId, threads, setNotice);
   const { detail, setDetail, visibleDetail, detailLoading } = threadDetail;
@@ -2471,7 +2472,11 @@ export function App() {
       {lightboxImageSrc ? (
         <ImageLightbox src={lightboxImageSrc} onClose={() => setLightboxImageSrc(null)} />
       ) : null}
-      <RecordingDialogs />
+      <RecordingDialogs
+        onOpenNote={openCapturedNote}
+        onAddMeetingNote={(ev) => { void openMeetingNote(ev); }}
+        onNotice={setNotice}
+      />
     </main>
     </RecordingContext.Provider>
     </AccountScopeProvider>

@@ -30,7 +30,8 @@ use crate::meeting_excerpt::{
 };
 use crate::meeting_policy::{MAX_FOLLOW_THROUGH_ITEMS, MAX_FOLLOW_THROUGH_ITEM_CHARS};
 use crate::note_entities::{self, NoteReference};
-use crate::note_meetings::escape_inline;
+use crate::note_meetings::{self, escape_inline, MAX_MEETING_TIME_CHARS};
+use crate::recording::policy::{MAX_FOLLOW_THROUGH_SUMMARY_CHARS, MAX_RECAP_SUMMARY_WORDS};
 use serde::{Deserialize, Serialize};
 
 /// Ends the section's first line. Inert: an HTML comment the editor keeps.
@@ -51,6 +52,8 @@ pub enum FollowThroughItem {
     /// An action kept as information, such as someone else's commitment:
     /// written as `Action: …`, not tracked.
     Action { text: String },
+    /// An open question left unresolved after the meeting.
+    Question { text: String },
     /// A link to an existing task instead of a new one.
     Link { task: NoteReference, title: String },
 }
@@ -120,6 +123,9 @@ pub fn item_lines(items: &[FollowThroughItem]) -> Result<Vec<String>, String> {
                 }
                 FollowThroughItem::Action { text } => {
                     format!("Action: {}", escape_inline(&checked_text(text)?))
+                }
+                FollowThroughItem::Question { text } => {
+                    format!("Open question: {}", escape_inline(&checked_text(text)?))
                 }
                 FollowThroughItem::Link { task, title } => {
                     if task.kind != "task" {
@@ -210,6 +216,55 @@ pub fn sections(
     Ok(out)
 }
 
+fn checked_summary(raw: Option<&str>) -> Result<Option<String>, String> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let text = collapse(raw);
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if text.chars().count() > MAX_FOLLOW_THROUGH_SUMMARY_CHARS {
+        return Err(format!(
+            "Shorten the summary to {MAX_FOLLOW_THROUGH_SUMMARY_CHARS} characters or fewer."
+        ));
+    }
+    if text.split_whitespace().count() > MAX_RECAP_SUMMARY_WORDS {
+        return Err(format!(
+            "Shorten the summary to {MAX_RECAP_SUMMARY_WORDS} words or fewer."
+        ));
+    }
+    Ok(Some(text))
+}
+
+fn render_section_lines(
+    summary: Option<&str>,
+    items: &[FollowThroughItem],
+    transcript: Option<(&str, &str)>,
+) -> Result<Vec<String>, String> {
+    if items.len() > MAX_FOLLOW_THROUGH_ITEMS {
+        return Err(format!(
+            "Save at most {MAX_FOLLOW_THROUGH_ITEMS} decisions and actions at a time."
+        ));
+    }
+    let mut rendered = Vec::new();
+    if let Some(summary) = checked_summary(summary)? {
+        rendered.push(format!("Summary: {}", escape_inline(&summary)));
+    }
+    if !items.is_empty() {
+        rendered.extend(item_lines(items)?);
+    }
+    if let Some((label, href)) = transcript {
+        let name = collapse(label);
+        let safe_label = escape_inline(if name.is_empty() { "Transcript" } else { &name });
+        rendered.push(format!("Transcript: [{safe_label}]({href})"));
+    }
+    if rendered.is_empty() {
+        return Err("Add a decision or an action to save.".into());
+    }
+    Ok(rendered)
+}
+
 /// `body` with a follow-through section for `occurrence`, dated `date`,
 /// as a top-level list item linking the occurrence by `name`. It goes after
 /// the last top-level meeting block of this occurrence (its meeting line, or
@@ -228,10 +283,24 @@ pub fn insert(
     date: &str,
     items: &[FollowThroughItem],
 ) -> Result<FollowThroughInsert, String> {
+    insert_with_extras(note, body, occurrence, name, date, None, items, None)
+}
+
+/// Like [`insert`], with an optional recap summary and transcript attachment link.
+pub fn insert_with_extras(
+    note: &str,
+    body: &str,
+    occurrence: &NoteReference,
+    name: &str,
+    date: &str,
+    summary: Option<&str>,
+    items: &[FollowThroughItem],
+    transcript: Option<(&str, &str)>,
+) -> Result<FollowThroughInsert, String> {
     if !is_date(date) {
         return Err("Invalid date".into());
     }
-    let rendered = item_lines(items)?;
+    let rendered = render_section_lines(summary, items, transcript)?;
     let name = collapse(name);
     let label = escape_inline(if name.is_empty() { "Meeting" } else { &name });
     let mut section = format!(
@@ -288,6 +357,71 @@ pub fn insert(
         body: next,
         start: at,
         end: at + chunk.len(),
+    })
+}
+
+/// Inserts an ad-hoc recording's follow-through section under `## Meetings` in a
+/// daily note, with a plain time label and title instead of a calendar link.
+pub fn insert_adhoc(
+    _note: &str,
+    body: &str,
+    time_label: &str,
+    name: &str,
+    date: &str,
+    summary: Option<&str>,
+    items: &[FollowThroughItem],
+    transcript: Option<(&str, &str)>,
+) -> Result<FollowThroughInsert, String> {
+    if !is_date(date) {
+        return Err("Invalid date".into());
+    }
+    let rendered = render_section_lines(summary, items, transcript)?;
+    let time = collapse(time_label);
+    let time = if time.is_empty() {
+        "Meeting".to_string()
+    } else if time.chars().count() > MAX_MEETING_TIME_CHARS {
+        time.chars().take(MAX_MEETING_TIME_CHARS).collect()
+    } else {
+        time
+    };
+    let name = collapse(name);
+    let label = escape_inline(if name.is_empty() { "Meeting" } else { &name });
+    let mut section = format!(
+        "- {} for {label} {FOLLOW_THROUGH_MARKER}",
+        escape_inline(&time)
+    );
+    for line in &rendered {
+        section.push_str(&format!("\n  - {line}"));
+    }
+    let next = note_meetings::insert_meeting_line(body, &section).map_err(|_| {
+        "This note has a code block that never closes. Open it before saving follow-through."
+            .to_string()
+    })?;
+    let prefix = body
+        .char_indices()
+        .zip(next.char_indices())
+        .take_while(|((_, a), (_, b))| a == b)
+        .map(|((_, _), (idx, ch))| idx + ch.len_utf8())
+        .last()
+        .unwrap_or(0);
+    let suffix_len = body[prefix..]
+        .chars()
+        .rev()
+        .zip(next[prefix..].chars().rev())
+        .take_while(|(a, b)| a == b)
+        .map(|(ch, _)| ch.len_utf8())
+        .sum::<usize>();
+    let end = next.len() - suffix_len;
+    if end < prefix
+        || next.get(..prefix) != body.get(..prefix)
+        || next.get(end..) != body.get(prefix..)
+    {
+        return Err("This note's layout changed. Open it before saving follow-through.".into());
+    }
+    Ok(FollowThroughInsert {
+        body: next,
+        start: prefix,
+        end,
     })
 }
 
@@ -454,5 +588,104 @@ mod tests {
             title: "Ann".into()
         }])
         .is_err());
+    }
+
+    #[test]
+    fn insert_with_extras_writes_summary_questions_and_transcript_and_validates_word_cap() {
+        let target = NoteReference {
+            version: 1,
+            kind: "event".into(),
+            id: "evt-1".into(),
+            account: Some("me@example.com".into()),
+            calendar: Some("work".into()),
+            note: None,
+            contact: None,
+            series: None,
+        };
+        let body = format!(
+            "- [9:30am]({}) for Sync\n  - Agenda\n",
+            target.href().unwrap()
+        );
+        let inserted = insert_with_extras(
+            "daily:2026-11-16",
+            &body,
+            &target,
+            "Sync",
+            "2026-11-16",
+            Some("Aligned on shipping Friday."),
+            &[FollowThroughItem::Question {
+                text: "Does legal need final copy?".into(),
+            }],
+            Some(("Transcript – Sync – 2026-11-16.md", "attachment:att-1")),
+        )
+        .unwrap();
+        assert!(inserted
+            .body
+            .contains("  - Summary: Aligned on shipping Friday."));
+        assert!(inserted
+            .body
+            .contains("  - Open question: Does legal need final copy?"));
+        assert!(inserted
+            .body
+            .contains("  - Transcript: [Transcript – Sync – 2026-11-16.md](attachment:att-1)"));
+        let mut undone = inserted.body.clone();
+        undone.replace_range(inserted.start..inserted.end, "");
+        assert_eq!(undone, body);
+
+        // Summary alone or transcript alone is enough to save.
+        assert!(insert_with_extras(
+            "daily:2026-11-16",
+            &body,
+            &target,
+            "Sync",
+            "2026-11-16",
+            Some("Brief recap."),
+            &[],
+            None,
+        )
+        .is_ok());
+
+        // Over 400 words in summary is rejected.
+        let too_many = vec!["word"; MAX_RECAP_SUMMARY_WORDS + 1].join(" ");
+        assert!(insert_with_extras(
+            "daily:2026-11-16",
+            &body,
+            &target,
+            "Sync",
+            "2026-11-16",
+            Some(&too_many),
+            &[],
+            None,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn insert_adhoc_adds_section_under_meetings_with_exact_undo_range() {
+        let body = "## Journal\n\nMorning thought.\n";
+        let inserted = insert_adhoc(
+            "daily:2026-11-16",
+            body,
+            "2:15 PM",
+            "Ad-hoc chat",
+            "2026-11-16",
+            Some("Quick sync on launch."),
+            &[FollowThroughItem::Decision {
+                text: "Hold release until tests pass".into(),
+            }],
+            None,
+        )
+        .unwrap();
+        assert!(inserted.body.contains("## Meetings"));
+        assert!(inserted.body.contains(&format!(
+            "- 2:15 PM for Ad-hoc chat {FOLLOW_THROUGH_MARKER}"
+        )));
+        assert!(inserted.body.contains("  - Summary: Quick sync on launch."));
+        assert!(inserted
+            .body
+            .contains("  - Decision: Hold release until tests pass"));
+        let mut undone = inserted.body.clone();
+        undone.replace_range(inserted.start..inserted.end, "");
+        assert_eq!(undone, body);
     }
 }

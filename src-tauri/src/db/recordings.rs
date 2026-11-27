@@ -7,6 +7,7 @@
 use super::{serialization_error, Database, DatabaseError, DbResult};
 use crate::note_entities::NoteReference;
 use crate::recording::capture::Track;
+use crate::recording::runtime::TranscriptSpeaker;
 use crate::recording::settings::RecordingSettings;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -135,6 +136,8 @@ pub struct MeetingRecording {
     pub audio_deleted: bool,
     /// Whole percent while `transcribing`; set by the recording runtime.
     pub transcription_percent: Option<u8>,
+    pub has_recap: bool,
+    pub reviewed_operation_id: Option<String>,
     #[serde(skip)]
     pub audio_dir: String,
 }
@@ -203,7 +206,7 @@ fn tracks_of(connection: &Connection, id: &str) -> DbResult<Vec<MeetingRecording
 }
 
 const RECORDING_COLUMNS: &str =
-    "id,event_ref,title,started_at,ended_at,duration_ms,state,error,audio_deleted_at,audio_dir";
+    "id,event_ref,title,started_at,ended_at,duration_ms,state,error,audio_deleted_at,audio_dir,recap_json IS NOT NULL,reviewed_operation_id";
 
 fn read_recording(connection: &Connection, row: &rusqlite::Row<'_>) -> DbResult<MeetingRecording> {
     let id: String = row.get(0)?;
@@ -223,6 +226,8 @@ fn read_recording(connection: &Connection, row: &rusqlite::Row<'_>) -> DbResult<
         audio_deleted: row.get::<_, Option<String>>(8)?.is_some(),
         transcription_percent: None,
         audio_dir: row.get(9)?,
+        has_recap: row.get(10)?,
+        reviewed_operation_id: row.get(11)?,
         id,
     })
 }
@@ -554,6 +559,62 @@ impl Database {
         })
     }
 
+    pub fn save_recording_recap(&self, id: &str, recap_json: &str) -> DbResult<()> {
+        self.with_connection(|c| {
+            let changed = c.execute(
+                "UPDATE meeting_recordings SET recap_json=?2 WHERE id=?1",
+                params![id, recap_json],
+            )?;
+            if changed == 0 {
+                return Err(DatabaseError::NotFound("Recording"));
+            }
+            Ok(())
+        })
+    }
+
+    pub fn recording_recap_json(&self, id: &str) -> DbResult<Option<String>> {
+        self.with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT recap_json FROM meeting_recordings WHERE id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten())
+        })
+    }
+
+    pub fn latest_transcribed_recording(&self) -> DbResult<Option<MeetingRecording>> {
+        self.with_connection(|c| {
+            c.query_row(
+                &format!(
+                    "SELECT {RECORDING_COLUMNS} FROM meeting_recordings
+                     WHERE state='transcribed' ORDER BY started_at DESC, id DESC LIMIT 1"
+                ),
+                [],
+                |row| Ok(read_recording(c, row)),
+            )
+            .optional()?
+            .transpose()
+        })
+    }
+
+    pub fn latest_unreviewed_transcribed_recording(&self) -> DbResult<Option<MeetingRecording>> {
+        self.with_connection(|c| {
+            c.query_row(
+                &format!(
+                    "SELECT {RECORDING_COLUMNS} FROM meeting_recordings
+                     WHERE state='transcribed' AND reviewed_operation_id IS NULL
+                     ORDER BY started_at DESC, id DESC LIMIT 1"
+                ),
+                [],
+                |row| Ok(read_recording(c, row)),
+            )
+            .optional()?
+            .transpose()
+        })
+    }
+
     /// The engine and model a recording was transcribed with.
     #[cfg(test)]
     pub fn recording_engine(&self, id: &str) -> DbResult<Option<(Option<String>, Option<String>)>> {
@@ -597,6 +658,62 @@ impl Database {
             Ok(())
         })
     }
+}
+
+/// Attachment file name for a saved transcript: `Transcript – <meeting> – <date>.md`.
+pub fn transcript_attachment_filename(title: &str, date: &str) -> String {
+    let clean_title: String = title
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '\0' => '-',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let name = if clean_title.is_empty() {
+        "Meeting".to_string()
+    } else {
+        clean_title.chars().take(80).collect()
+    };
+    format!("Transcript \u{2013} {name} \u{2013} {date}.md")
+}
+
+/// Renders transcript rows as Markdown for note attachment.
+pub fn format_transcript_markdown(
+    title: &str,
+    date: &str,
+    speaker_labels: bool,
+    rows: &[TranscriptRow],
+) -> String {
+    let mut out = format!("# Transcript: {}\n\nDate: {date}\n\n", title.trim());
+    for row in rows.iter().filter(|r| !r.dropped_as_echo) {
+        let secs = (row.start_ms.max(0) as u64) / 1000;
+        let h = secs / 3600;
+        let m = (secs / 60) % 60;
+        let s = secs % 60;
+        let stamp = if h > 0 {
+            format!("{h}:{m:02}:{s:02}")
+        } else {
+            format!("{m}:{s:02}")
+        };
+        if speaker_labels {
+            let speaker = match row.track {
+                Track::Mic => TranscriptSpeaker::You,
+                Track::System => TranscriptSpeaker::Others,
+            };
+            let label = match speaker {
+                TranscriptSpeaker::You => "You",
+                TranscriptSpeaker::Others => "Others",
+            };
+            out.push_str(&format!("- **[{stamp}] {label}:** {}\n", row.text.trim()));
+        } else {
+            out.push_str(&format!("- **[{stamp}]** {}\n", row.text.trim()));
+        }
+    }
+    out
 }
 
 #[cfg(test)]

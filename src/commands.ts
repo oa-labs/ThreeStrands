@@ -17,6 +17,7 @@ export type RecordingCommands = {
   stop(): void;
   pause(): void;
   resume(): void;
+  reviewLast?(): void;
 };
 
 export type CommandContext = {
@@ -790,6 +791,10 @@ export const commands: Command[] = [
   {
     id: "recording.resume", title: "Resume Recording", keywords: ["record", "meeting", "continue"], keys: [], group: "Application",
     enabled: (c) => !c.composerActive && c.recording?.state === "paused", run: (c) => complete(() => c.recording?.resume()),
+  },
+  {
+    id: "recording.reviewLast", title: "Review Last Recording", keywords: ["record", "meeting", "review", "transcript", "recap"], keys: [], group: "Application",
+    enabled: (c) => !c.composerActive && Boolean(c.recording?.reviewLast), run: (c) => complete(() => c.recording?.reviewLast?.()),
   },
   {
     id: "notes.today", title: "Open Today's Note", keywords: ["daily", "journal", "notes"], keys: [], group: "Navigation",

@@ -256,4 +256,49 @@ describe("native inbox-assistants contract", () => {
       ["sync_inbox_agent_ai_config", { aiConfig }],
     ]);
   });
+
+  it("forwards meeting recap and ad-hoc follow-through calls to native commands", async () => {
+    await client.latestTranscribedRecording();
+    await client.recordingReviewContext("rec-1");
+    await client.saveAdhocFollowThrough("2026-11-16", "2:15 PM", "r1", "op-1", {
+      date: "2026-11-16",
+      meeting: "Ad-hoc chat",
+      summary: "Aligned.",
+      items: [{ kind: "decision", text: "Ship" }],
+      recordingId: "rec-1",
+      attachTranscript: true,
+    });
+    await client.summarizeRecording("rec-1", "openai", "gpt-4o", null, "default", true, { startMs: 0, endMs: 60_000 });
+
+    const calls = vi.mocked(invoke).mock.calls;
+    expect(calls.slice(0, 3)).toEqual([
+      ["latest_transcribed_recording", undefined],
+      ["recording_review_context", { id: "rec-1" }],
+      ["save_adhoc_follow_through", {
+        date: "2026-11-16",
+        timeLabel: "2:15 PM",
+        expectedRevision: "r1",
+        operationId: "op-1",
+        accepted: {
+          date: "2026-11-16",
+          meeting: "Ad-hoc chat",
+          summary: "Aligned.",
+          items: [{ kind: "decision", text: "Ship" }],
+          recordingId: "rec-1",
+          attachTranscript: true,
+        },
+      }],
+    ]);
+    expect(calls[3]?.[0]).toBe("summarize_recording");
+    expect(calls[3]?.[1]).toEqual({
+      control: { requestId: expect.any(String), price: null },
+      id: "rec-1",
+      provider: "openai",
+      model: "gpt-4o",
+      endpoint: null,
+      reasoning: "default",
+      includeMyNotes: true,
+      range: { startMs: 0, endMs: 60_000 },
+    });
+  });
 });

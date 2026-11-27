@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FollowThroughItem, MeetingContext } from "./domain";
 import {
-  discardFollowThroughRecovery, FOLLOW_THROUGH_REVIEW_RETENTION_MS, followThroughSections, followUpBody, followUpRecipients, insertFollowThrough,
+  adhocFollowThroughSectionText, discardFollowThroughRecovery, FOLLOW_THROUGH_MARKER, FOLLOW_THROUGH_REVIEW_RETENTION_MS, followThroughSections, followUpBody, followUpRecipients, insertAdhocFollowThrough, insertFollowThrough,
   itemLines, itemsFromSection, MAX_FOLLOW_THROUGH_ITEM_CHARS, MAX_FOLLOW_THROUGH_ITEMS, MAX_FOLLOW_THROUGH_REVIEWS,
   readFollowThroughRecovery, readFollowUpHandoff, rememberFollowUpHandoff, saveFollowThroughRecovery} from "./meetingFollowThrough";
 import { noteReferenceHref, type NoteReference } from "./noteEntities";
@@ -100,5 +100,26 @@ describe("reading a saved section back", () => {
     ];
     const text = insertFollowThrough("", reference, "Sync", "2026-11-16", items).body.replace("( ) Send", "(x) Send").replace("\\[deck\\]", "\\[deck\\] <!-- threestrands-task:abc -->");
     expect(itemsFromSection(text)).toEqual([...items.slice(0, 1), { kind: "task", text: "Send [deck]" }, ...items.slice(2)]);
+  });
+
+  it("writes Summary, Open question, Transcript link, and ad-hoc sections with exact undo range", () => {
+    const items: FollowThroughItem[] = [
+      { kind: "decision", text: "Ship Friday" },
+      { kind: "question", text: "Does legal need final copy?" },
+    ];
+    const withExtras = insertFollowThrough("", reference, "Sync", "2026-11-16", items, {
+      summary: "Aligned on shipping Friday.",
+      transcript: { label: "Transcript – Sync – 2026-11-16.md", href: "attachment:att1" },
+    });
+    expect(withExtras.body).toContain("  - Summary: Aligned on shipping Friday.");
+    expect(withExtras.body).toContain("  - Open question: Does legal need final copy?");
+    expect(withExtras.body).toContain("  - Transcript: [Transcript – Sync – 2026-11-16.md](attachment:att1)");
+    expect(itemsFromSection(withExtras.body)).toEqual(items);
+
+    const existing = "## Journal\n\nMorning.\n";
+    const adhoc = insertAdhocFollowThrough(existing, "2:15 PM", "Quick chat", "2026-11-16", [{ kind: "task", text: "Send notes" }], { summary: "Wrapped up." });
+    expect(adhoc.body).toContain(`## Meetings\n\n- 2:15 PM for Quick chat ${FOLLOW_THROUGH_MARKER}\n  - Summary: Wrapped up.\n  - ( ) Send notes`);
+    expect(adhocFollowThroughSectionText("2:15 PM", "Quick chat", [{ kind: "task", text: "Send notes" }])).toContain("2:15 PM for Quick chat");
+    expect(adhoc.body.slice(0, adhoc.start) + adhoc.body.slice(adhoc.end)).toBe(existing);
   });
 });

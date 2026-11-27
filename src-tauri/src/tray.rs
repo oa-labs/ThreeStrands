@@ -13,7 +13,7 @@
 //! recording service.
 
 use crate::recording::capture::{SystemAudioSupport, Track};
-use crate::recording::runtime::RecordingNotifier;
+use crate::recording::runtime::{RecordingNotifier, TrayReview};
 use crate::recording::settings::RecordingSettings;
 use crate::recording::transcribe::models::TranscriptionModelStatus;
 use crate::recording::transcribe::scheduler::TrayTranscription;
@@ -30,17 +30,19 @@ pub enum TrayCommand {
     Pause,
     Resume,
     Stop,
+    Review,
     Open,
     Settings,
     Quit,
 }
 
 impl TrayCommand {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Start,
         Self::Pause,
         Self::Resume,
         Self::Stop,
+        Self::Review,
         Self::Open,
         Self::Settings,
         Self::Quit,
@@ -54,6 +56,7 @@ impl TrayCommand {
             Self::Pause => "recording-tray-pause",
             Self::Resume => "recording-tray-resume",
             Self::Stop => "recording-tray-stop",
+            Self::Review => "recording-tray-review",
             Self::Open => "recording-tray-open",
             Self::Settings => "recording-tray-settings",
             Self::Quit => "recording-tray-quit",
@@ -137,6 +140,7 @@ pub fn tray_menu(
     status: &RecordingStatus,
     _settings: &RecordingSettings,
     transcribing: Option<&TrayTranscription>,
+    review: Option<&TrayReview>,
 ) -> Vec<MenuItemModel> {
     let mut items = Vec::new();
     match status.state {
@@ -161,13 +165,21 @@ pub fn tray_menu(
             items.push(action(TrayCommand::Stop, "Stop Recording"));
         }
     }
-    if let Some(job) = transcribing {
+    if transcribing.is_some() || review.is_some() {
         items.push(MenuItemModel::Separator);
+    }
+    if let Some(job) = transcribing {
         items.push(MenuItemModel::Status(format!(
             "Transcribing “{}”… {}%",
             short_title(&job.title),
             job.percent
         )));
+    }
+    if let Some(target) = review {
+        items.push(action(
+            TrayCommand::Review,
+            &format!("Review “{}”", short_title(&target.title)),
+        ));
     }
     items.push(MenuItemModel::Separator);
     items.push(action(TrayCommand::Open, "Open ThreeStrands"));
@@ -345,11 +357,15 @@ pub struct RecordingsChanged {
 pub enum TrayRequest {
     Start,
     OpenSettings,
+    Review,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TrayCommandEvent {
     pub command: TrayRequest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recording_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -359,6 +375,7 @@ struct TrayUpdate {
     status: RecordingStatus,
     settings: RecordingSettings,
     transcribing: Option<TrayTranscription>,
+    review: Option<TrayReview>,
     supported: bool,
 }
 
@@ -403,12 +420,14 @@ impl RecordingNotifier for AppNotifier {
         status: &RecordingStatus,
         settings: &RecordingSettings,
         transcribing: Option<&TrayTranscription>,
+        review: Option<&TrayReview>,
         supported: bool,
     ) {
         let _ = self.tray.send(TrayUpdate {
             status: status.clone(),
             settings: settings.clone(),
             transcribing: transcribing.cloned(),
+            review: review.cloned(),
             supported,
         });
     }
@@ -523,7 +542,12 @@ impl TrayWorker {
             }
             return Ok(());
         }
-        let model = tray_menu(&update.status, &update.settings, transcribing);
+        let model = tray_menu(
+            &update.status,
+            &update.settings,
+            transcribing,
+            update.review.as_ref(),
+        );
         let kind = icon_kind(&update.status, transcribing.is_some());
         match self.icon.clone() {
             None => {
@@ -585,10 +609,13 @@ fn run_command(app: &tauri::AppHandle, command: TrayCommand) {
         return;
     };
     let runtime = &state.recording;
-    let request = |request: TrayRequest| {
+    let request = |request: TrayRequest, recording_id: Option<String>| {
         let _ = app.emit(
             "recording-tray-command",
-            TrayCommandEvent { command: request },
+            TrayCommandEvent {
+                command: request,
+                recording_id,
+            },
         );
     };
     let result = match command {
@@ -596,12 +623,20 @@ fn run_command(app: &tauri::AppHandle, command: TrayCommand) {
             if start_shows_window(&runtime.settings()) {
                 crate::focus_main_window(app);
             }
-            request(TrayRequest::Start);
+            request(TrayRequest::Start, None);
+            Ok(())
+        }
+        TrayCommand::Review => {
+            crate::focus_main_window(app);
+            let recording_id = runtime
+                .latest_unreviewed_review()
+                .map(|review| review.recording_id);
+            request(TrayRequest::Review, recording_id);
             Ok(())
         }
         TrayCommand::Settings => {
             crate::focus_main_window(app);
-            request(TrayRequest::OpenSettings);
+            request(TrayRequest::OpenSettings, None);
             Ok(())
         }
         TrayCommand::Open => {
@@ -679,7 +714,7 @@ mod tests {
 
     #[test]
     fn idle_offers_start_and_the_app_items() {
-        let menu = tray_menu(&idle(), &RecordingSettings::default(), None);
+        let menu = tray_menu(&idle(), &RecordingSettings::default(), None, None);
         let mut expected = vec!["Start Recording"];
         expected.extend(FOOTER);
         assert_eq!(labels(&menu), expected);
@@ -695,7 +730,7 @@ mod tests {
     #[test]
     fn recording_shows_a_status_line_pause_and_stop() {
         let status = recording(RecordingPhase::Recording, TrackRunState::Active);
-        let menu = tray_menu(&status, &RecordingSettings::default(), None);
+        let menu = tray_menu(&status, &RecordingSettings::default(), None, None);
         let mut expected = vec![
             "[Recording “Weekly Sync” · 12:34]",
             "Pause Recording",
@@ -712,7 +747,7 @@ mod tests {
     #[test]
     fn paused_offers_resume() {
         let status = recording(RecordingPhase::Paused, TrackRunState::Active);
-        let menu = tray_menu(&status, &RecordingSettings::default(), None);
+        let menu = tray_menu(&status, &RecordingSettings::default(), None, None);
         let mut expected = vec![
             "[Paused “Weekly Sync” · 12:34]",
             "Resume Recording",
@@ -727,7 +762,12 @@ mod tests {
         for system in [TrackRunState::Unavailable, TrackRunState::Failed] {
             let status = recording(RecordingPhase::Recording, system);
             assert_eq!(
-                status_line(&tray_menu(&status, &RecordingSettings::default(), None)),
+                status_line(&tray_menu(
+                    &status,
+                    &RecordingSettings::default(),
+                    None,
+                    None
+                )),
                 Some("Recording “Weekly Sync” · 12:34 · Microphone only"),
                 "{system:?}"
             );
@@ -735,7 +775,12 @@ mod tests {
         // Restarting is not (yet) microphone-only.
         let status = recording(RecordingPhase::Recording, TrackRunState::Restarting);
         assert_eq!(
-            status_line(&tray_menu(&status, &RecordingSettings::default(), None)),
+            status_line(&tray_menu(
+                &status,
+                &RecordingSettings::default(),
+                None,
+                None
+            )),
             Some("Recording “Weekly Sync” · 12:34")
         );
         let mut old_macos = recording(RecordingPhase::Recording, TrackRunState::Unavailable);
@@ -744,11 +789,14 @@ mod tests {
             minor: 2,
         };
         old_macos.tracks.retain(|t| t.track == Track::Mic);
-        assert!(
-            status_line(&tray_menu(&old_macos, &RecordingSettings::default(), None))
-                .unwrap()
-                .ends_with(" · Microphone only")
-        );
+        assert!(status_line(&tray_menu(
+            &old_macos,
+            &RecordingSettings::default(),
+            None,
+            None
+        ))
+        .unwrap()
+        .ends_with(" · Microphone only"));
     }
 
     #[test]
@@ -756,7 +804,12 @@ mod tests {
         let mut status = recording(RecordingPhase::Recording, TrackRunState::Active);
         status.title = Some("Quarterly planning review with the whole extended team".into());
         assert_eq!(
-            status_line(&tray_menu(&status, &RecordingSettings::default(), None)),
+            status_line(&tray_menu(
+                &status,
+                &RecordingSettings::default(),
+                None,
+                None
+            )),
             Some("Recording “Quarterly planning review with the…” · 12:34")
         );
     }
@@ -775,14 +828,20 @@ mod tests {
     fn only_the_status_line_changing_keeps_the_menu_shape() {
         let settings = RecordingSettings::default();
         let mut status = recording(RecordingPhase::Recording, TrackRunState::Active);
-        let before = tray_menu(&status, &settings, None);
+        let before = tray_menu(&status, &settings, None, None);
         status.elapsed_ms += 1000;
-        let after = tray_menu(&status, &settings, None);
+        let after = tray_menu(&status, &settings, None, None);
         assert!(same_shape(&before, &after));
         assert_ne!(status_line(&before), status_line(&after));
         status.state = RecordingPhase::Paused;
-        assert!(!same_shape(&before, &tray_menu(&status, &settings, None)));
-        assert!(!same_shape(&before, &tray_menu(&idle(), &settings, None)));
+        assert!(!same_shape(
+            &before,
+            &tray_menu(&status, &settings, None, None)
+        ));
+        assert!(!same_shape(
+            &before,
+            &tray_menu(&idle(), &settings, None, None)
+        ));
     }
 
     #[test]
@@ -877,7 +936,7 @@ mod tests {
     #[test]
     fn a_transcription_after_stop_gets_its_own_status_line() {
         let settings = RecordingSettings::default();
-        let menu = tray_menu(&idle(), &settings, Some(&job(40)));
+        let menu = tray_menu(&idle(), &settings, Some(&job(40)), None);
         let mut expected = vec![
             "Start Recording",
             "---",
@@ -887,7 +946,7 @@ mod tests {
         assert_eq!(labels(&menu), expected);
         // While another recording runs, both lines show.
         let live = recording(RecordingPhase::Recording, TrackRunState::Active);
-        let both = tray_menu(&live, &settings, Some(&job(40)));
+        let both = tray_menu(&live, &settings, Some(&job(40)), None);
         assert_eq!(
             status_lines(&both),
             [
@@ -898,15 +957,35 @@ mod tests {
         // Progress only changes text, so the menu is updated in place.
         assert!(same_shape(
             &menu,
-            &tray_menu(&idle(), &settings, Some(&job(41)))
+            &tray_menu(&idle(), &settings, Some(&job(41)), None)
         ));
-        assert!(!same_shape(&menu, &tray_menu(&idle(), &settings, None)));
+        assert!(!same_shape(
+            &menu,
+            &tray_menu(&idle(), &settings, None, None)
+        ));
         let mut long = job(5);
         long.title = "Quarterly planning review with the whole extended team".into();
         assert_eq!(
-            status_lines(&tray_menu(&idle(), &settings, Some(&long))),
+            status_lines(&tray_menu(&idle(), &settings, Some(&long), None)),
             ["Transcribing “Quarterly planning review with the…”… 5%"]
         );
+    }
+
+    #[test]
+    fn an_unreviewed_recording_offers_review_in_the_tray() {
+        let settings = RecordingSettings::default();
+        let review = TrayReview {
+            recording_id: "rec-9".into(),
+            title: "Design Review".into(),
+        };
+        let menu = tray_menu(&idle(), &settings, None, Some(&review));
+        let mut expected = vec!["Start Recording", "---", "Review “Design Review”"];
+        expected.extend(FOOTER);
+        assert_eq!(labels(&menu), expected);
+        assert!(menu.contains(&MenuItemModel::Action {
+            command: TrayCommand::Review,
+            label: "Review “Design Review”".into(),
+        }));
     }
 
     #[test]
@@ -966,17 +1045,27 @@ mod tests {
     fn event_payloads_use_the_contract_shape() {
         assert_eq!(
             serde_json::to_value(TrayCommandEvent {
-                command: TrayRequest::OpenSettings
+                command: TrayRequest::OpenSettings,
+                recording_id: None,
             })
             .unwrap(),
             serde_json::json!({ "command": "openSettings" })
         );
         assert_eq!(
             serde_json::to_value(TrayCommandEvent {
-                command: TrayRequest::Start
+                command: TrayRequest::Start,
+                recording_id: None,
             })
             .unwrap(),
             serde_json::json!({ "command": "start" })
+        );
+        assert_eq!(
+            serde_json::to_value(TrayCommandEvent {
+                command: TrayRequest::Review,
+                recording_id: Some("r1".into()),
+            })
+            .unwrap(),
+            serde_json::json!({ "command": "review", "recordingId": "r1" })
         );
         assert_eq!(
             serde_json::to_value(RecordingsChanged {

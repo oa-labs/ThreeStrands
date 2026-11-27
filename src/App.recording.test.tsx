@@ -106,4 +106,45 @@ describe("App meeting recording wiring", () => {
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Stop Recording and Quit?" })).getByRole("button", { name: "Stop and Quit" }));
     await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
   });
+
+  it("opens the Review Follow-through modal from the menu bar and from Review Last Recording", async () => {
+    await mailClient.setRecordingSettings(settings());
+    const transcribed = {
+      id: "rec-latest",
+      eventRef: null,
+      title: "Quick Chat",
+      startedAt: "2026-11-27T14:00:00Z",
+      endedAt: "2026-11-27T14:20:00Z",
+      durationMs: 20 * 60_000,
+      state: "transcribed" as const,
+      error: null,
+      audioDeleted: false,
+      transcriptionPercent: null,
+      tracks: [],
+      hasRecap: false,
+      reviewedOperationId: null,
+    };
+    vi.spyOn(mailClient, "latestTranscribedRecording").mockResolvedValue(transcribed);
+    vi.spyOn(mailClient, "recordingReviewContext").mockResolvedValue({
+      recording: transcribed,
+      recap: null,
+      transcriptBytes: 1200,
+      overBudget: false,
+      durationMs: 20 * 60_000,
+      hasUserNotes: false,
+      notesExcludedFromAi: false,
+    });
+    render(<App />);
+    await screen.findByRole("button", { name: "Command Palette (Ctrl+K)" });
+    await fire("recording-tray-command", { command: "review", recordingId: "rec-latest" });
+    const trayDialog = await screen.findByRole("dialog", { name: "Review Follow-through" });
+    expect(within(trayDialog).getByText(/Quick Chat/)).toBeInTheDocument();
+    fireEvent.click(within(trayDialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review Follow-through" })).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette (Ctrl+K)" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: "Review Last Recording" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Review Last Recording/ }));
+    expect(await screen.findByRole("dialog", { name: "Review Follow-through" })).toBeInTheDocument();
+  });
 });

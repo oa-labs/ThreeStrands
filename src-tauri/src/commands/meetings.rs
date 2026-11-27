@@ -197,7 +197,7 @@ pub(crate) async fn save_meeting_follow_through(
     state: State<'_, AppState>,
 ) -> AppResult<crate::db::meeting_follow_through::FollowThroughSave> {
     let database = state.database.clone();
-    run_database_task(move || {
+    let saved = run_database_task(move || {
         database.save_meeting_follow_through(
             &reference,
             &destination,
@@ -206,7 +206,43 @@ pub(crate) async fn save_meeting_follow_through(
             &accepted,
         )
     })
-    .await
+    .await?;
+    if !saved.replayed {
+        kick_replicated_sync(&state);
+        if saved.recording_id.is_some() {
+            state.recording.refresh_tray_for_review();
+        }
+    }
+    Ok(saved)
+}
+
+#[tauri::command]
+pub(crate) async fn save_adhoc_follow_through(
+    date: String,
+    time_label: String,
+    expected_revision: Option<String>,
+    operation_id: String,
+    accepted: crate::db::meeting_follow_through::AcceptedFollowThrough,
+    state: State<'_, AppState>,
+) -> AppResult<crate::db::meeting_follow_through::FollowThroughSave> {
+    let database = state.database.clone();
+    let saved = run_database_task(move || {
+        database.save_adhoc_follow_through(
+            &date,
+            &time_label,
+            expected_revision.as_deref(),
+            &operation_id,
+            &accepted,
+        )
+    })
+    .await?;
+    if !saved.replayed {
+        kick_replicated_sync(&state);
+        if saved.recording_id.is_some() {
+            state.recording.refresh_tray_for_review();
+        }
+    }
+    Ok(saved)
 }
 
 /// Undo for a saved follow-through: removes exactly that section while the
@@ -217,5 +253,9 @@ pub(crate) async fn undo_meeting_follow_through(
     state: State<'_, AppState>,
 ) -> AppResult<crate::db::meeting_follow_through::FollowThroughUndo> {
     let database = state.database.clone();
-    run_database_task(move || database.undo_meeting_follow_through(&operation_id)).await
+    let undone =
+        run_database_task(move || database.undo_meeting_follow_through(&operation_id)).await?;
+    kick_replicated_sync(&state);
+    state.recording.refresh_tray_for_review();
+    Ok(undone)
 }

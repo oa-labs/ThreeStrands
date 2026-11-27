@@ -102,7 +102,7 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
   const models = useTranscriptionModels();
   const ids = {
     record: useId(), microphone: useId(), keep: useId(), remind: useId(),
-    usage: useId(), model: useId(), language: useId(), during: useId(),
+    summarize: useId(), usage: useId(), model: useId(), language: useId(), during: useId(),
   };
 
   const loadUsage = useCallback(async () => setUsage(await mailClient.recordingsUsage()), []);
@@ -298,6 +298,15 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
       </label>
       <p className="settings-hint" id={ids.remind}>
         Shows a notice each time a recording starts. ThreeStrands never posts to a meeting's chat or invitation for you.
+      </p>
+
+      <label className="settings-switch">
+        <span>Summarize with AI</span>
+        <input type="checkbox" checked={settings?.summarizeWithAi ?? false} disabled={!settings} aria-describedby={ids.summarize}
+          onChange={(event) => void change({ summarizeWithAi: event.target.checked })} />
+      </label>
+      <p className="settings-hint" id={ids.summarize}>
+        Uses your configured AI provider to draft a summary, decisions, actions, and open questions when a transcription finishes. When off, recordings stop at the transcript.
       </p>
 
       <h3>Recordings on This Mac</h3>

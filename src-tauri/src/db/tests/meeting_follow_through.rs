@@ -36,7 +36,10 @@ fn accepted(items: Vec<FollowThroughItem>) -> AcceptedFollowThrough {
     AcceptedFollowThrough {
         date: DAY.into(),
         meeting: "Sync".into(),
+        summary: None,
         items,
+        recording_id: None,
+        attach_transcript: false,
     }
 }
 
@@ -486,4 +489,212 @@ fn a_handoff_has_one_draft_and_reports_where_it_stands() {
     // Removing the account forgets its handoffs.
     db.remove_account(ME).unwrap();
     assert!(db.draft_handoff_status(OP).unwrap().is_none());
+}
+
+fn seed_transcribed_recording(
+    db: &Database,
+    id: &str,
+    event_ref: Option<&NoteReference>,
+    title: &str,
+) {
+    use crate::db::recordings::{NewRecording, RecordingState, TrackState, TranscriptRow};
+    use crate::recording::capture::Track;
+    db.create_recording(&NewRecording {
+        id,
+        event_ref,
+        title,
+        attendees: &["ann@example.org".into()],
+        started_at: "2026-11-16T09:30:00Z",
+        audio_dir: "/tmp/audio",
+        tracks: &[
+            (Track::Mic, TrackState::Active),
+            (Track::System, TrackState::Active),
+        ],
+    })
+    .unwrap();
+    db.finish_recording(
+        id,
+        "2026-11-16T10:00:00Z",
+        1_800_000,
+        RecordingState::Recorded,
+        None,
+    )
+    .unwrap();
+    db.save_transcript(
+        id,
+        &[
+            TranscriptRow {
+                track: Track::System,
+                start_ms: 5_000,
+                end_ms: 9_000,
+                text: "Let's ship on Friday.".into(),
+                rms: None,
+                dropped_as_echo: false,
+            },
+            TranscriptRow {
+                track: Track::Mic,
+                start_ms: 10_000,
+                end_ms: 14_000,
+                text: "I'll send the deck today.".into(),
+                rms: None,
+                dropped_as_echo: false,
+            },
+        ],
+        "speech_analyzer",
+        "en-US",
+        None,
+    )
+    .unwrap();
+}
+
+#[test]
+fn saving_with_recap_transcript_and_undo_manages_attachment_and_reviewed_flag() {
+    let db = database();
+    let note = daily(&db);
+    seed_transcribed_recording(&db, "rec-1", Some(&occurrence("evt-1")), "Sync");
+
+    let saved = db
+        .save_meeting_follow_through(
+            &occurrence("evt-1"),
+            &FollowThroughDestination {
+                note_id: note.id.clone(),
+            },
+            &note.updated_at,
+            OP,
+            &AcceptedFollowThrough {
+                date: DAY.into(),
+                meeting: "Sync".into(),
+                summary: Some("Aligned on shipping Friday.".into()),
+                items: vec![
+                    decision("Ship on Friday"),
+                    FollowThroughItem::Question {
+                        text: "Does legal need the deck?".into(),
+                    },
+                ],
+                recording_id: Some("rec-1".into()),
+                attach_transcript: true,
+            },
+        )
+        .unwrap();
+
+    let att_id = saved
+        .attachment_id
+        .clone()
+        .expect("transcript attachment id");
+    assert_eq!(saved.recording_id.as_deref(), Some("rec-1"));
+    assert!(saved
+        .section
+        .contains("Summary: Aligned on shipping Friday."));
+    assert!(saved
+        .section
+        .contains("Open question: Does legal need the deck?"));
+    assert!(saved.section.contains(&format!(
+        "Transcript: [Transcript – Sync – {DAY}.md](attachment:{att_id})"
+    )));
+
+    let (meta, bytes) = db.note_attachment_bytes(&att_id).unwrap().unwrap();
+    assert_eq!(meta.mime_type, "text/markdown");
+    assert_eq!(meta.name, format!("Transcript – Sync – {DAY}.md"));
+    let md = String::from_utf8(bytes).unwrap();
+    assert!(md.contains("Let's ship on Friday."));
+    assert!(md.contains("I'll send the deck today."));
+
+    let rec = db.recording("rec-1").unwrap().unwrap();
+    assert_eq!(rec.reviewed_operation_id.as_deref(), Some(OP));
+
+    // Undoing removes the section, deletes the attachment, and clears reviewed_operation_id.
+    let undone = db.undo_meeting_follow_through(OP).unwrap();
+    assert_eq!(undone.note.body, note.body);
+    assert!(db.note_attachment(&att_id).unwrap().is_none());
+    let rec_after = db.recording("rec-1").unwrap().unwrap();
+    assert_eq!(rec_after.reviewed_operation_id, None);
+}
+
+#[test]
+fn save_adhoc_follow_through_writes_daily_note_with_transcript_and_undoes() {
+    let db = database();
+    seed_transcribed_recording(&db, "rec-adhoc", None, "Coffee chat");
+
+    let saved = db
+        .save_adhoc_follow_through(
+            DAY,
+            "2:15 PM",
+            None,
+            OP,
+            &AcceptedFollowThrough {
+                date: DAY.into(),
+                meeting: "Coffee chat".into(),
+                summary: Some("Agreed on Q4 hiring plan.".into()),
+                items: vec![task("Share rubric")],
+                recording_id: Some("rec-adhoc".into()),
+                attach_transcript: true,
+            },
+        )
+        .unwrap();
+
+    let att_id = saved.attachment_id.clone().unwrap();
+    assert!(saved.note.body.contains("## Meetings"));
+    assert!(saved.note.body.contains(&format!(
+        "- 2:15 PM for Coffee chat {FOLLOW_THROUGH_MARKER}"
+    )));
+    assert!(saved
+        .note
+        .body
+        .contains("Summary: Agreed on Q4 hiring plan."));
+    assert!(saved.note.body.contains("( ) Share rubric"));
+    assert!(saved.note.body.contains(&format!("(attachment:{att_id})")));
+    assert_eq!(
+        db.recording("rec-adhoc")
+            .unwrap()
+            .unwrap()
+            .reviewed_operation_id
+            .as_deref(),
+        Some(OP)
+    );
+
+    let undone = db.undo_meeting_follow_through(OP).unwrap();
+    assert!(!undone.note.body.contains("Coffee chat"));
+    assert!(db.note_attachment(&att_id).unwrap().is_none());
+    assert_eq!(
+        db.recording("rec-adhoc")
+            .unwrap()
+            .unwrap()
+            .reviewed_operation_id,
+        None
+    );
+}
+
+#[test]
+fn occurrence_notes_for_recap_never_returns_exclude_from_ai_notes() {
+    let db = database();
+    let occ = occurrence("evt-1");
+    let included = db
+        .save_daily_note(
+            DAY,
+            &format!(
+                "- [9:30am]({}) for Sync\n  - Discuss launch milestones\n",
+                href("evt-1")
+            ),
+        )
+        .unwrap()
+        .unwrap();
+    let secret = db
+        .create_note(
+            "Private Sync Notes",
+            &format!("About [Sync]({}): TOP_SECRET_SALARY_DATA", href("evt-1")),
+        )
+        .unwrap();
+    db.set_note_exclude_from_ai(&secret.id, true).unwrap();
+
+    let (notes_text, any_excluded) = db.occurrence_notes_for_recap(&occ).unwrap();
+    assert!(any_excluded);
+    let combined = notes_text.expect("non-excluded note should still be included");
+    assert!(combined.contains("Discuss launch milestones"));
+    assert!(!combined.contains("TOP_SECRET_SALARY_DATA"));
+
+    // When the only note is excluded, notes_text is None and any_excluded is true.
+    db.set_note_exclude_from_ai(&included.id, true).unwrap();
+    let (none_text, still_excluded) = db.occurrence_notes_for_recap(&occ).unwrap();
+    assert!(still_excluded);
+    assert!(none_text.is_none());
 }

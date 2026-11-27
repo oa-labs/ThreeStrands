@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { MessageSquareText, RotateCw, Trash2 } from "lucide-react";
+import { ClipboardCheck, MessageSquareText, RotateCw, Trash2 } from "lucide-react";
 import { mailClient } from "./data/client";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { AttachmentIcon } from "./AttachmentIcon";
@@ -48,7 +48,7 @@ function useTranscriptionProgress(enabled: boolean) {
  * An event's Recording section, in the Meeting context after Notes: one row
  * per recording of this occurrence. It is left out while there are none.
  */
-export function EventRecordings({ occurrence }: { occurrence: NoteReference }) {
+export function EventRecordings({ occurrence, onReview }: { occurrence: NoteReference; onReview?(recording: MeetingRecording): void }) {
   const recording = useRecording();
   const { rows, error, refresh } = useEventRecordings(occurrence, recording.supported, recording.recordingsVersion);
   const [confirming, setConfirming] = useState<MeetingRecording | null>(null);
@@ -99,6 +99,9 @@ export function EventRecordings({ occurrence }: { occurrence: NoteReference }) {
           detail={recordingDetail(row, recording.transcriptionModel, percents[row.id] ?? null, recording.usingSpeechAnalyzer)}
           actions={row.state === "recording" ? undefined : [
             ...(canShowTranscript(row) ? [
+              <button key="review" type="button" className="btn-icon btn-icon-sm" aria-label="Review" title="Review" onClick={() => (onReview ? onReview(row) : recording.openReview(row))}>
+                <ClipboardCheck size={ICON_SIZE.sm} aria-hidden="true" />
+              </button>,
               <button key="transcript" type="button" className="btn-icon btn-icon-sm" aria-label="Show Transcript" title="Show Transcript" onClick={() => setViewing(row)}>
                 <MessageSquareText size={ICON_SIZE.sm} aria-hidden="true" />
               </button>,

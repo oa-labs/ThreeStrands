@@ -5,7 +5,7 @@ use crate::clock::Clock;
 use crate::db::recordings::{MeetingRecording, NewRecording, TrackState};
 use crate::db::Database;
 use crate::recording::capture::fake::FakeBackend;
-use crate::recording::runtime::{RecordingNotifier, TranscriptionParts};
+use crate::recording::runtime::{RecordingNotifier, TranscriptionParts, TrayReview};
 use crate::recording::segments::{self, GapReason, SegmentWriter};
 use crate::recording::settings::{KeepAudio, RecordingSettings};
 use crate::recording::test_support::TempDir;
@@ -75,6 +75,7 @@ impl RecordingNotifier for Recorder {
         _: &RecordingStatus,
         _: &RecordingSettings,
         transcribing: Option<&TrayTranscription>,
+        _: Option<&TrayReview>,
         _: bool,
     ) {
         self.0
