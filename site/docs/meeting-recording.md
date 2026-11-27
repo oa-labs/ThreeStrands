@@ -17,6 +17,8 @@ Meeting recording is available on **macOS only** and is **off by default**.
 
 Once **Record Meetings** is turned on, you can control recordings from three places:
 
+<ts-shot scene="meeting-recording" alt="Calendar meeting details with an active recording status indicator and Stop Recording control."></ts-shot>
+
 - **Menu bar icon:** Use **Start Recording**, **Pause Recording**, **Resume Recording**, or **Stop Recording** from the ThreeStrands menu bar icon. Closing the main window leaves ThreeStrands running in the menu bar so an active recording is not interrupted.
 - **Calendar and Today:** Meetings that are under way or starting within 10 minutes show a **Record** / **Stop Recording** button in Calendar **Event details** and on **Today**.
 - **Command palette:** Press <kbd>⌘ + k</kbd> and run **Start Recording**, **Pause Recording**, **Resume Recording**, or **Stop Recording**.

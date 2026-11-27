@@ -274,6 +274,41 @@ const scenes: Scene[] = [
     },
   },
   {
+    name: "inbox-assistants",
+    capture: async (page) => {
+      await configureDemoAi(page, ["Reading", "Writing"]);
+      await page.keyboard.press("7");
+      const workspace = page.getByRole("region", { name: "Inbox Assistants", exact: true });
+      await expect(workspace).toBeVisible();
+      for (const name of ["Stale Reads Summarizer", "Aging Reply Drafter"]) {
+        const card = workspace.getByRole("article", { name, exact: true });
+        await card.getByRole("button", { name: "Enable", exact: true }).click();
+        await card.getByRole("button", { name: "Run Now", exact: true }).click();
+      }
+      const suggestions = workspace.getByRole("region", { name: "Inbox suggestions", exact: true });
+      await expect(suggestions.locator(".assistant-proposal-card").first()).toBeVisible();
+    },
+  },
+  {
+    name: "meeting-recording",
+    capture: async (page) => {
+      const settings = await openSettings(page, "Meeting Recording");
+      await settings.getByRole("checkbox", { name: "Record Meetings", exact: true }).check();
+      await page.keyboard.press("Escape");
+      await expect(settings).toBeHidden();
+      await page.keyboard.press("2");
+      const week = page.getByRole("region", { name: "Calendar week", exact: true });
+      await week.getByRole("button", { name: /^Design crit: onboarding v3/ }).first().click();
+      const context = page.getByRole("complementary", { name: "Meeting context", exact: true });
+      await context.getByRole("button", { name: "Record", exact: true }).click();
+      const indicator = page.getByRole("group", { name: "Recording", exact: true });
+      const notice = page.getByRole("dialog", { name: "Recording Meetings", exact: true });
+      await expect(notice.or(indicator)).toBeVisible();
+      if (await notice.isVisible()) await notice.getByRole("button", { name: "Start Recording", exact: true }).click();
+      await expect(indicator).toBeVisible();
+    },
+  },
+  {
     name: "tasks",
     capture: async (page) => {
       await page.keyboard.press("3");

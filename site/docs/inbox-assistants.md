@@ -9,6 +9,8 @@ reviewed: next
 
 Open **Agents** from the sidebar or press <kbd>7</kbd> to manage standing **Inbox Assistants**. Assistants inspect aging mail in your Inbox and prepare suggestions for your review—nothing is ever archived, saved, or sent automatically.
 
+<ts-shot scene="inbox-assistants" alt="Inbox Assistants showing configurable rules and pending suggestions awaiting review."></ts-shot>
+
 - **AI provider:** Summaries, cross-thread checks, and reply drafts use the provider and model configured in **Settings → AI Provider**. Completed-task checks in **Expired & Already-Handled Sweeper** run locally even without an AI provider.
 - **Account scope:** Assistants follow the account selected in the sidebar or each assistant's configured **Mail Account Scope**.
 
