@@ -186,8 +186,9 @@ Needs the developer's Mac:
 2. **The system-audio permission prompt:** when it appears, which app it
    names when run from Terminal versus the bundled app, and what the tap
    delivers after the user denies it.
-3. **The tap floor:** run `capture` in tart macOS 14.2 and 14.4 VMs. The plan
-   records the microphone only below the version that actually works.
+3. **The tap floor:** the developer set it at macOS 14.4 on 2026-11-27. Run
+   `capture` in a tart macOS 14.4 VM to confirm the tap records there. Below
+   14.4 the app records the microphone only.
 
 Decided without measuring:
 

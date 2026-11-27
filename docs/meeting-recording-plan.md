@@ -1,8 +1,8 @@
 # Meeting recording and transcription
 
-**Status:** Proposed. Stage 0 (the spike) ran in the VM on 2026-11-26; see
+**Status:** In progress. Stage 0 (the spike) ran in the VM on 2026-11-26; see
 [the findings](archive/meeting-recording-spike-findings.md). Its host
-measurements are still open.
+measurements are still open. Stage 1 started 2026-11-27.
 **Baseline:** 0.211.0, reviewed 2026-11-26.
 **Builds on:** [Meeting preparation and follow-through](meeting-preparation-design.md)
 (stages 1–3 built) and [Meeting notes](notes-design.md#meeting-notes-proposal)
@@ -50,18 +50,18 @@ transcript, mobile, and syncing audio or raw transcripts between devices.
 | The transcript in notes | Not as note text. A note has a 96 KB limit, and all notes share 3.5 MiB. The transcript can be attached to the meeting note as a Markdown file (attachment path, 20 MiB limit, encrypted sync). This is an option in the review, off by default. | One long meeting would use a large share of the shared notes budget. |
 | Audio | Stays on the device. It is never synced or attached, and it is deleted on a retention schedule. | Size, and privacy. |
 | Settings transfer | The recording settings are device-local and are not included in the settings export. | Permissions, downloaded models, and audio devices belong to a machine, and keeping them local avoids a change to the export format. |
-| Platforms | macOS first (system audio from the tap floor the spike confirms), then Windows, then Linux. No recording on Android. | macOS is the primary target, and each OS needs its own system-audio code. |
+| Platforms | macOS first (system audio from macOS 14.4, the tap floor), then Windows, then Linux. No recording on Android. | macOS is the primary target, and each OS needs its own system-audio code. |
 
 Settled by the developer on 2026-11-26:
 
 1. **Transcription in v1 is local only.** Cloud upload is the opt-in in stage 8.
 2. **macOS below the process-tap floor records the microphone only.** The SDK
    marks process taps as 14.2. meetily's comments say 14.4, and anarlog requires
-   15.0. The spike sets the floor to the earliest version on which a tap
-   actually records. Below it, Settings → Meeting Recording says which macOS
-   version system audio needs, and the tray's recording line reads "Microphone
+   15.0. **The floor is macOS 14.4** (the developer, 2026-11-27), so 14.2 and
+   14.3 aren't tested. Below it, Settings → Meeting Recording says that system
+   audio needs macOS 14.4, and the tray's recording line reads "Microphone
    only". There is no ScreenCaptureKit fallback, so the app never asks for the
-   Screen Recording permission.
+   Screen Recording permission. The app's own minimum macOS doesn't change.
 3. **Audio is kept 7 days by default.** The **Keep Audio** setting can change
    this.
 4. **The tray icon is shown only while Record Meetings is on.** Turning the
@@ -196,8 +196,8 @@ synthetic PCM.
 
 | Platform | Microphone | System audio |
 | --- | --- | --- |
-| macOS at or above the tap floor | `cpal` (Core Audio) on the default input device, following device changes. ThreeStrands' own tap device is left out of the device list. | A Core Audio process tap: a mono `CATapDescription` global tap that excludes ThreeStrands' own process, `AudioHardwareCreateProcessTap`, and a private aggregate device whose tap list holds the tap. Bindings come from `objc2-core-audio` 0.3, in the objc2 family already in the tree. The spike confirmed it exposes everything the tap needs, so `cidre` (used by both references) isn't needed. It needs `NSAudioCaptureUsageDescription` and no Screen Recording permission. |
-| macOS below the tap floor | `cpal` | None. The recording has only the microphone track. It also picks up other people's voices from the speakers, so the transcript has no speaker labels, and the recap treats every action's owner as unclear rather than as the user's. |
+| macOS 14.4 and later | `cpal` (Core Audio) on the default input device, following device changes. ThreeStrands' own tap device is left out of the device list. | A Core Audio process tap: a mono `CATapDescription` global tap that excludes ThreeStrands' own process, `AudioHardwareCreateProcessTap`, and a private aggregate device whose tap list holds the tap. Bindings come from `objc2-core-audio` 0.3, in the objc2 family already in the tree. The spike confirmed it exposes everything the tap needs, so `cidre` (used by both references) isn't needed. It needs `NSAudioCaptureUsageDescription` and no Screen Recording permission. |
+| macOS before 14.4 | `cpal` | None. The recording has only the microphone track. It also picks up other people's voices from the speakers, so the transcript has no speaker labels, and the recap treats every action's owner as unclear rather than as the user's. |
 | Windows | `cpal` (WASAPI) | WASAPI loopback (`cpal` input streams on output devices, as meetily does, or the `wasapi` crate, as anarlog does). The source follows the endpoint another process is actually playing through. It switches only after two polls agree, and skips ThreeStrands' own process. |
 | Linux | `cpal` | The PulseAudio monitor source of the default sink through `libpulse-binding`. PipeWire answers it through its Pulse compatibility layer. ALSA is avoided: meetily crashed after about 30 minutes of concurrent ALSA calls. |
 
@@ -330,10 +330,16 @@ Processing:
 
 - **Migration** (the next number): `meeting_recordings` (`id`, `event_ref` JSON
   or NULL, `title`, `started_at`, `ended_at`, `duration_ms`, `state`
-  recording|interrupted|transcribing|transcribed|failed, `engine`, `model`,
+  recording|interrupted|recorded|transcribing|transcribed|failed, `engine`, `model`,
   `audio_dir`, `audio_deleted_at`, `recap_json` NULL, `reviewed_operation_id`
-  NULL, `error`) and `meeting_recording_segments` (`recording_id`, `seq`,
+  NULL, `error`), where `recorded` means stopped and waiting for
+  transcription, and `meeting_recording_segments` (`recording_id`, `seq`,
   `track`, `start_ms`, `end_ms`, `text`, `dropped_as_echo`).
+- **Settings** live natively in a single-row `meeting_recording_settings`
+  table, because the tray, retention, and transcription read them while the
+  window may be hidden. The webview reads and writes them through
+  `recording_settings` and `set_recording_settings`. Fields added later get
+  serde defaults.
 - **Device-local.** These tables are not replicated entities and not part of
   settings transfer. The only things that leave the device are what the user
   saves into a note and the optional transcript attachment, both through
@@ -380,6 +386,7 @@ Commands: `recording_start(eventRef?, title?)`, `recording_pause`,
 `recording_resume`, `recording_stop`, `recording_status`,
 `list_recordings(eventRef)`, `recording_transcript(id)`,
 `delete_recording(id)`, `delete_recording_audio(id)`,
+`recording_settings`, `set_recording_settings(settings)`,
 `transcription_model_status`, `download_transcription_model(model)`, and
 `summarize_recording(id, requestId, range?)`. The `recording-state` event goes
 to the webview, which shows the indicator, the Recording rows, and progress.
@@ -394,8 +401,8 @@ in the first stage users can see (stage 2), and extend it in later stages.
 0. **Spike.** *Ran 2026-11-26 in the VM.* See the
    [findings](archive/meeting-recording-spike-findings.md) and the throwaway
    crate in `spikes/meeting-recording/`. Still open: the host run (a real call
-   on speakers and on headphones, Metal speed, the permission prompt) and the
-   tap on macOS 14.2 and 14.4. Parakeet is deferred. The original scope: record a call
+   on speakers and on headphones, Metal speed, the permission prompt) and
+   confirming the tap records on macOS 14.4, the floor. Parakeet is deferred. The original scope: record a call
    through a macOS process tap and the microphone to WAV. Build `whisper-rs` with
    Metal in CI. Measure realtime factor, memory, battery, and echo duplication
    with and without headphones. Also settle three questions:
