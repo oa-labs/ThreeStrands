@@ -25,7 +25,7 @@ vi.mock("./recordingEvents", async (original) => ({
 const emit = <K extends keyof RecordingEvents>(name: K, payload: RecordingEvents[K]) => act(() => bus.emit(name, payload));
 
 const settings = (overrides: Partial<RecordingSettings> = {}): RecordingSettings => ({
-  recordMeetings: true, transcriptionModel: "fast", keepAudio: "days7", offerToRecord: true, remindToTell: true,
+  recordMeetings: true, transcriptionModel: "fast", transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
   summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true, ...overrides,
 });
 const status = (overrides: Partial<RecordingStatus> = {}): RecordingStatus => ({

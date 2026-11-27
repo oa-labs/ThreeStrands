@@ -7,8 +7,13 @@
 //! across a minute boundary reaches whisper whole. When the run ends (a
 //! gap, or the recording's end) nothing is held. A file that doesn't
 //! continue the run first flushes whatever is still carried.
+//!
+//! The carry remembers which files and samples it came from, so a worker
+//! that stops between batches can report it ([`Streams::held`]) and the
+//! next worker can pick it up ([`Streams::restore`]) with exactly the same
+//! samples and clock: the result is the same as one worker doing both.
 
-use super::protocol::{SegmentRequest, TranscriptLine};
+use super::protocol::{HeldAudio, HeldPiece, SegmentRequest, TranscriptLine};
 use super::spans::{self, Span};
 use crate::recording::capture::Track;
 use crate::recording::policy;
@@ -54,6 +59,25 @@ pub fn read_segment(path: &Path) -> Result<Vec<f32>, String> {
 struct Carry {
     samples: Vec<f32>,
     start_ms: u64,
+    /// Where `samples` come from, oldest first; their lengths add up to
+    /// `samples.len()`.
+    pieces: Vec<HeldPiece>,
+}
+
+/// `pieces` without their first `skip` samples.
+fn skip_samples(pieces: Vec<HeldPiece>, mut skip: u64) -> Vec<HeldPiece> {
+    let mut kept = Vec::new();
+    for mut piece in pieces {
+        if skip >= piece.samples {
+            skip -= piece.samples;
+            continue;
+        }
+        piece.from_sample += skip;
+        piece.samples -= skip;
+        skip = 0;
+        kept.push(piece);
+    }
+    kept
 }
 
 /// Both tracks' carries.
@@ -82,10 +106,17 @@ impl Streams {
         let track = request.track;
         let mut lines = Vec::new();
         let carry = std::mem::take(self.carry(track));
-        let (buffer, start_ms) = if request.continues && !carry.samples.is_empty() {
+        let piece = HeldPiece {
+            wav_path: request.wav_path.clone(),
+            from_sample: 0,
+            samples: samples.len() as u64,
+        };
+        let (buffer, start_ms, pieces) = if request.continues && !carry.samples.is_empty() {
             let mut buffer = carry.samples;
             buffer.extend_from_slice(&samples);
-            (buffer, carry.start_ms)
+            let mut pieces = carry.pieces;
+            pieces.push(piece);
+            (buffer, carry.start_ms, pieces)
         } else {
             if !carry.samples.is_empty() {
                 // The run ended without a file saying so; finish it first.
@@ -96,7 +127,7 @@ impl Streams {
                     carry.start_ms,
                 )?);
             }
-            (samples, request.start_ms)
+            (samples, request.start_ms, vec![piece])
         };
         let raw = engine.detect(&buffer)?;
         let keep_from = if request.ends_run {
@@ -115,8 +146,57 @@ impl Streams {
         *self.carry(track) = Carry {
             start_ms: start_ms + spans::samples_to_ms(keep_from),
             samples: buffer[keep_from..].to_vec(),
+            pieces: skip_samples(pieces, keep_from as u64),
         };
         Ok(lines)
+    }
+
+    /// What `track` is holding back for its next file, if anything.
+    pub fn held(&self, track: Track) -> Option<HeldAudio> {
+        let carry = match track {
+            Track::Mic => &self.mic,
+            Track::System => &self.system,
+        };
+        (!carry.samples.is_empty()).then(|| HeldAudio {
+            start_ms: carry.start_ms,
+            pieces: carry.pieces.clone(),
+        })
+    }
+
+    /// Takes over audio an earlier worker held back for `track`, reading its
+    /// pieces with `read`. Refused when the track already holds audio, a
+    /// piece lies outside its file, or the whole is longer than anything a
+    /// worker holds back (one span).
+    pub fn restore(
+        &mut self,
+        track: Track,
+        held: &HeldAudio,
+        mut read: impl FnMut(&Path) -> Result<Vec<f32>, String>,
+    ) -> Result<(), String> {
+        if !self.carry(track).samples.is_empty() {
+            return Err("this track already holds audio".into());
+        }
+        let most = spans::ms_to_samples(policy::VAD_MAX_SPAN_MS);
+        let mut samples = Vec::new();
+        for piece in &held.pieces {
+            let file = read(&piece.wav_path)?;
+            let range = usize::try_from(piece.from_sample)
+                .ok()
+                .zip(usize::try_from(piece.samples).ok())
+                .and_then(|(from, count)| Some(from..from.checked_add(count)?))
+                .filter(|range| range.end <= file.len())
+                .ok_or("the held audio is outside its file")?;
+            if samples.len() + range.len() > most {
+                return Err("too much held audio".into());
+            }
+            samples.extend_from_slice(&file[range]);
+        }
+        *self.carry(track) = Carry {
+            samples,
+            start_ms: held.start_ms,
+            pieces: held.pieces.clone(),
+        };
+        Ok(())
     }
 
     /// Milliseconds of audio a track is holding back.
@@ -252,6 +332,7 @@ pub(crate) mod tests {
             start_ms,
             continues,
             ends_run,
+            carry_in: None,
         }
     }
 
@@ -423,5 +504,227 @@ pub(crate) mod tests {
             .unwrap();
         assert!(read_segment(&huge).is_err());
         assert!(read_segment(&dir.path().join("missing.wav")).is_err());
+    }
+
+    /// A run of `files` contiguous one-minute files (named `/run/N`), with
+    /// speech of value `0.6 + i/100` for each `(from, to)` second range on
+    /// the run's clock.
+    fn run_of(files: usize, speech: &[(f64, f64)]) -> Vec<(SegmentRequest, Vec<f32>)> {
+        let whole: Vec<(f64, f64, f32)> = speech
+            .iter()
+            .enumerate()
+            .map(|(i, &(from, to))| (from, to, 0.6 + i as f32 / 100.0))
+            .collect();
+        let samples = audio(files as f64 * 60.0, &whole);
+        (0..files)
+            .map(|index| {
+                let mut request = request(
+                    Track::Mic,
+                    index as u64 * 60_000,
+                    index > 0,
+                    index + 1 == files,
+                );
+                request.wav_path = format!("/run/{index}").into();
+                (
+                    request,
+                    samples[index * 60 * S..(index + 1) * 60 * S].to_vec(),
+                )
+            })
+            .collect()
+    }
+
+    fn placed(lines: &[TranscriptLine]) -> Vec<(u64, u64, String)> {
+        lines
+            .iter()
+            .map(|l| (l.start_ms, l.end_ms, l.text.clone()))
+            .collect()
+    }
+
+    /// Feeds `run` to fresh workers `batch` files at a time, handing each
+    /// one what the last held back, as the scheduler does.
+    fn in_batches(
+        run: &[(SegmentRequest, Vec<f32>)],
+        batch: usize,
+    ) -> (Vec<TranscriptLine>, Vec<usize>, Vec<Option<HeldAudio>>) {
+        let files: std::collections::HashMap<std::path::PathBuf, Vec<f32>> = run
+            .iter()
+            .map(|(request, samples)| (request.wav_path.clone(), samples.clone()))
+            .collect();
+        let mut engine = FakeEngine::new();
+        let mut lines = Vec::new();
+        let mut held_at_ends = Vec::new();
+        let mut held: Option<HeldAudio> = None;
+        for chunk in run.chunks(batch) {
+            let mut streams = Streams::default();
+            if let Some(held) = held.take() {
+                streams
+                    .restore(Track::Mic, &held, |path| Ok(files[path].clone()))
+                    .unwrap();
+            }
+            for (request, samples) in chunk {
+                lines.extend(streams.feed(&mut engine, request, samples.clone()).unwrap());
+            }
+            held = streams.held(Track::Mic);
+            held_at_ends.push(held.clone());
+        }
+        (lines, engine.transcribed, held_at_ends)
+    }
+
+    #[test]
+    fn workers_taking_turns_transcribe_exactly_what_one_worker_would() {
+        // Speech across every kind of boundary: inside a file, across a
+        // minute, across a batch's end (minutes 2|3 and 4|5 with batches of
+        // two), and endless speech longer than a span across a batch's end.
+        let run = run_of(
+            6,
+            &[
+                (10.0, 12.5),
+                (58.5, 61.5),
+                (119.0, 123.0),
+                (178.25, 185.0),
+                (230.0, 275.0),
+                (299.5, 300.2),
+                (355.0, 359.0),
+            ],
+        );
+        let mut engine = FakeEngine::new();
+        let mut streams = Streams::default();
+        let mut one = Vec::new();
+        for (request, samples) in &run {
+            one.extend(streams.feed(&mut engine, request, samples.clone()).unwrap());
+        }
+        for batch in [1, 2, 4] {
+            let (lines, transcribed, held) = in_batches(&run, batch);
+            assert_eq!(placed(&lines), placed(&one), "batches of {batch}");
+            assert_eq!(transcribed, engine.transcribed, "batches of {batch}");
+            assert!(
+                held[..held.len() - 1].iter().any(Option::is_some),
+                "a batch ended holding speech: {batch}"
+            );
+            assert_eq!(held.last(), Some(&None), "the run's end holds nothing");
+        }
+        // The sentence across the end of the first batch of two arrived
+        // whole.
+        assert!(
+            placed(&one)
+                .iter()
+                .any(|(start, end, text)| (*start, *end) == (119_000, 123_000)
+                    && text.ends_with("for 4000 ms")),
+            "{:?}",
+            placed(&one)
+        );
+    }
+
+    #[test]
+    fn held_audio_names_its_file_and_offset_on_the_recording_clock() {
+        let run = run_of(2, &[(58.0, 61.0)]);
+        let mut engine = FakeEngine::new();
+        let mut streams = Streams::default();
+        assert_eq!(streams.held(Track::Mic), None);
+        streams
+            .feed(&mut engine, &run[0].0, run[0].1.clone())
+            .unwrap();
+        let from = 58 * S - spans::ms_to_samples(policy::VAD_PAD_BEFORE_MS);
+        assert_eq!(
+            streams.held(Track::Mic),
+            Some(HeldAudio {
+                start_ms: spans::samples_to_ms(from),
+                pieces: vec![HeldPiece {
+                    wav_path: "/run/0".into(),
+                    from_sample: from as u64,
+                    samples: (60 * S - from) as u64,
+                }],
+            })
+        );
+        assert_eq!(streams.held(Track::System), None, "per track");
+    }
+
+    #[test]
+    fn held_audio_can_span_a_short_file() {
+        // A 10-second file that continues the run but doesn't end it: what
+        // is held reaches back into the file before it.
+        let mut engine = FakeEngine::new();
+        let mut streams = Streams::default();
+        let mut first = request(Track::Mic, 0, false, false);
+        first.wav_path = "/a".into();
+        let mut second = request(Track::Mic, 60_000, true, false);
+        second.wav_path = "/b".into();
+        streams
+            .feed(&mut engine, &first, audio(60.0, &[(55.0, 60.0, 0.8)]))
+            .unwrap();
+        streams
+            .feed(&mut engine, &second, audio(10.0, &[(0.0, 10.0, 0.8)]))
+            .unwrap();
+        let held = streams.held(Track::Mic).unwrap();
+        let from = 55 * S - spans::ms_to_samples(policy::VAD_PAD_BEFORE_MS);
+        assert_eq!(
+            held.pieces,
+            vec![
+                HeldPiece {
+                    wav_path: "/a".into(),
+                    from_sample: from as u64,
+                    samples: (60 * S - from) as u64
+                },
+                HeldPiece {
+                    wav_path: "/b".into(),
+                    from_sample: 0,
+                    samples: 10 * S as u64
+                },
+            ]
+        );
+        let mut restored = Streams::default();
+        let files = [
+            ("/a", audio(60.0, &[(55.0, 60.0, 0.8)])),
+            ("/b", audio(10.0, &[(0.0, 10.0, 0.8)])),
+        ];
+        restored
+            .restore(Track::Mic, &held, |path| {
+                Ok(files
+                    .iter()
+                    .find(|(name, _)| path == Path::new(name))
+                    .unwrap()
+                    .1
+                    .clone())
+            })
+            .unwrap();
+        assert_eq!(restored.held(Track::Mic), Some(held));
+        assert_eq!(restored.held_ms(Track::Mic), streams.held_ms(Track::Mic));
+    }
+
+    #[test]
+    fn restoring_refuses_audio_outside_its_file_or_longer_than_a_span() {
+        let file = vec![0.0f32; 60 * S];
+        let read = |_: &Path| Ok(file.clone());
+        let held = |from_sample: u64, samples: u64| HeldAudio {
+            start_ms: 0,
+            pieces: vec![HeldPiece {
+                wav_path: "/a".into(),
+                from_sample,
+                samples,
+            }],
+        };
+        let most = spans::ms_to_samples(policy::VAD_MAX_SPAN_MS) as u64;
+        let end = 60 * S as u64;
+        assert!(Streams::default()
+            .restore(Track::Mic, &held(end - most, most), read)
+            .is_ok());
+        assert!(Streams::default()
+            .restore(Track::Mic, &held(end - most, most + 1), read)
+            .is_err());
+        assert!(Streams::default()
+            .restore(Track::Mic, &held(0, most + 1), read)
+            .is_err());
+        assert!(Streams::default()
+            .restore(Track::Mic, &held(u64::MAX, 2), read)
+            .is_err());
+        assert!(Streams::default()
+            .restore(Track::Mic, &held(0, 1), |_| Err("missing".into()))
+            .is_err());
+        let mut holding = Streams::default();
+        holding.restore(Track::Mic, &held(0, 1), read).unwrap();
+        assert!(
+            holding.restore(Track::Mic, &held(0, 1), read).is_err(),
+            "only into an empty carry"
+        );
     }
 }

@@ -83,6 +83,11 @@ A new settings page, off by default:
   **Download** and progress. The model is downloaded only when the user
   presses **Download**, and its SHA-256 is checked against a hash pinned in
   the policy module. The spike recorded the hashes.
+- **Transcribe During Meetings**: on by default. Transcribes finished minutes
+  in batches while the meeting is recorded, so the transcript is ready soon
+  after Stop. Off, nothing is transcribed until Stop, which keeps the Mac's
+  memory and processor free during the meeting. See
+  [Memory](#memory-during-long-meetings).
 - **Keep Audio**: 7 days (default), 30 days, Until Deleted, or Until Transcribed.
 - **Offer to Record Meetings**: on by default. Shows the upcoming meeting in the
   tray menu, and adds a tray badge when another app starts using the microphone
@@ -255,25 +260,38 @@ Processing:
   builds need no cmake or libclang; stages 6 and 7 add it there. It runs in a
   child process, re-executing the app binary with a hidden argument and an
   environment marker as `pdf_worker.rs` does, so a C++ crash or runaway memory
-  use can't take down the mail client. **One long-lived worker per job** (one
-  recording): the model loads once, and each track's held-back audio (below)
-  survives from one segment file to the next. The worker gets an empty
+  use can't take down the mail client. **A worker per batch**: a worker
+  loads the model, transcribes the segment files waiting, and exits, so the
+  model is in memory only while there is work for it (see
+  [Memory](#memory-during-long-meetings)). After Stop one worker does the
+  rest of the recording. The worker gets an empty
   environment, `/` as its directory, no core dumps, and nice 10. The parent
   enforces a load timeout, a per-request wall-clock timeout scaled to the
-  request's audio, a physical-footprint cap (polled, as macOS doesn't enforce
-  `RLIMIT_AS`), and a cancel flag, and kills and reaps the worker on any
-  breach, on malformed output, and on drop. **Protocol**: length-prefixed JSON
+  request's audio, the model's memory budget (its physical footprint,
+  polled, as macOS doesn't enforce `RLIMIT_AS`), and a stop check (cancel,
+  memory pressure), and kills and reaps the worker on any breach, on
+  malformed output, and on drop. **Protocol**: length-prefixed JSON
   frames both ways. A `config` frame first (model paths, language, threads),
   answered by `ready`; then one `segment` request at a time (track, WAV path,
-  `startMs`, whether it continues the previous file of the track's run, and
-  whether it ends the run), each answered by its `lines` (`track`, `startMs`,
-  `endMs`, `text`). The parent checks every path: the exact file name the
-  segment writer gives, resolved inside the recording's audio folder.
+  `startMs`, whether it continues the previous file of the track's run,
+  whether it ends the run, and, on a worker's first file of a track, the
+  `carryIn` an earlier worker held back), each answered by its `lines`
+  (`track`, `startMs`, `endMs`, `text`) and `held`: where the audio the
+  worker still holds for that track starts, as files and sample offsets on
+  the recording's clock. The parent checks every path: the exact file name
+  the segment writer gives, resolved inside the recording's audio folder,
+  including every path a worker reports holding.
 - **Speech across segment files.** Speech that reaches the end of a segment
   file is held back with the last half second of every file and transcribed
   with the next contiguous file of the same run, so a sentence is never cut at
   a minute boundary; the run's last file flushes it. What is held never
-  exceeds one 30-second span.
+  exceeds one 30-second span. **Across workers too**: when a worker exits
+  between batches, the next worker's first file of the track carries the
+  held audio in (`carryIn`), read from the same files and offsets, so the
+  next worker transcribes exactly the samples, on exactly the clock, that one
+  long-lived worker would have. The transcript and the percentages are the
+  same either way, which a test checks by transcribing the same audio both
+  ways.
 - **Builds.** `.cargo/config.toml` (at the root and in `src-tauri`) sets
   `GGML_NATIVE=OFF`, so whisper.cpp is compiled for the architecture's
   baseline, not the build machine's CPU, and `CMAKE_OSX_DEPLOYMENT_TARGET=10.15`,
@@ -306,15 +324,20 @@ Processing:
   (anarlog). A post-filter trims lines and removes empty ones, consecutive
   repeats within a track, known hallucinations (a list in the policy module),
   and bracketed non-speech such as "(music)".
-- **During the recording.** Finished minute-segments are transcribed in the
-  background while recording continues, so the transcript is nearly ready when
-  the user presses Stop. On battery, this waits until Stop (IOKit's providing
-  power source). One job runs at a time: waiting `recorded` and `interrupted`
-  recordings go first, oldest first, whenever the chosen model is ready.
-  Nothing of the work during a recording is visible until Stop; then the row
-  shows `transcribing` with a percentage that counts what was already done.
-  A job keeps the model it started with. A job that fails during the
-  recording starts over after Stop.
+- **During the recording.** With **Transcribe During Meetings** on (the
+  default), finished minute-segments are transcribed in batches while
+  recording continues, so the transcript is nearly ready when the user
+  presses Stop: once 5 minutes of finished audio wait (`LIVE_BATCH`), a
+  worker starts, transcribes them, and exits. On battery, this waits until
+  Stop (IOKit's providing power source), and a batch in progress ends after
+  its current file. Turned off, nothing is transcribed until Stop, and a
+  batch in progress stops at once. One job runs at a time: waiting
+  `recorded` and `interrupted` recordings go first, oldest first, whenever
+  the chosen model is ready. Nothing of the work during a recording is
+  visible until Stop; then the row shows `transcribing` with a percentage
+  that counts what was already done. A job keeps the model it started with
+  and checks its hash before every worker loads it. A job that fails during
+  the recording starts over after Stop.
 - **Merging tracks.** Segments are ordered by start time. When every output is
   headphones, the microphone hears only the user, so nothing need be dropped.
   anarlog uses the same headphones test to switch its echo canceller off.
@@ -347,6 +370,77 @@ Processing:
   load; a damaged file is deleted and the model shown as failed. That is
   stricter than either reference: meetily checks only the size, and anarlog a
   CRC32.
+
+### Memory during long meetings
+
+Other meeting tools weigh a Mac down after half an hour or so, apparently
+pushing it into swap. Nothing here grows with the length of a meeting, and
+the model is in memory only while it has work:
+
+- **Capture** holds fixed-size rings and buffers: 2-second rings between the
+  device callback and the capture thread, one resampler per stream whose
+  buffer is trimmed after each block, and a segment writer that streams each
+  60-second file to disk. Tests push two hours of synthetic audio through the
+  rings, the downmix, the resampler, the segment writer, and the service as
+  fast as the machine allows, counting heap bytes: what is held after two
+  hours is what was held after ten minutes (no growth; a peak of about
+  17 KB above the first minute's). The windowed-sinc filter, the slow part
+  of a debug build, gets its own 20-minute run at 8 kHz, with the same
+  result.
+- **The parent side of a job** keeps, per track, only the number of the last
+  file done and the audio held back, plus the transcript lines themselves.
+  Each step reads the manifests a line at a time rather than listing every
+  file. A test runs a two-hour job (batches, the merge, and the save) with a
+  fake transcriber returning about 150 words a minute: beyond the transcript
+  itself, a step near two hours holds and peaks at what one near ten
+  minutes does (the peak is the 1 MB buffer that checks the model's hash).
+- **Workers come and go.** During the recording the model is loaded for a
+  batch (5 minutes of audio, a minute or two of work) and released, rather
+  than held for the whole meeting. After Stop one worker does the rest.
+- **Memory pressure.** The scheduler reads macOS's memory pressure level
+  (`kern.memorystatus_vm_pressure_level`, the levels a
+  `DISPATCH_SOURCE_TYPE_MEMORYPRESSURE` source reports: normal, warning,
+  critical) behind a `MemoryProbe` trait, polled while a worker runs and
+  before one starts. No worker starts while pressure is warning or
+  critical. During the recording, warning or critical stops the batch's
+  worker at once; the file it was on is redone later, from the last one it
+  finished, and nothing more is transcribed until Stop. After Stop, only
+  critical stops a running job; the recording goes back to `recorded`, and
+  the job goes on from where it stopped when pressure is normal again.
+- **Available memory.** Before a worker starts, the free, inactive,
+  purgeable, and speculative pages (`host_statistics64`, as `vm_stat`
+  reports them) must cover the model's budget plus 512 MB
+  (`WORKER_START_MARGIN_BYTES`). Until then the job waits and its recording
+  stays `recorded`.
+- **Per-model budgets.** A worker is killed, failing the job with a plain
+  message, when its physical footprint passes its model's budget:
+  Fast 1,150 MiB and Accurate 1,900 MiB (`WORKER_MEMORY_FAST_BYTES`,
+  `WORKER_MEMORY_ACCURATE_BYTES`; the flat 3 GiB cap before them is gone). Each is 1.5 times the peak measured on Metal,
+  but no lower than 1.5 times the spike's CPU peak, which is the larger for
+  both models in the VM.
+
+Measured in the VM (2026-11-27, a release build of the worker), the real worker in batches over
+speech-like audio built from `say` with pauses and noise, its physical
+footprint sampled every 10 seconds:
+
+| Model | Audio | Wall time | Footprint per quarter of the run (min / median / max, MiB) | Peak |
+| --- | --- | --- | --- | --- |
+| Fast | 120 min | 48 min | 682 / 685 / 700; 524 / 685 / 685; 524 / 685 / 686; 525 / 683 / 686 | 700 MiB |
+| Accurate | 20 min | 29 min | 1,069 / 1,146 / 1,146; 1,140 / 1,149 / 1,149; 1,003 / 1,149 / 1,152; 1,145 / 1,146 / 1,149 | 1,152 MiB |
+
+The test fed each 5 minutes of audio at once, so batches ran back to back
+and a worker was running at nearly every sample; in a real meeting a Fast
+worker runs for about 2 of every 5 minutes. The footprint has no upward
+trend: each batch's worker starts again at the same size, and the last
+quarter's maximum is at or below the first's. The VM's Metal is slow (real
+time factors of about 0.4 for Fast and 1.4 for Accurate here, beam search
+5), so the wall times say little about real Macs.
+
+The VM's GPU is Apple's paravirtual device, not real Apple Silicon, so Metal
+there allocates differently. The developer's Mac must confirm the budgets:
+run the ignored `real_worker_memory_stays_flat_over_a_two_hour_recording`
+test (instructions in its comment) for each model and check that the peak
+stays well under the budget.
 
 ## AI recap
 
@@ -549,7 +643,10 @@ Following AGENTS.md, at the lowest level that owns each behavior:
   hash rejection; the worker protocol with malformed frames, timeout, and kill;
   merge ordering and echo drop at the similarity threshold; recap schema
   validation, withheld counts, and unknown segment IDs; prompt-injection text in
-  a transcript; retention sweep; migration.
+  a transcript; retention sweep; migration; heap use that doesn't grow over two
+  hours of capture or of a transcription job (counted by a test allocator);
+  batches matching one worker's transcript; memory pressure and available
+  memory through a fake `MemoryProbe`.
 - **Frontend**: the consent and review modals (initial focus, Tab trap,
   Escape restoring focus, background inert, edits kept on failure, Cmd/Ctrl+Enter
   submit); the Recording section rows and their omission when empty; the
@@ -580,7 +677,13 @@ Following AGENTS.md, at the lowest level that owns each behavior:
   framework, which this plan avoids. If the tap delivers only silence for the
   first minute while the microphone hears speech, the app shows a notice
   pointing to the permission in System Settings.
-- **Resource use** during long calls. Transcription waits until Stop on
-  battery, and the worker runs at low priority.
+- **Resource use** during long calls. Memory doesn't grow with a meeting's
+  length (measured, see [Memory](#memory-during-long-meetings)); the model
+  is in memory only for each 5-minute batch; no worker starts under memory
+  pressure or without the model's budget free, and pressure stops one that
+  is running. Transcription waits until Stop on battery or with
+  **Transcribe During Meetings** off, and the worker runs at low priority.
+  The per-model budgets were measured in the VM and still need the
+  developer's Mac to confirm them.
 - **macOS API surface.** Process taps are recent and lightly documented, and
   hardened-runtime entitlements must be right before notarization.

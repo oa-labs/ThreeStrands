@@ -29,6 +29,7 @@ describe("demoClient recording settings", () => {
     expect(await client.recordingSettings()).toEqual({
       recordMeetings: false,
       transcriptionModel: "fast",
+      transcribeDuringMeetings: true,
       keepAudio: "days7",
       offerToRecord: true,
       remindToTell: true,

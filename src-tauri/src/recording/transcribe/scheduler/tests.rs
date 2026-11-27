@@ -6,14 +6,16 @@ use crate::db::recordings::{MeetingRecording, NewRecording, TrackState};
 use crate::db::Database;
 use crate::recording::capture::fake::FakeBackend;
 use crate::recording::runtime::{RecordingNotifier, TranscriptionParts};
-use crate::recording::segments::{GapReason, SegmentWriter};
+use crate::recording::segments::{self, GapReason, SegmentWriter};
 use crate::recording::settings::{KeepAudio, RecordingSettings};
 use crate::recording::test_support::TempDir;
+use crate::recording::transcribe::memory::MemoryPressure;
 use crate::recording::transcribe::models::tests::{
     content, local_urls, model_content, test_pins, vad_content, Reply, Server, MODEL_BYTES,
 };
 use crate::recording::transcribe::models::{ModelState, Pins, TranscriptionModelStatus, UrlPolicy};
-use crate::recording::transcribe::protocol::SegmentRequest;
+use crate::recording::transcribe::protocol::{HeldPiece, SegmentRequest};
+use crate::recording::transcribe::Transcribed;
 use crate::recording::{DiskProbe, RecordingStatus};
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -36,6 +38,20 @@ struct Power(AtomicBool);
 impl PowerSource for Power {
     fn on_ac_power(&self) -> bool {
         self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Memory pressure and available memory, set by each test.
+struct Memory {
+    pressure: Mutex<MemoryPressure>,
+    available: Mutex<Option<u64>>,
+}
+impl MemoryProbe for Memory {
+    fn pressure(&self) -> MemoryPressure {
+        *self.pressure.lock().unwrap()
+    }
+    fn available_bytes(&self) -> Option<u64> {
+        *self.available.lock().unwrap()
     }
 }
 
@@ -95,10 +111,15 @@ struct Script {
     /// Fail the request with this index (0-based, across sessions).
     fail_request: Option<usize>,
     fail_open: Option<JobError>,
-    /// Block requests until cancelled.
+    /// Block requests until stopped (cancelled or interrupted).
     block: bool,
     /// Text for a (track, start ms); a default otherwise.
     texts: HashMap<(Track, u64), String>,
+    /// What the worker reports holding after the file starting at (track,
+    /// start ms); nothing otherwise.
+    held: HashMap<(Track, u64), HeldAudio>,
+    /// The memory budget each worker was started with.
+    budgets: Vec<u64>,
 }
 
 #[derive(Clone, Default)]
@@ -106,24 +127,25 @@ struct FakeTranscriber(Arc<Mutex<Script>>);
 
 struct FakeSession {
     script: Arc<Mutex<Script>>,
-    cancel: Arc<AtomicBool>,
+    stop: Arc<dyn StopCheck>,
 }
 
 impl Transcriber for FakeTranscriber {
     fn open(
         &self,
         config: &JobConfig,
-        cancel: Arc<AtomicBool>,
+        stop: Arc<dyn StopCheck>,
     ) -> Result<Box<dyn TranscriptionSession>, JobError> {
         let mut script = self.0.lock().unwrap();
         script.opened.push(config.clone());
+        script.budgets.push(config.memory_bytes);
         if let Some(error) = script.fail_open.take() {
             return Err(error);
         }
         script.sessions_alive += 1;
         Ok(Box::new(FakeSession {
             script: self.0.clone(),
-            cancel,
+            stop,
         }))
     }
 }
@@ -139,8 +161,8 @@ impl TranscriptionSession for FakeSession {
         &mut self,
         request: &SegmentRequest,
         audio_ms: u64,
-    ) -> Result<Vec<TranscriptLine>, JobError> {
-        let (index, block, text) = {
+    ) -> Result<Transcribed, JobError> {
+        let (index, block, text, held) = {
             let mut script = self.script.lock().unwrap();
             script.requests.push(request.clone());
             let text = script
@@ -155,25 +177,31 @@ impl TranscriptionSession for FakeSession {
                         request.start_ms / 1000
                     ),
                 });
-            (script.requests.len() - 1, script.block, text)
+            let held = script.held.get(&(request.track, request.start_ms)).cloned();
+            (script.requests.len() - 1, script.block, text, held)
         };
         if block {
-            while !self.cancel.load(Ordering::SeqCst) {
+            loop {
+                if let Some(reason) = self.stop.stop_reason() {
+                    return Err(reason);
+                }
                 std::thread::sleep(Duration::from_millis(5));
             }
-            return Err(JobError::Cancelled);
         }
         if self.script.lock().unwrap().fail_request == Some(index) {
             return Err(JobError::Failed(
                 "The transcription engine stopped unexpectedly.".into(),
             ));
         }
-        Ok(vec![TranscriptLine {
-            track: request.track,
-            start_ms: request.start_ms,
-            end_ms: request.start_ms + audio_ms,
-            text,
-        }])
+        Ok(Transcribed {
+            lines: vec![TranscriptLine {
+                track: request.track,
+                start_ms: request.start_ms,
+                end_ms: request.start_ms + audio_ms,
+                text,
+            }],
+            held,
+        })
     }
 }
 
@@ -184,6 +212,7 @@ struct Harness {
     calls: Arc<Recorder>,
     fake: FakeTranscriber,
     power: Arc<Power>,
+    memory: Arc<Memory>,
     root: TempDir,
     models_dir: PathBuf,
     _data: TempDir,
@@ -203,14 +232,38 @@ impl Harness {
     }
 
     fn with_pins(pins: Pins, urls: UrlPolicy) -> Self {
+        let fake = FakeTranscriber::default();
+        Self::with(pins, urls, Arc::new(fake.clone()), fake)
+    }
+
+    /// With another transcriber than the scripted fake (whose script then
+    /// stays empty).
+    fn with_transcriber(transcriber: Arc<dyn Transcriber>) -> Self {
+        Self::with(
+            test_pins(1),
+            local_urls(1),
+            transcriber,
+            FakeTranscriber::default(),
+        )
+    }
+
+    fn with(
+        pins: Pins,
+        urls: UrlPolicy,
+        transcriber: Arc<dyn Transcriber>,
+        fake: FakeTranscriber,
+    ) -> Self {
         let database = Arc::new(Database::open_memory());
         let calls = Arc::new(Recorder::default());
         let root = TempDir::new();
         let data = TempDir::new();
         let models_dir = data.path().join("recording-models");
         let backend = FakeBackend::new();
-        let fake = FakeTranscriber::default();
         let power = Arc::new(Power(AtomicBool::new(true)));
+        let memory = Arc::new(Memory {
+            pressure: Mutex::new(MemoryPressure::Normal),
+            available: Mutex::new(Some(u64::MAX)),
+        });
         let models = Arc::new(ModelStore::new(
             models_dir.clone(),
             pins,
@@ -225,8 +278,9 @@ impl Harness {
             root.path().to_path_buf(),
             calls.clone(),
             TranscriptionParts {
-                transcriber: Arc::new(fake.clone()),
+                transcriber,
                 power: power.clone(),
+                memory: memory.clone(),
                 models,
             },
         ));
@@ -237,6 +291,7 @@ impl Harness {
             calls,
             fake,
             power,
+            memory,
             root,
             models_dir,
             _data: data,
@@ -507,6 +562,10 @@ fn the_other_model_being_ready_does_not_start_a_job() {
         h.script().opened[0].language,
         None,
         "Accurate detects the language"
+    );
+    assert_eq!(
+        h.script().opened[0].memory_bytes,
+        policy::WORKER_MEMORY_ACCURATE_BYTES
     );
 }
 
@@ -801,7 +860,7 @@ fn deleting_a_recording_between_segments_drops_its_job() {
 }
 
 #[test]
-fn closed_segments_are_transcribed_during_a_recording_on_ac_power() {
+fn closed_segments_are_transcribed_in_batches_during_a_recording_on_ac_power() {
     let h = Harness::new();
     h.install_models();
     let id = h
@@ -811,11 +870,23 @@ fn closed_segments_are_transcribed_during_a_recording_on_ac_power() {
         .recording_id
         .unwrap();
     let mut mic = h.live_mic();
-    mic.write(&seconds(61), 0).unwrap();
+    // Four closed minutes: less than a batch.
+    mic.write(&seconds(270), 0).unwrap();
+    mic.flush().unwrap();
+    assert_eq!(h.run(), 0);
+    assert!(
+        h.script().opened.is_empty(),
+        "no worker for less than a batch"
+    );
+
+    // The fifth minute closes: a worker transcribes the five, then exits.
+    mic.write(&seconds(40), 270_000).unwrap();
     mic.flush().unwrap();
     h.calls.take();
     h.run();
-    assert_eq!(h.script().requests.len(), 1, "only the closed minute");
+    assert_eq!(h.script().requests.len(), 5);
+    assert_eq!(h.script().opened.len(), 1);
+    assert_eq!(h.script().sessions_alive, 0, "the batch's worker exited");
     assert_eq!(
         h.state(&id),
         RecordingState::Recording,
@@ -831,13 +902,13 @@ fn closed_segments_are_transcribed_during_a_recording_on_ac_power() {
     );
     assert_eq!(h.listed(&id).transcription_percent, None);
 
-    // Another minute closes.
-    mic.write(&seconds(60), 61_000).unwrap();
+    // Another minute closes: not enough for the next batch.
+    mic.write(&seconds(60), 310_000).unwrap();
     mic.flush().unwrap();
-    h.run();
-    assert_eq!(h.script().requests.len(), 2);
+    assert_eq!(h.run(), 0);
+    assert_eq!(h.script().requests.len(), 5);
 
-    // Stop: the rest, in the same worker.
+    // Stop: the rest, in one more worker.
     mic.end_run(GapReason::Stop).unwrap();
     drop(mic);
     h.stop();
@@ -846,7 +917,8 @@ fn closed_segments_are_transcribed_during_a_recording_on_ac_power() {
     h.run();
     assert_eq!(h.state(&id), RecordingState::Transcribed);
     let script = h.script();
-    assert_eq!(script.opened.len(), 1, "the model loaded once");
+    assert_eq!(script.opened.len(), 2, "one batch, then the rest");
+    assert_eq!(script.sessions_alive, 0);
     let flags: Vec<(u64, bool, bool)> = script
         .requests
         .iter()
@@ -857,12 +929,16 @@ fn closed_segments_are_transcribed_during_a_recording_on_ac_power() {
         [
             (0, false, false),
             (60_000, true, false),
-            (120_000, true, true)
+            (120_000, true, false),
+            (180_000, true, false),
+            (240_000, true, false),
+            (300_000, true, false),
+            (360_000, true, true)
         ]
     );
     drop(script);
-    // 120 of 121 s were done before Stop: 99%, then 100%.
-    assert_eq!(h.progress(), [100]);
+    // 300 of 370 s were done before Stop: 81%, then 97% and 100%.
+    assert_eq!(h.progress(), [97, 100]);
 }
 
 #[test]
@@ -876,10 +952,10 @@ fn the_progress_after_stop_counts_what_was_done_during_the_recording() {
         .recording_id
         .unwrap();
     let mut mic = h.live_mic();
-    mic.write(&seconds(200), 0).unwrap();
+    mic.write(&seconds(320), 0).unwrap();
     mic.flush().unwrap();
     h.run();
-    assert_eq!(h.script().requests.len(), 3);
+    assert_eq!(h.script().requests.len(), 5);
     drop(mic);
     h.stop();
     // The step that announces the job also transcribes the last 20 s.
@@ -891,10 +967,37 @@ fn the_progress_after_stop_counts_what_was_done_during_the_recording() {
     assert!(calls.contains(&Call::Changed(id.clone())));
     assert!(calls.contains(&Call::Tray(Some(TrayTranscription {
         title: "Standup".into(),
-        percent: 90
+        percent: 93
     }))));
     h.run();
     assert_eq!(h.state(&id), RecordingState::Transcribed);
+}
+
+#[test]
+fn a_batch_running_at_stop_goes_on_with_the_same_worker_and_shows_progress() {
+    let h = Harness::new();
+    h.install_models();
+    let id = h
+        .runtime
+        .start(None, "Standup")
+        .unwrap()
+        .recording_id
+        .unwrap();
+    let mut mic = h.live_mic();
+    mic.write(&seconds(310), 0).unwrap();
+    mic.flush().unwrap();
+    assert!(h.runtime.transcription_step(), "the batch's first file");
+    assert_eq!(h.script().sessions_alive, 1);
+    drop(mic);
+    h.stop();
+    h.calls.take();
+    assert!(h.runtime.transcription_step());
+    assert_eq!(h.state(&id), RecordingState::Transcribing);
+    assert!(h.calls.take().contains(&Call::Changed(id.clone())));
+    h.run();
+    assert_eq!(h.state(&id), RecordingState::Transcribed);
+    assert_eq!(h.script().opened.len(), 1, "the same worker");
+    assert_eq!(h.script().requests.len(), 6);
 }
 
 #[test]
@@ -909,18 +1012,19 @@ fn on_battery_transcription_waits_for_stop() {
         .recording_id
         .unwrap();
     let mut mic = h.live_mic();
-    mic.write(&seconds(130), 0).unwrap();
+    mic.write(&seconds(330), 0).unwrap();
     mic.flush().unwrap();
     assert_eq!(h.run(), 0);
     assert!(h.script().opened.is_empty(), "no worker on battery");
 
-    // Plugged in, it starts; back on battery, it pauses.
+    // Plugged in, a batch starts; back on battery, its worker exits.
     h.power.0.store(true, Ordering::SeqCst);
     assert!(h.runtime.transcription_step());
     assert_eq!(h.script().requests.len(), 1);
     h.power.0.store(false, Ordering::SeqCst);
-    assert_eq!(h.run(), 0);
+    h.run();
     assert_eq!(h.script().requests.len(), 1);
+    assert_eq!(h.script().sessions_alive, 0);
 
     drop(mic);
     h.stop();
@@ -930,6 +1034,7 @@ fn on_battery_transcription_waits_for_stop() {
         RecordingState::Transcribed,
         "after Stop, battery or not"
     );
+    assert_eq!(h.script().requests.len(), 6, "each file once");
 }
 
 #[test]
@@ -943,12 +1048,14 @@ fn a_job_that_fails_during_the_recording_starts_over_after_stop() {
         .recording_id
         .unwrap();
     let mut mic = h.live_mic();
-    mic.write(&seconds(130), 0).unwrap();
+    mic.write(&seconds(330), 0).unwrap();
     mic.flush().unwrap();
     h.script().fail_request = Some(0);
     h.run();
     assert_eq!(h.state(&id), RecordingState::Recording);
     assert_eq!(h.script().opened.len(), 1);
+    mic.write(&seconds(300), 330_000).unwrap();
+    mic.flush().unwrap();
     assert_eq!(h.run(), 0, "not retried during the recording");
     drop(mic);
     h.stop();
@@ -956,7 +1063,321 @@ fn a_job_that_fails_during_the_recording_starts_over_after_stop() {
     assert_eq!(h.state(&id), RecordingState::Transcribed);
     let script = h.script();
     assert_eq!(script.opened.len(), 2);
-    assert_eq!(script.requests.len(), 1 + 3, "from the start");
+    assert_eq!(script.requests.len(), 1 + 11, "from the start");
+}
+
+#[test]
+fn nothing_is_transcribed_during_a_meeting_with_the_setting_off() {
+    let h = Harness::new();
+    h.install_models();
+    h.runtime
+        .set_settings(RecordingSettings {
+            transcribe_during_meetings: false,
+            ..Default::default()
+        })
+        .unwrap();
+    let id = h
+        .runtime
+        .start(None, "Standup")
+        .unwrap()
+        .recording_id
+        .unwrap();
+    let mut mic = h.live_mic();
+    mic.write(&seconds(610), 0).unwrap();
+    mic.flush().unwrap();
+    assert_eq!(h.run(), 0);
+    assert!(h.script().opened.is_empty(), "no worker at all");
+
+    // Turned on, the waiting audio goes in a batch.
+    h.runtime
+        .set_settings(RecordingSettings::default())
+        .unwrap();
+    assert!(h.runtime.transcription_step());
+    assert_eq!(h.script().requests.len(), 1);
+
+    // Turned off again mid-file: the worker is stopped at once, and that
+    // file is done again after Stop.
+    h.script().block = true;
+    let runtime = h.runtime.clone();
+    let stepping = std::thread::spawn(move || runtime.transcription_step());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while h.script().requests.len() < 2 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    h.runtime
+        .set_settings(RecordingSettings {
+            transcribe_during_meetings: false,
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(stepping.join().unwrap());
+    assert_eq!(h.script().sessions_alive, 0);
+    h.script().block = false;
+    assert_eq!(h.run(), 0);
+    assert_eq!(h.script().requests.len(), 2);
+
+    drop(mic);
+    h.stop();
+    h.run();
+    assert_eq!(h.state(&id), RecordingState::Transcribed);
+    let starts: Vec<u64> = h.script().requests.iter().map(|r| r.start_ms).collect();
+    assert_eq!(
+        starts,
+        [
+            0, 60_000, 60_000, 120_000, 180_000, 240_000, 300_000, 360_000, 420_000, 480_000,
+            540_000, 600_000
+        ]
+    );
+}
+
+fn held(path: &std::path::Path, from_sample: u64, start_ms: u64) -> HeldAudio {
+    HeldAudio {
+        start_ms,
+        pieces: vec![HeldPiece {
+            wav_path: path.to_path_buf(),
+            from_sample,
+            samples: 960_000 - from_sample,
+        }],
+    }
+}
+
+#[test]
+fn speech_held_at_the_end_of_a_batch_is_carried_into_the_next_worker() {
+    let h = Harness::new();
+    h.install_models();
+    let id = h
+        .runtime
+        .start(None, "Standup")
+        .unwrap()
+        .recording_id
+        .unwrap();
+    let mut mic = h.live_mic();
+    let dir = h.backend.target(Track::Mic).unwrap().audio_dir;
+    let fifth = std::fs::canonicalize(&dir).unwrap().join("mic-0005.wav");
+    let tenth = std::fs::canonicalize(&dir).unwrap().join("mic-0010.wav");
+    let end_of_fifth = held(&fifth, 944_000, 299_000);
+    let end_of_tenth = held(&tenth, 900_000, 597_250);
+    {
+        let mut script = h.script();
+        script
+            .held
+            .insert((Track::Mic, 240_000), end_of_fifth.clone());
+        script
+            .held
+            .insert((Track::Mic, 540_000), end_of_tenth.clone());
+    }
+    mic.write(&seconds(310), 0).unwrap();
+    mic.flush().unwrap();
+    h.run();
+    assert_eq!(h.script().opened.len(), 1);
+    mic.write(&seconds(300), 310_000).unwrap();
+    mic.flush().unwrap();
+    h.run();
+    assert_eq!(h.script().opened.len(), 2, "a second batch");
+    drop(mic);
+    h.stop();
+    h.run();
+    assert_eq!(h.state(&id), RecordingState::Transcribed);
+    let script = h.script();
+    assert_eq!(script.opened.len(), 3);
+    let carried: Vec<(u64, Option<HeldAudio>)> = script
+        .requests
+        .iter()
+        .map(|r| (r.start_ms, r.carry_in.clone()))
+        .filter(|(_, carry)| carry.is_some())
+        .collect();
+    assert_eq!(
+        carried,
+        [(300_000, Some(end_of_fifth)), (600_000, Some(end_of_tenth))],
+        "each worker's first file takes over what the last one held, and only that file"
+    );
+}
+
+#[test]
+fn held_audio_from_a_file_the_job_did_not_plan_fails_the_job() {
+    let h = Harness::new();
+    h.install_models();
+    let outside = h.root.path().join("elsewhere").join("mic-0001.wav");
+    let dir = h.recorded(
+        "r1",
+        "2026-11-27T10:00:00Z",
+        90,
+        0,
+        RecordingState::Recorded,
+    );
+    let first = std::fs::canonicalize(&dir).unwrap().join("mic-0001.wav");
+    h.script()
+        .held
+        .insert((Track::Mic, 0), held(&outside, 900_000, 59_000));
+    h.run();
+    let failed = h.database.recording("r1").unwrap().unwrap();
+    assert_eq!(failed.state, RecordingState::Failed);
+    assert_eq!(
+        failed.error.as_deref(),
+        Some("The transcription engine stopped unexpectedly.")
+    );
+    // Its own file is fine.
+    h.script()
+        .held
+        .insert((Track::Mic, 0), held(&first, 900_000, 59_000));
+    h.runtime.transcribe_recording("r1").unwrap();
+    h.run();
+    assert_eq!(h.state("r1"), RecordingState::Transcribed);
+}
+
+#[test]
+fn no_job_starts_under_memory_pressure_or_without_room_and_the_recording_stays_recorded() {
+    let h = Harness::new();
+    h.install_models();
+    h.recorded(
+        "r1",
+        "2026-11-27T10:00:00Z",
+        90,
+        0,
+        RecordingState::Recorded,
+    );
+    for pressure in [MemoryPressure::Warning, MemoryPressure::Critical] {
+        *h.memory.pressure.lock().unwrap() = pressure;
+        assert_eq!(h.run(), 0, "{pressure:?}");
+        assert_eq!(h.state("r1"), RecordingState::Recorded);
+    }
+    *h.memory.pressure.lock().unwrap() = MemoryPressure::Normal;
+    let needed = policy::WORKER_MEMORY_FAST_BYTES + policy::WORKER_START_MARGIN_BYTES;
+    *h.memory.available.lock().unwrap() = Some(needed - 1);
+    assert_eq!(h.run(), 0);
+    assert_eq!(h.state("r1"), RecordingState::Recorded);
+    assert!(h.script().opened.is_empty());
+    assert!(h.runtime.scheduler.current().is_none(), "not even picked");
+    assert_eq!(h.listed("r1").transcription_percent, None);
+
+    *h.memory.available.lock().unwrap() = Some(needed);
+    h.run();
+    assert_eq!(h.state("r1"), RecordingState::Transcribed);
+    assert_eq!(
+        h.script().budgets,
+        [policy::WORKER_MEMORY_FAST_BYTES],
+        "the worker is capped at the model's budget"
+    );
+
+    // A Mac that can't say how much is available still transcribes.
+    *h.memory.available.lock().unwrap() = None;
+    h.recorded(
+        "r2",
+        "2026-11-27T11:00:00Z",
+        10,
+        0,
+        RecordingState::Recorded,
+    );
+    h.run();
+    assert_eq!(h.state("r2"), RecordingState::Transcribed);
+}
+
+#[test]
+fn memory_pressure_stops_the_batch_and_live_transcription_until_stop() {
+    let h = Harness::new();
+    h.install_models();
+    let id = h
+        .runtime
+        .start(None, "Standup")
+        .unwrap()
+        .recording_id
+        .unwrap();
+    let mut mic = h.live_mic();
+    mic.write(&seconds(330), 0).unwrap();
+    mic.flush().unwrap();
+    assert!(h.runtime.transcription_step());
+    h.script().block = true;
+    let runtime = h.runtime.clone();
+    let stepping = std::thread::spawn(move || runtime.transcription_step());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while h.script().requests.len() < 2 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    *h.memory.pressure.lock().unwrap() = MemoryPressure::Warning;
+    assert!(stepping.join().unwrap(), "the worker was stopped mid-file");
+    assert_eq!(h.script().sessions_alive, 0);
+    h.script().block = false;
+    assert_eq!(h.state(&id), RecordingState::Recording);
+
+    // Pressure falls, and more audio waits: still nothing until Stop.
+    *h.memory.pressure.lock().unwrap() = MemoryPressure::Normal;
+    mic.write(&seconds(300), 330_000).unwrap();
+    mic.flush().unwrap();
+    assert_eq!(h.run(), 0);
+    assert_eq!(h.script().opened.len(), 1);
+
+    drop(mic);
+    h.stop();
+    h.run();
+    assert_eq!(h.state(&id), RecordingState::Transcribed);
+    let script = h.script();
+    assert_eq!(script.opened.len(), 2);
+    let starts: Vec<u64> = script.requests.iter().map(|r| r.start_ms).collect();
+    assert_eq!(
+        &starts[..3],
+        [0, 60_000, 60_000],
+        "the stopped file is redone"
+    );
+    assert_eq!(starts.len(), 2 + 10);
+}
+
+#[test]
+fn after_stop_only_critical_pressure_stops_a_job_which_goes_on_once_pressure_is_normal() {
+    let h = Harness::new();
+    h.install_models();
+    h.recorded(
+        "r1",
+        "2026-11-27T10:00:00Z",
+        150,
+        0,
+        RecordingState::Recorded,
+    );
+    assert!(h.runtime.transcription_step());
+    assert_eq!(h.listed("r1").transcription_percent, Some(40));
+    h.script().block = true;
+    let runtime = h.runtime.clone();
+    let stepping = std::thread::spawn(move || runtime.transcription_step());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while h.script().requests.len() < 2 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    *h.memory.pressure.lock().unwrap() = MemoryPressure::Warning;
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(
+        !stepping.is_finished(),
+        "warning doesn't stop a job after Stop"
+    );
+    assert_eq!(h.script().sessions_alive, 1);
+    h.calls.take();
+    *h.memory.pressure.lock().unwrap() = MemoryPressure::Critical;
+    assert!(stepping.join().unwrap());
+    assert_eq!(h.script().sessions_alive, 0);
+    assert_eq!(h.state("r1"), RecordingState::Recorded, "waiting again");
+    assert_eq!(h.listed("r1").transcription_percent, None);
+    assert!(h.runtime.scheduler.tray().is_none());
+    let calls = h.calls.take();
+    assert!(calls.contains(&Call::Changed("r1".into())));
+    assert_eq!(calls.last(), Some(&Call::Tray(None)));
+    h.script().block = false;
+    assert_eq!(h.run(), 0);
+
+    *h.memory.pressure.lock().unwrap() = MemoryPressure::Normal;
+    h.run();
+    assert_eq!(h.state("r1"), RecordingState::Transcribed);
+    let script = h.script();
+    assert_eq!(script.opened.len(), 2);
+    let starts: Vec<u64> = script.requests.iter().map(|r| r.start_ms).collect();
+    assert_eq!(
+        starts,
+        [0, 60_000, 60_000, 120_000],
+        "on from the last file done"
+    );
+    drop(script);
+    // Back to 40% when it goes on, then on to the end.
+    assert_eq!(h.progress(), [80, 100]);
 }
 
 #[test]
@@ -1083,4 +1504,549 @@ fn the_scheduler_waits_until_woken() {
     h.runtime
         .wait_for_transcription_work(Duration::from_secs(10));
     assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+/// The worker's own carry-over (its streams over the recording's real
+/// files) with the scripted speech engine, so batches can be compared with
+/// one worker doing everything.
+struct StreamTranscriber;
+
+struct StreamSession {
+    streams: crate::recording::transcribe::stream::Streams,
+    engine: crate::recording::transcribe::stream::tests::FakeEngine,
+}
+
+impl Transcriber for StreamTranscriber {
+    fn open(
+        &self,
+        _: &JobConfig,
+        _: Arc<dyn StopCheck>,
+    ) -> Result<Box<dyn TranscriptionSession>, JobError> {
+        Ok(Box::new(StreamSession {
+            streams: Default::default(),
+            engine: crate::recording::transcribe::stream::tests::FakeEngine::new(),
+        }))
+    }
+}
+
+impl TranscriptionSession for StreamSession {
+    fn transcribe(
+        &mut self,
+        request: &SegmentRequest,
+        _audio_ms: u64,
+    ) -> Result<Transcribed, JobError> {
+        use crate::recording::transcribe::stream::read_segment;
+        if let Some(held) = &request.carry_in {
+            self.streams
+                .restore(request.track, held, read_segment)
+                .map_err(JobError::Failed)?;
+        }
+        let samples = read_segment(&request.wav_path).map_err(JobError::Failed)?;
+        let lines = self
+            .streams
+            .feed(&mut self.engine, request, samples)
+            .map_err(JobError::Failed)?;
+        Ok(Transcribed {
+            lines,
+            held: self.streams.held(request.track),
+        })
+    }
+}
+
+/// `seconds` of quiet with loud "speech" over each `(from, to)` range, as
+/// the scripted engine hears it.
+fn speech(seconds: f64, ranges: &[(f64, f64)]) -> Vec<i16> {
+    let mut samples = vec![1i16; (seconds * 16_000.0) as usize];
+    for &(from, to) in ranges {
+        samples[(from * 16_000.0) as usize..(to * 16_000.0) as usize].fill(20_000);
+    }
+    samples
+}
+
+#[test]
+fn batches_give_the_transcript_and_percentages_of_one_worker() {
+    let h = Harness::with_transcriber(Arc::new(StreamTranscriber));
+    h.install_models();
+    // Every sentence a different length, so none repeats another. Two
+    // cross a batch's end (300 s and 600 s), others a minute's.
+    let audio = speech(
+        680.0,
+        &[
+            (10.0, 12.5),
+            (58.6, 61.2),
+            (119.0, 123.5),
+            (297.5, 303.25),
+            (400.0, 401.0),
+            (597.0, 604.5),
+            (639.0, 641.75),
+        ],
+    );
+
+    // One worker, after the fact.
+    let dir = h.root.path().join("whole");
+    h.database
+        .create_recording(&NewRecording {
+            id: "whole",
+            event_ref: None,
+            title: "Weekly Sync",
+            started_at: "2026-11-27T10:00:00Z",
+            audio_dir: &dir.to_string_lossy(),
+            tracks: &[(Track::Mic, TrackState::Active)],
+        })
+        .unwrap();
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut writer = SegmentWriter::open(&dir, Track::Mic).unwrap();
+    writer.write(&audio, 0).unwrap();
+    drop(writer);
+    h.database
+        .finish_recording(
+            "whole",
+            "2026-11-27T10:00:00Z",
+            680_000,
+            RecordingState::Recorded,
+            None,
+        )
+        .unwrap();
+    h.run();
+    assert_eq!(h.state("whole"), RecordingState::Transcribed);
+    let whole = h.database.transcript_rows("whole").unwrap();
+
+    // The same audio, in batches while it is recorded.
+    let id = h
+        .runtime
+        .start(None, "Weekly Sync")
+        .unwrap()
+        .recording_id
+        .unwrap();
+    let mut mic = h.live_mic();
+    for (from, to) in [(0, 310), (310, 610), (610, 680)] {
+        mic.write(&audio[from * 16_000..to * 16_000], from as u64 * 1000)
+            .unwrap();
+        mic.flush().unwrap();
+        h.run();
+    }
+    mic.end_run(GapReason::Stop).unwrap();
+    drop(mic);
+    h.stop();
+    h.calls.take();
+    h.run();
+    assert_eq!(h.state(&id), RecordingState::Transcribed);
+    let batched = h.database.transcript_rows(&id).unwrap();
+
+    let summary = |rows: &[TranscriptRow]| -> Vec<(i64, i64, String)> {
+        rows.iter()
+            .map(|r| (r.start_ms, r.end_ms, r.text.clone()))
+            .collect()
+    };
+    assert_eq!(summary(&batched), summary(&whole));
+    assert_eq!(batched.len(), 7, "{:?}", summary(&batched));
+    assert!(
+        summary(&batched).contains(&(297_500, 303_250, "speech 0.61035156 for 5750 ms".into())),
+        "the sentence across the first batch's end is whole"
+    );
+    // 600 of 680 s were done before Stop: 88%, then 97% and 100%.
+    let calls = h.calls.take();
+    assert!(calls.contains(&Call::Tray(Some(TrayTranscription {
+        title: "Weekly Sync".into(),
+        percent: 88
+    }))));
+    let progress: Vec<u8> = calls
+        .iter()
+        .filter_map(|c| match c {
+            Call::Progress(_, percent) => Some(*percent),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(progress, [97, 100]);
+}
+
+/// Answers each minute with about 150 words, as a busy meeting would, and
+/// counts the bytes of transcript it hands back.
+struct TextTranscriber(Arc<std::sync::atomic::AtomicU64>);
+
+struct TextSession(Arc<std::sync::atomic::AtomicU64>);
+
+impl Transcriber for TextTranscriber {
+    fn open(
+        &self,
+        _: &JobConfig,
+        _: Arc<dyn StopCheck>,
+    ) -> Result<Box<dyn TranscriptionSession>, JobError> {
+        Ok(Box::new(TextSession(self.0.clone())))
+    }
+}
+
+impl TranscriptionSession for TextSession {
+    fn transcribe(
+        &mut self,
+        request: &SegmentRequest,
+        audio_ms: u64,
+    ) -> Result<Transcribed, JobError> {
+        let lines: Vec<TranscriptLine> = (0..5u64)
+            .map(|sentence| TranscriptLine {
+                track: request.track,
+                start_ms: request.start_ms + sentence * audio_ms / 5,
+                end_ms: request.start_ms + (sentence + 1) * audio_ms / 5,
+                text: format!(
+                    "At minute {} we went over item {sentence} on the {} list, agreed who \
+                     follows up with the vendor, and moved the review to next week.",
+                    request.start_ms / 60_000,
+                    request.track.as_str()
+                ),
+            })
+            .collect();
+        let bytes: usize = lines
+            .iter()
+            .map(|line| std::mem::size_of::<TranscriptLine>() + line.text.capacity())
+            .sum();
+        self.0.fetch_add(bytes as u64, Ordering::SeqCst);
+        Ok(Transcribed { lines, held: None })
+    }
+}
+
+#[test]
+fn a_two_hour_job_holds_its_transcript_and_nothing_else_that_grows() {
+    use crate::recording::test_support::heap;
+    use std::io::Write;
+    let transcript = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let h = Harness::with_transcriber(Arc::new(TextTranscriber(transcript.clone())));
+    h.install_models();
+    let id = h
+        .runtime
+        .start(None, "All Hands")
+        .unwrap()
+        .recording_id
+        .unwrap();
+    let dir = h.backend.target(Track::Mic).unwrap().audio_dir;
+    std::fs::create_dir_all(&dir).unwrap();
+    // A minute of audio on each track: its file (sparse; the fake reads
+    // nothing) and its manifest line, as the segment writer leaves them.
+    let add_minute = |minute: u32| {
+        for track in Track::ALL {
+            let number = minute + 1;
+            let name = segments::segment_file_name(track, number);
+            std::fs::File::create(dir.join(&name))
+                .unwrap()
+                .set_len(44 + 60 * 16_000 * 2)
+                .unwrap();
+            let mut manifest = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(segments::manifest_path(&dir, track))
+                .unwrap();
+            writeln!(
+                manifest,
+                "{}",
+                serde_json::json!({ "segment": number, "file": name, "startMs": minute as u64 * 60_000 })
+            )
+            .unwrap();
+        }
+    };
+    let held_beyond_transcript = |transcript: &std::sync::atomic::AtomicU64| {
+        let bytes = transcript.load(Ordering::SeqCst) as i64;
+        (heap::live() - bytes, heap::peak() - bytes)
+    };
+
+    heap::start();
+    let mut early = (i64::MIN, i64::MIN);
+    let mut late = (i64::MIN, i64::MIN);
+    for minute in 0..121 {
+        heap::reset_peak();
+        add_minute(minute);
+        h.run();
+        h.calls.take();
+        let (live, peak) = held_beyond_transcript(&transcript);
+        if (10..20).contains(&minute) {
+            early = (early.0.max(live), early.1.max(peak));
+        }
+        if minute >= 110 {
+            late = (late.0.max(live), late.1.max(peak));
+        }
+    }
+    let transcribed = transcript.load(Ordering::SeqCst) as i64;
+    assert!(
+        transcribed > 2 * 115 * 5 * 100,
+        "about two hours of both tracks: {transcribed}"
+    );
+
+    // Stop: the rest, the merge, and the save.
+    let before_finish = heap::live();
+    heap::reset_peak();
+    h.stop();
+    h.run();
+    h.calls.take();
+    let finish_peak = heap::peak() - before_finish;
+    let after_finish = heap::live() - before_finish;
+    heap::stop();
+    assert_eq!(h.state(&id), RecordingState::Transcribed);
+    assert_eq!(h.database.transcript_rows(&id).unwrap().len(), 2 * 121 * 5);
+    // Beyond the transcript, a step near two hours holds and peaks at what
+    // one near ten minutes does (the peak is mostly checking the model's
+    // hash before each worker).
+    const SLACK: i64 = 16 * 1024;
+    assert!(
+        late.0 <= early.0 + SLACK && late.1 <= early.1 + SLACK,
+        "beyond the transcript: {late:?} near two hours, {early:?} near ten minutes"
+    );
+    // The merge and the save work on the transcript (once, then as rows),
+    // and nothing of the job stays behind.
+    assert!(
+        finish_peak <= 2 * transcribed + early.1,
+        "finishing peaked {finish_peak} bytes above a {transcribed}-byte transcript"
+    );
+    assert!(
+        after_finish <= SLACK,
+        "{after_finish} bytes left after the job"
+    );
+}
+
+/// The real worker over two hours of speech-like audio, in batches as
+/// during a recording, sampling the worker's physical footprint.
+///
+/// Needs the pinned models in `THREESTRANDS_SMOKE_MODELS` (as for the
+/// worker smoke test) and macOS `say`. The worker is this build's app
+/// binary, or `THREESTRANDS_WORKER_BIN` (a release build gives realistic
+/// timings). `THREESTRANDS_MEASURE_MODEL=accurate` and
+/// `THREESTRANDS_MEASURE_MINUTES=20` measure the Accurate model on a
+/// shorter recording. The model's budget is lifted so the peak can be
+/// measured rather than cut off.
+///
+/// ```text
+/// THREESTRANDS_SMOKE_MODELS=/path/to/models \
+///   cargo test --lib real_worker_memory_stays_flat -- --ignored --nocapture
+/// ```
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn real_worker_memory_stays_flat_over_a_two_hour_recording() {
+    use crate::recording::transcribe::worker::{
+        footprint_bytes, WorkerCommand, WorkerLimits, WorkerTranscriber,
+    };
+
+    /// The real transcriber with the memory budget lifted.
+    struct Uncapped(WorkerTranscriber);
+    impl Transcriber for Uncapped {
+        fn open(
+            &self,
+            config: &JobConfig,
+            stop: Arc<dyn StopCheck>,
+        ) -> Result<Box<dyn TranscriptionSession>, JobError> {
+            let config = JobConfig {
+                memory_bytes: u64::MAX,
+                ..config.clone()
+            };
+            self.0.open(&config, stop)
+        }
+    }
+
+    let models = PathBuf::from(std::env::var("THREESTRANDS_SMOKE_MODELS").unwrap());
+    let accurate = std::env::var("THREESTRANDS_MEASURE_MODEL").as_deref() == Ok("accurate");
+    let minutes: usize = std::env::var("THREESTRANDS_MEASURE_MINUTES")
+        .map_or(120, |minutes| minutes.parse().unwrap());
+    let program = std::env::var("THREESTRANDS_WORKER_BIN").map_or_else(
+        |_| {
+            let exe = std::env::current_exe().unwrap();
+            exe.parent().unwrap().parent().unwrap().join("threestrands")
+        },
+        PathBuf::from,
+    );
+    assert!(program.exists(), "build the app binary first: {program:?}");
+    let transcriber = Uncapped(WorkerTranscriber {
+        command: WorkerCommand {
+            program,
+            args: vec![crate::recording::transcribe::worker::WORKER_ARG.into()],
+            env: vec![(
+                crate::recording::transcribe::worker::WORKER_ENV.into(),
+                "1".into(),
+            )],
+        },
+        limits: WorkerLimits::default(),
+    });
+    let h = Harness::with(
+        Pins::pinned(),
+        local_urls(1),
+        Arc::new(transcriber),
+        FakeTranscriber::default(),
+    );
+    std::fs::create_dir_all(&h.models_dir).unwrap();
+    let model = if accurate {
+        TranscriptionModelChoice::Accurate
+    } else {
+        TranscriptionModelChoice::Fast
+    };
+    for file in [model.model().file().file_name, policy::VAD_MODEL.file_name] {
+        std::fs::copy(models.join(file), h.models_dir.join(file)).unwrap();
+    }
+    h.runtime
+        .set_settings(RecordingSettings {
+            transcription_model: model,
+            ..Default::default()
+        })
+        .unwrap();
+
+    // Sentences read by `say`, in 16 kHz mono 16-bit WAV.
+    let voices = TempDir::new();
+    let sentences = [
+        "Good morning everyone, let's get started with the weekly planning meeting.",
+        "The launch moves to March because the vendor needs two more weeks for the security review.",
+        "I will send the revised budget to finance by Thursday afternoon.",
+        "Can someone take the action item to follow up with the design team about the onboarding flow?",
+        "Our customer support queue dropped by twenty percent after the last release.",
+        "We still have an open question about whether the mobile app ships in the same release.",
+        "Priya agreed to own the migration plan and will share a draft on Monday.",
+        "The infrastructure costs went up slightly, mostly because of the new search cluster.",
+        "Let's revisit the hiring plan next week once we have the updated headcount numbers.",
+        "Thanks, that covers everything on the agenda for today.",
+        "Before we move on, does anyone have concerns about the testing schedule?",
+        "The analytics dashboard should be ready for the leadership review at the end of the month.",
+    ];
+    let clips: Vec<Vec<i16>> = sentences
+        .iter()
+        .enumerate()
+        .map(|(index, text)| {
+            let path = voices.path().join(format!("{index}.wav"));
+            let status = std::process::Command::new("/usr/bin/say")
+                .args(["--file-format=WAVE", "--data-format=LEI16@16000", "-o"])
+                .arg(&path)
+                .arg(text)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let bytes = std::fs::read(&path).unwrap();
+            let data = bytes
+                .windows(4)
+                .position(|window| window == b"data")
+                .unwrap();
+            bytes[data + 8..]
+                .chunks_exact(2)
+                .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+                .collect()
+        })
+        .collect();
+    // Two hours of them, with pauses and a little noise.
+    let mut seed = 0x9e37_79b9_u32;
+    let mut random = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed
+    };
+    let total = minutes * 60 * 16_000;
+    let mut audio: Vec<i16> = Vec::with_capacity(total + 16_000 * 30);
+    while audio.len() < total {
+        let clip = &clips[random() as usize % clips.len()];
+        audio.extend_from_slice(clip);
+        let pause = 16_000 * 3 / 10 + random() as usize % (16_000 * 22 / 10);
+        audio.extend(std::iter::repeat_n(0i16, pause));
+    }
+    audio.truncate(total);
+    for sample in &mut audio {
+        *sample = sample.saturating_add((random() % 301) as i16 - 150);
+    }
+
+    // Sample the worker every second; the curve uses every tenth sample.
+    let sampling = Arc::new(AtomicBool::new(true));
+    let samples = Arc::new(Mutex::new(Vec::<u64>::new()));
+    let sampler = {
+        let sampling = sampling.clone();
+        let samples = samples.clone();
+        std::thread::spawn(move || {
+            while sampling.load(Ordering::SeqCst) {
+                let mut pids = [0 as libc::pid_t; 64];
+                // SAFETY: the buffer holds 64 pids and its size is given.
+                let count = unsafe {
+                    libc::proc_listchildpids(
+                        std::process::id() as libc::pid_t,
+                        pids.as_mut_ptr().cast(),
+                        std::mem::size_of_val(&pids) as libc::c_int,
+                    )
+                };
+                let bytes: u64 = pids[..count.max(0) as usize]
+                    .iter()
+                    .filter_map(|&pid| footprint_bytes(pid as u32))
+                    .sum();
+                samples.lock().unwrap().push(bytes);
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        })
+    };
+
+    let started = Instant::now();
+    let id = h
+        .runtime
+        .start(None, "Two Hour Meeting")
+        .unwrap()
+        .recording_id
+        .unwrap();
+    let mut mic = h.live_mic();
+    let step = 5 * 60 * 16_000;
+    for (index, chunk) in audio.chunks(step).enumerate() {
+        mic.write(chunk, (index * step / 16) as u64).unwrap();
+        mic.flush().unwrap();
+        while h.runtime.transcription_step() {}
+        eprintln!(
+            "{:>4} min recorded, {:>6.0} s",
+            (index + 1) * 5,
+            started.elapsed().as_secs_f64()
+        );
+    }
+    mic.end_run(GapReason::Stop).unwrap();
+    drop(mic);
+    h.stop();
+    while h.runtime.transcription_step() {}
+    let wall = started.elapsed();
+    sampling.store(false, Ordering::SeqCst);
+    sampler.join().unwrap();
+    assert_eq!(h.state(&id), RecordingState::Transcribed);
+    let transcript = h.runtime.recording_transcript(&id).unwrap();
+
+    let all = samples.lock().unwrap().clone();
+    let curve: Vec<u64> = all.iter().step_by(10).copied().collect();
+    let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+    let quarter = curve.len().div_ceil(4);
+    let mut maxima = Vec::new();
+    for (index, part) in curve.chunks(quarter).enumerate() {
+        let mut running: Vec<u64> = part.iter().copied().filter(|&b| b > 0).collect();
+        running.sort_unstable();
+        if running.is_empty() {
+            eprintln!("quarter {}: no worker sampled", index + 1);
+            maxima.push(0);
+            continue;
+        }
+        eprintln!(
+            "quarter {}: {} samples with a worker of {}: min {:.0} MiB, median {:.0} MiB, max {:.0} MiB",
+            index + 1,
+            running.len(),
+            part.len(),
+            mib(running[0]),
+            mib(running[running.len() / 2]),
+            mib(*running.last().unwrap())
+        );
+        maxima.push(*running.last().unwrap());
+    }
+    let peak = all.iter().copied().max().unwrap_or(0);
+    eprintln!(
+        "{} model, {minutes} min of audio: wall {:.0} s, peak {:.0} MiB, {} lines; first: {:?}",
+        if accurate { "Accurate" } else { "Fast" },
+        wall.as_secs_f64(),
+        mib(peak),
+        transcript.lines.len(),
+        transcript.lines.first().map(|line| &line.text)
+    );
+    eprintln!(
+        "10 s samples (MiB): {:?}",
+        curve
+            .iter()
+            .map(|&b| mib(b).round() as u64)
+            .collect::<Vec<_>>()
+    );
+    assert!(!transcript.lines.is_empty());
+    // No upward trend: the last quarter's worst is the first quarter's,
+    // within a tolerance for this measurement.
+    const TOLERANCE: u64 = 64 * 1024 * 1024;
+    assert!(
+        maxima[maxima.len() - 1] <= maxima[0] + TOLERANCE,
+        "{:?}",
+        maxima.iter().map(|&b| mib(b)).collect::<Vec<_>>()
+    );
 }

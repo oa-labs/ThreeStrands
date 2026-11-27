@@ -11,6 +11,8 @@
 
 use std::time::Duration;
 
+const MIB: u64 = 1024 * 1024;
+
 /// The first macOS release (major, minor) with the Core Audio process tap
 /// that captures other apps' audio. Below it, recordings are microphone-only.
 pub const SYSTEM_AUDIO_MIN_MACOS: (u32, u32) = (14, 4);
@@ -129,9 +131,24 @@ pub const WORKER_REQUEST_BASE_TIMEOUT: Duration = Duration::from_secs(60);
 /// wall-clock time per second of audio. Measured real-time factors are
 /// 0.04 to 0.32, so 4 leaves room for slow Macs and a busy machine.
 pub const WORKER_REQUEST_TIME_PER_AUDIO: u32 = 4;
-/// Physical footprint the worker may reach before it is killed. The spike
-/// measured 1.3 GB peak for the Accurate model on the CPU.
-pub const WORKER_MEMORY_BYTES: u64 = 3 * 1024 * 1024 * 1024;
+/// Physical footprint the Fast model's worker may reach before it is
+/// killed. A two-hour recording in the VM peaked at 700 MiB on Metal (its
+/// paravirtual GPU; the developer's Mac must confirm), so 1.5 times that
+/// would be 1,050 MiB; the budget keeps the floor of 1.5 times the spike's
+/// 796 MB on the CPU instead. See `docs/meeting-recording-plan.md`
+/// (Memory during long meetings).
+pub const WORKER_MEMORY_FAST_BYTES: u64 = 1_150 * MIB;
+/// The same for the Accurate model: it peaked at 1,152 MiB in the VM, and
+/// 1.5 times the spike's 1,317 MB on the CPU (1,884 MiB) is the floor.
+pub const WORKER_MEMORY_ACCURATE_BYTES: u64 = 1_900 * MIB;
+/// Memory the Mac must have available, on top of the model's budget, before
+/// a worker starts, so starting one never pushes the Mac into swap.
+pub const WORKER_START_MARGIN_BYTES: u64 = 512 * MIB;
+/// Transcribing during a recording: finished audio that must be waiting
+/// before a worker starts. The worker transcribes what is waiting and then
+/// exits, so the model is in memory for a minute or two at a time rather
+/// than for the whole meeting.
+pub const LIVE_BATCH: Duration = Duration::from_secs(5 * 60);
 /// Largest frame either side of the worker protocol may send. One segment's
 /// lines are a few kilobytes.
 pub const WORKER_MAX_FRAME_BYTES: usize = 1024 * 1024;
@@ -156,9 +173,30 @@ pub fn worker_request_timeout(audio_ms: u64) -> Duration {
     WORKER_REQUEST_BASE_TIMEOUT + audio * WORKER_REQUEST_TIME_PER_AUDIO
 }
 
-/// Whether a worker with this physical footprint is over its memory cap.
-pub fn worker_memory_exceeded(footprint_bytes: u64) -> bool {
-    footprint_bytes > WORKER_MEMORY_BYTES
+/// The physical footprint a worker running `model` may reach.
+pub const fn worker_memory_budget(model: TranscriptionModel) -> u64 {
+    match model {
+        TranscriptionModel::Fast => WORKER_MEMORY_FAST_BYTES,
+        TranscriptionModel::Accurate => WORKER_MEMORY_ACCURATE_BYTES,
+    }
+}
+
+/// Whether a worker running `model` with this physical footprint is over
+/// its memory budget.
+pub fn worker_memory_exceeded(model: TranscriptionModel, footprint_bytes: u64) -> bool {
+    footprint_bytes > worker_memory_budget(model)
+}
+
+/// Whether a worker for `model` may start with this much memory available:
+/// its budget plus [`WORKER_START_MARGIN_BYTES`].
+pub fn memory_allows_start(model: TranscriptionModel, available_bytes: u64) -> bool {
+    available_bytes >= worker_memory_budget(model).saturating_add(WORKER_START_MARGIN_BYTES)
+}
+
+/// Whether this much finished, untranscribed audio of a recording in
+/// progress is enough to start a batch.
+pub fn live_batch_due(waiting_ms: u64) -> bool {
+    waiting_ms >= LIVE_BATCH.as_millis() as u64
 }
 
 /// Whisper threads for a machine with this many cores: half of them, so the
@@ -350,10 +388,39 @@ mod tests {
     }
 
     #[test]
-    fn worker_memory_is_checked_below_at_and_above() {
-        assert!(!worker_memory_exceeded(WORKER_MEMORY_BYTES - 1));
-        assert!(!worker_memory_exceeded(WORKER_MEMORY_BYTES));
-        assert!(worker_memory_exceeded(WORKER_MEMORY_BYTES + 1));
+    fn worker_memory_is_checked_per_model_below_at_and_above() {
+        for (model, budget) in [
+            (TranscriptionModel::Fast, WORKER_MEMORY_FAST_BYTES),
+            (TranscriptionModel::Accurate, WORKER_MEMORY_ACCURATE_BYTES),
+        ] {
+            assert_eq!(worker_memory_budget(model), budget);
+            assert!(!worker_memory_exceeded(model, budget - 1));
+            assert!(!worker_memory_exceeded(model, budget));
+            assert!(worker_memory_exceeded(model, budget + 1));
+        }
+        // No lower than 1.5 times the spike's peak on the CPU.
+        assert!(WORKER_MEMORY_FAST_BYTES * 2 >= 3 * 796_000_000);
+        assert!(WORKER_MEMORY_ACCURATE_BYTES * 2 >= 3 * 1_317_000_000);
+    }
+
+    #[test]
+    fn a_worker_starts_only_with_its_budget_and_margin_available() {
+        for model in TranscriptionModel::ALL {
+            let needed = worker_memory_budget(model) + WORKER_START_MARGIN_BYTES;
+            assert!(!memory_allows_start(model, needed - 1));
+            assert!(memory_allows_start(model, needed));
+            assert!(memory_allows_start(model, needed + 1));
+        }
+        assert!(!memory_allows_start(TranscriptionModel::Accurate, 0));
+    }
+
+    #[test]
+    fn a_live_batch_is_due_below_at_and_above() {
+        let batch = LIVE_BATCH.as_millis() as u64;
+        assert_eq!(batch, 300_000);
+        assert!(!live_batch_due(batch - 1));
+        assert!(live_batch_due(batch));
+        assert!(live_batch_due(batch + 1));
     }
 
     #[test]

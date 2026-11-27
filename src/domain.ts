@@ -1856,6 +1856,8 @@ export type KeepAudio = "days7" | "days30" | "untilDeleted" | "untilTranscribed"
 export type RecordingSettings = {
   recordMeetings: boolean;
   transcriptionModel: TranscriptionModelChoice;
+  /** Transcribe in batches while the meeting is recorded; off waits for Stop. */
+  transcribeDuringMeetings: boolean;
   keepAudio: KeepAudio;
   offerToRecord: boolean;
   remindToTell: boolean;

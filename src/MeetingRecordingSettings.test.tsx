@@ -21,7 +21,7 @@ vi.mock("./recordingEvents", async (original) => ({
 
 const available: RecordingCapabilities = { supported: true, systemAudio: { kind: "available" } };
 const defaults: RecordingSettings = {
-  recordMeetings: false, transcriptionModel: "fast", keepAudio: "days7", offerToRecord: true, remindToTell: true,
+  recordMeetings: false, transcriptionModel: "fast", transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
   summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: false,
 };
 
@@ -188,6 +188,26 @@ describe("Transcription Model", () => {
     expect(within(field).getAllByRole("option").map((option) => option.textContent)).toEqual(["Fast", "Accurate"]);
     fireEvent.change(field, { target: { value: "accurate" } });
     await waitFor(() => expect(save).toHaveBeenCalledWith({ ...defaults, transcriptionModel: "accurate" }));
+  });
+
+  it("turns Transcribe During Meetings off and on, describing what it costs", async () => {
+    const { save } = setup();
+    const toggle = await screen.findByRole("checkbox", { name: "Transcribe During Meetings" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).toBeChecked();
+    expect(toggle).toHaveAccessibleDescription();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, transcribeDuringMeetings: false }));
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, transcribeDuringMeetings: true }));
+  });
+
+  it("shows Transcribe During Meetings off when it was saved off", async () => {
+    setup(available, { ...defaults, transcribeDuringMeetings: false });
+    const toggle = await screen.findByRole("checkbox", { name: "Transcribe During Meetings" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).not.toBeChecked();
   });
 
   it("shows each model's size, language note and state, and downloads nothing until Download is pressed", async () => {

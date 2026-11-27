@@ -658,4 +658,6 @@ impl TrackRun {
 }
 
 #[cfg(test)]
+mod memory_tests;
+#[cfg(test)]
 mod tests;

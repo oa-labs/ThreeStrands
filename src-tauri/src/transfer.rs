@@ -1516,26 +1516,25 @@ mod tests {
             .set_recording_settings(&RecordingSettings {
                 record_meetings: true,
                 transcription_model: TranscriptionModelChoice::Accurate,
+                transcribe_during_meetings: false,
                 keep_audio: KeepAudio::UntilDeleted,
+                offer_to_record: false,
+                remind_to_tell: false,
                 summarize_with_ai: true,
+                include_my_notes: true,
+                attach_transcript: true,
                 consent_acknowledged: true,
-                ..Default::default()
             })
             .unwrap();
         let after = export(&database);
         assert_eq!(before, after, "recording settings changed the export");
-        for key in [
-            "recordMeetings",
-            "transcriptionModel",
-            "keepAudio",
-            "offerToRecord",
-            "remindToTell",
-            "summarizeWithAi",
-            "includeMyNotes",
-            "attachTranscript",
-            "consentAcknowledged",
-        ] {
-            assert!(!after.contains(key), "{key}");
+        // Every field, so a new one is covered as soon as it exists.
+        let fields = serde_json::to_value(RecordingSettings::default()).unwrap();
+        let keys: Vec<&String> = fields.as_object().unwrap().keys().collect();
+        assert!(keys.iter().any(|key| *key == "transcribeDuringMeetings"));
+        assert_eq!(keys.len(), 10);
+        for key in keys {
+            assert!(!after.contains(key.as_str()), "{key}");
         }
     }
 

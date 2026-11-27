@@ -1288,7 +1288,7 @@ fn start_recording_runtime(
     database: &Arc<Database>,
     handle: &tauri::AppHandle,
 ) -> std::io::Result<Arc<recording::runtime::RecordingRuntime>> {
-    use recording::transcribe::{models, power, worker};
+    use recording::transcribe::{memory, models, power, worker};
     let audio_root = data_dir.join("recordings");
     std::fs::create_dir_all(&audio_root)?;
     restrict_dir_to_owner(&audio_root);
@@ -1301,6 +1301,7 @@ fn start_recording_runtime(
             limits: worker::WorkerLimits::default(),
         }),
         power: Arc::new(power::SystemPower),
+        memory: Arc::new(memory::SystemMemory),
         models: Arc::new(models::ModelStore::new(
             models_dir.clone(),
             models::Pins::pinned(),

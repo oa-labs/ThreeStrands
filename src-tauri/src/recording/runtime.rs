@@ -18,6 +18,7 @@ use super::capture::{CaptureBackend, SystemAudioSupport, Track};
 use super::retention;
 use super::segments;
 use super::settings::{RecordingSettings, TranscriptionModelChoice};
+use super::transcribe::memory::MemoryProbe;
 use super::transcribe::models::{ModelStore, TranscriptionModelStatus};
 use super::transcribe::plan;
 use super::transcribe::power::PowerSource;
@@ -54,10 +55,12 @@ pub trait RecordingNotifier: Send + Sync {
     fn models_changed(&self, statuses: &[TranscriptionModelStatus]);
 }
 
-/// What transcription needs: the worker, the power source, and the models.
+/// What transcription needs: the worker, the power source, the memory
+/// probe, and the models.
 pub struct TranscriptionParts {
     pub transcriber: Arc<dyn Transcriber>,
     pub power: Arc<dyn PowerSource>,
+    pub memory: Arc<dyn MemoryProbe>,
     pub models: Arc<ModelStore>,
 }
 
@@ -147,8 +150,10 @@ impl RecordingRuntime {
         let scheduler = Arc::new(Scheduler::new(
             transcription.transcriber,
             transcription.power,
+            transcription.memory,
             transcription.models.clone(),
         ));
+        scheduler.set_transcribe_during_meetings(settings.transcribe_during_meetings);
         // A model becoming ready can start waiting recordings.
         let listener_notifier = notifier.clone();
         let listener_scheduler = Arc::downgrade(&scheduler);
@@ -222,6 +227,7 @@ impl RecordingRuntime {
             self.notifier.state_changed(&status);
             let before = previous.and_then(|p| p.recording_id);
             if let Some(ended) = before.filter(|id| Some(id) != status.recording_id.as_ref()) {
+                self.scheduler.recording_stopped(&ended);
                 self.notifier.recordings_changed(&ended);
             }
         }
@@ -318,6 +324,8 @@ impl RecordingRuntime {
             .set_recording_settings(&settings)
             .map_err(String::from)?;
         let keep_changed = lock(&self.settings).keep_audio != settings.keep_audio;
+        self.scheduler
+            .set_transcribe_during_meetings(settings.transcribe_during_meetings);
         *lock(&self.settings) = settings.clone();
         self.refresh_tray_now();
         if keep_changed {

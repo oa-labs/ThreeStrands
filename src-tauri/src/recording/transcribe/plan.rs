@@ -53,56 +53,156 @@ pub fn checked_segment(
     (audio_ms > 0).then_some((path, audio_ms))
 }
 
-/// One track's segment files in order.
-fn plan_track(audio_dir: &Path, track: Track, finished: bool) -> Vec<PlannedSegment> {
-    let entries = segments::read_manifest(audio_dir, track);
-    // Each manifest line: a usable segment, a skipped one, or a gap.
-    enum Line {
-        Usable(u32, u64, PathBuf, u64),
-        Skipped,
-        Gap,
-    }
-    let lines: Vec<Line> = entries
-        .iter()
-        .map(|entry| match entry {
+/// Each manifest line: a usable segment, a skipped one, or a gap.
+enum Line {
+    Usable(u32, u64, PathBuf, u64),
+    Skipped,
+    Gap,
+}
+
+/// One track's manifest, read line by line so that scanning a long
+/// recording holds one line at a time, skipping a torn last line or any
+/// line that doesn't parse (as [`segments::read_manifest`] does).
+fn manifest_lines(audio_dir: &Path, track: Track) -> impl Iterator<Item = Line> + '_ {
+    use std::io::BufRead;
+    let file = std::fs::File::open(segments::manifest_path(audio_dir, track)).ok();
+    file.into_iter()
+        .flat_map(|file| std::io::BufReader::new(file).lines())
+        .map_while(Result::ok)
+        .filter_map(|text| serde_json::from_str::<ManifestEntry>(&text).ok())
+        .map(move |entry| match entry {
             ManifestEntry::Segment {
                 segment,
                 file,
                 start_ms,
-            } => match checked_segment(audio_dir, track, *segment, file) {
-                Some((path, audio_ms)) => Line::Usable(*segment, *start_ms, path, audio_ms),
+            } => match checked_segment(audio_dir, track, segment, &file) {
+                Some((path, audio_ms)) => Line::Usable(segment, start_ms, path, audio_ms),
                 None => Line::Skipped,
             },
             ManifestEntry::Gap { .. } => Line::Gap,
         })
-        .collect();
-    let mut planned = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
-        let Line::Usable(number, start_ms, path, audio_ms) = line else {
-            continue;
-        };
-        let continues = index > 0 && matches!(lines[index - 1], Line::Usable(..));
-        let next = lines.get(index + 1);
-        let closed = next.is_some() || finished;
-        let ends_run = match next {
-            Some(Line::Usable(..)) => false,
-            Some(Line::Gap | Line::Skipped) => true,
-            None => finished,
-        };
-        planned.push(PlannedSegment {
+}
+
+/// One track's segment files in order, each handed to `visit` as soon as
+/// the line after it is read.
+fn scan_track(
+    audio_dir: &Path,
+    track: Track,
+    finished: bool,
+    mut visit: impl FnMut(PlannedSegment),
+) {
+    let segment =
+        |number, start_ms, path, audio_ms, continues, next: Option<&Line>| PlannedSegment {
             request: SegmentRequest {
                 track,
-                wav_path: path.clone(),
-                start_ms: *start_ms,
+                wav_path: path,
+                start_ms,
                 continues,
-                ends_run,
+                ends_run: match next {
+                    Some(Line::Usable(..)) => false,
+                    Some(Line::Gap | Line::Skipped) => true,
+                    None => finished,
+                },
+                carry_in: None,
             },
-            number: *number,
-            audio_ms: *audio_ms,
-            closed,
+            number,
+            audio_ms,
+            closed: next.is_some() || finished,
+        };
+    // The usable line waiting for the line after it, and whether the line
+    // before it was usable too.
+    let mut pending: Option<(Line, bool)> = None;
+    let mut previous_usable = false;
+    for line in manifest_lines(audio_dir, track) {
+        let usable = matches!(line, Line::Usable(..));
+        if let Some((Line::Usable(number, start_ms, path, audio_ms), continues)) = pending.take() {
+            visit(segment(
+                number,
+                start_ms,
+                path,
+                audio_ms,
+                continues,
+                Some(&line),
+            ));
+        }
+        if usable {
+            pending = Some((line, previous_usable));
+        }
+        previous_usable = usable;
+    }
+    if let Some((Line::Usable(number, start_ms, path, audio_ms), continues)) = pending {
+        visit(segment(number, start_ms, path, audio_ms, continues, None));
+    }
+}
+
+/// One track's segment files in order.
+fn plan_track(audio_dir: &Path, track: Track, finished: bool) -> Vec<PlannedSegment> {
+    let mut planned = Vec::new();
+    scan_track(audio_dir, track, finished, |segment| planned.push(segment));
+    planned
+}
+
+/// Where a job stands, found without listing every file, so a step of a
+/// long recording's job takes the same memory as a short one's.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Standing {
+    /// The first closed file not done yet, in [`plan`]'s order.
+    pub next: Option<PlannedSegment>,
+    /// Closed audio not done yet.
+    pub waiting_ms: u64,
+    /// All the audio.
+    pub total_ms: u64,
+    /// Where the first system audio file starts.
+    pub system_start_ms: Option<u64>,
+}
+
+/// [`Standing`] for a job that has done the files `done` says it has.
+/// `finished` is false while the recording is still going.
+pub fn standing(
+    audio_dir: &Path,
+    finished: bool,
+    done: impl Fn(&PlannedSegment) -> bool,
+) -> Standing {
+    let mut standing = Standing::default();
+    for track in Track::ALL {
+        let mut first = true;
+        scan_track(audio_dir, track, finished, |segment| {
+            standing.total_ms += segment.audio_ms;
+            if track == Track::System && first {
+                standing.system_start_ms = Some(segment.request.start_ms);
+            }
+            first = false;
+            if !segment.closed || done(&segment) {
+                return;
+            }
+            standing.waiting_ms += segment.audio_ms;
+            let key = |s: &PlannedSegment| (s.request.start_ms, s.request.track, s.number);
+            if standing
+                .next
+                .as_ref()
+                .is_none_or(|next| key(&segment) < key(next))
+            {
+                standing.next = Some(segment);
+            }
         });
     }
-    planned
+    standing
+}
+
+/// Whether `path` is one of `track`'s segment files in `audio_dir`, as the
+/// writer names them and [`checked_segment`] accepts them.
+pub fn is_segment_file(audio_dir: &Path, track: Track, path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let number = name
+        .strip_prefix(track.as_str())
+        .and_then(|rest| rest.strip_prefix('-'))
+        .and_then(|rest| rest.strip_suffix(".wav"))
+        .and_then(|digits| digits.parse::<u32>().ok());
+    number
+        .and_then(|number| checked_segment(audio_dir, track, number, name))
+        .is_some_and(|(checked, _)| checked == path)
 }
 
 /// Both tracks' segment files, in order of where they start (the microphone
@@ -247,6 +347,75 @@ mod tests {
         assert!(plan(dir.path(), true)
             .iter()
             .all(|p| p.request.track == Track::Mic));
+    }
+
+    #[test]
+    fn standing_matches_the_plan_without_listing_it() {
+        let dir = TempDir::new();
+        let mut mic = SegmentWriter::open(dir.path(), Track::Mic).unwrap();
+        mic.write(&seconds(90), 0).unwrap();
+        mic.end_run(GapReason::Pause).unwrap();
+        mic.write(&seconds(70), 120_000).unwrap();
+        mic.flush().unwrap();
+        let mut system = SegmentWriter::open(dir.path(), Track::System).unwrap();
+        system.write(&seconds(121), 5_000).unwrap();
+        system.flush().unwrap();
+        for finished in [false, true] {
+            let planned = plan(dir.path(), finished);
+            for done_through in 0..4 {
+                let done = |s: &PlannedSegment| s.number <= done_through;
+                let standing = standing(dir.path(), finished, done);
+                let undone: Vec<&PlannedSegment> =
+                    planned.iter().filter(|s| s.closed && !done(s)).collect();
+                assert_eq!(standing.next.as_ref(), undone.first().copied());
+                assert_eq!(
+                    standing.waiting_ms,
+                    undone.iter().map(|s| s.audio_ms).sum::<u64>()
+                );
+                assert_eq!(
+                    standing.total_ms,
+                    planned.iter().map(|s| s.audio_ms).sum::<u64>()
+                );
+                assert_eq!(standing.system_start_ms, Some(5_000));
+            }
+        }
+        assert_eq!(standing(dir.path(), true, |_| true).next, None);
+        assert_eq!(
+            standing(&dir.path().join("missing"), true, |_| false),
+            Standing::default()
+        );
+    }
+
+    #[test]
+    fn only_the_tracks_own_segment_files_are_recognized() {
+        let dir = TempDir::new();
+        let mut mic = SegmentWriter::open(dir.path(), Track::Mic).unwrap();
+        mic.write(&seconds(61), 0).unwrap();
+        drop(mic);
+        let canonical = std::fs::canonicalize(dir.path()).unwrap();
+        let first = canonical.join("mic-0001.wav");
+        assert!(is_segment_file(dir.path(), Track::Mic, &first));
+        assert!(!is_segment_file(dir.path(), Track::System, &first));
+        assert!(!is_segment_file(
+            dir.path(),
+            Track::Mic,
+            &canonical.join("mic-0009.wav")
+        ));
+        assert!(!is_segment_file(
+            dir.path(),
+            Track::Mic,
+            &canonical.join("x").join("..").join("mic-0001.wav")
+        ));
+        assert!(!is_segment_file(
+            dir.path(),
+            Track::Mic,
+            Path::new("/etc/mic-0001.wav")
+        ));
+        assert!(!is_segment_file(
+            dir.path(),
+            Track::Mic,
+            Path::new("mic-0001.wav")
+        ));
     }
 
     #[test]

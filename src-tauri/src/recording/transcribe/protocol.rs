@@ -11,6 +11,14 @@
 //! [`Response::Lines`]. Closing stdin ends the worker, which exits 0. Any
 //! other exit, a malformed or oversized frame, or an unexpected response
 //! fails the job.
+//!
+//! **Batches.** A worker may stop before its job ends: during a recording
+//! it transcribes the audio waiting and exits, and memory pressure can stop
+//! it. Each [`Response::Lines`] says where the audio the worker is still
+//! holding back for that track starts ([`HeldAudio`]: files and sample
+//! offsets), and the next worker's first request for the track hands it
+//! back in [`SegmentRequest::carry_in`], so speech held at the end of one
+//! batch is transcribed whole at the start of the next.
 
 use crate::recording::capture::Track;
 use serde::de::DeserializeOwned;
@@ -49,6 +57,29 @@ pub struct SegmentRequest {
     /// The run of contiguous audio ends with this file, so nothing is held
     /// back: speech still going at its end is transcribed now.
     pub ends_run: bool,
+    /// Audio an earlier worker was holding back for this track when it
+    /// stopped. The worker reads it first and treats it as its own held
+    /// audio, so this file continues it as if one worker had done both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carry_in: Option<HeldAudio>,
+}
+
+/// Audio held back at the end of a track's last file: where it starts on
+/// the recording's clock, and the files it comes from, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeldAudio {
+    pub start_ms: u64,
+    pub pieces: Vec<HeldPiece>,
+}
+
+/// `samples` samples of a segment file, from sample `from_sample` on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeldPiece {
+    pub wav_path: PathBuf,
+    pub from_sample: u64,
+    pub samples: u64,
 }
 
 /// A transcribed sentence, on the recording's clock.
@@ -69,7 +100,13 @@ pub struct TranscriptLine {
 )]
 pub enum Response {
     Ready,
-    Lines { lines: Vec<TranscriptLine> },
+    Lines {
+        lines: Vec<TranscriptLine>,
+        /// What the worker now holds back for the request's track, if
+        /// anything.
+        #[serde(default)]
+        held: Option<HeldAudio>,
+    },
 }
 
 /// Why a frame couldn't be read.
@@ -147,6 +184,7 @@ mod tests {
             start_ms: 60_250,
             continues: true,
             ends_run: false,
+            carry_in: None,
         })
     }
 
@@ -189,6 +227,14 @@ mod tests {
                 "endsRun": false
             })
         );
+        let held = HeldAudio {
+            start_ms: 59_000,
+            pieces: vec![HeldPiece {
+                wav_path: "/a/mic-0001.wav".into(),
+                from_sample: 944_000,
+                samples: 16_000,
+            }],
+        };
         let lines = Response::Lines {
             lines: vec![TranscriptLine {
                 track: Track::Mic,
@@ -196,12 +242,38 @@ mod tests {
                 end_ms: 2,
                 text: "Hi.".into(),
             }],
+            held: Some(held.clone()),
         };
         let mut out = Vec::new();
         write_frame(&mut out, &lines).unwrap();
         assert_eq!(
             read_frame::<_, Response>(&mut out.as_slice(), 1024).unwrap(),
             Some(lines)
+        );
+        assert_eq!(
+            serde_json::to_value(&held).unwrap(),
+            serde_json::json!({
+                "startMs": 59000,
+                "pieces": [{ "wavPath": "/a/mic-0001.wav", "fromSample": 944000, "samples": 16000 }]
+            })
+        );
+        // A request carrying held audio in, and lines without a held field.
+        let Request::Segment(mut carried) = segment() else {
+            unreachable!()
+        };
+        carried.carry_in = Some(held);
+        let carried = Request::Segment(carried);
+        assert_eq!(
+            read_all(&frames(&[carried.clone()])).unwrap(),
+            vec![carried]
+        );
+        let bare: Response = serde_json::from_str(r#"{"type":"lines","lines":[]}"#).unwrap();
+        assert_eq!(
+            bare,
+            Response::Lines {
+                lines: vec![],
+                held: None
+            }
         );
     }
 

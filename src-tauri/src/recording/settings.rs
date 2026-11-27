@@ -43,6 +43,9 @@ pub enum KeepAudio {
 pub struct RecordingSettings {
     pub record_meetings: bool,
     pub transcription_model: TranscriptionModelChoice,
+    /// Transcribe finished minutes in batches while the meeting is still
+    /// being recorded. Off, nothing is transcribed until Stop.
+    pub transcribe_during_meetings: bool,
     pub keep_audio: KeepAudio,
     pub offer_to_record: bool,
     pub remind_to_tell: bool,
@@ -57,6 +60,7 @@ impl Default for RecordingSettings {
         Self {
             record_meetings: false,
             transcription_model: TranscriptionModelChoice::Fast,
+            transcribe_during_meetings: true,
             keep_audio: KeepAudio::Days7,
             offer_to_record: true,
             remind_to_tell: true,
@@ -81,6 +85,7 @@ mod tests {
         assert!(settings.offer_to_record && settings.remind_to_tell);
         assert_eq!(settings.keep_audio, KeepAudio::Days7);
         assert_eq!(settings.transcription_model, TranscriptionModelChoice::Fast);
+        assert!(settings.transcribe_during_meetings);
     }
 
     #[test]
@@ -96,6 +101,14 @@ mod tests {
         assert!(older.record_meetings);
         assert_eq!(older.keep_audio, KeepAudio::UntilTranscribed);
         assert!(older.offer_to_record, "a missing field takes its default");
+        assert!(
+            older.transcribe_during_meetings,
+            "settings saved before the switch existed read as on"
+        );
+        assert_eq!(json["transcribeDuringMeetings"], true);
+        let off: RecordingSettings =
+            serde_json::from_str(r#"{"transcribeDuringMeetings":false}"#).unwrap();
+        assert!(!off.transcribe_during_meetings);
         let empty: RecordingSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, RecordingSettings::default());
     }

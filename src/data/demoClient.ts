@@ -86,6 +86,7 @@ export { DEMO_ACCOUNT_ID };
 const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
   recordMeetings: false,
   transcriptionModel: "fast",
+  transcribeDuringMeetings: true,
   keepAudio: "days7",
   offerToRecord: true,
   remindToTell: true,

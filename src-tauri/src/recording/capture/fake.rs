@@ -124,6 +124,12 @@ impl FakeBackend {
         self.with(track, |t| t.running)
     }
 
+    /// Where the last start of `track` was told to report, so a test can
+    /// drive a real capture pipeline as a backend would.
+    pub fn sink(&self, track: Track) -> Option<EventSink> {
+        self.with(track, |t| t.sink.clone())
+    }
+
     pub fn target(&self, track: Track) -> Option<TrackTarget> {
         self.with(track, |t| t.target.clone())
     }

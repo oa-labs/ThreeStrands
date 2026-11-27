@@ -6,26 +6,28 @@
 //! [`WORKER_ARG`] and [`WORKER_ENV`] (checked first thing in `main`, before
 //! Tauri, logging, or the database start).
 //!
-//! Unlike the PDF worker, one worker lives for a whole transcription job
-//! (one recording), so the model loads once and each track's held-back
-//! audio ([`super::stream`]) survives from one segment file to the next.
-//! The protocol is in [`super::protocol`].
+//! Unlike the PDF worker, one worker handles many segment files: a batch
+//! during the recording, or everything left after Stop. The model loads once
+//! per worker, and each track's held-back audio ([`super::stream`]) survives
+//! from one segment file to the next; when a worker stops between files, it
+//! has reported what it holds, and the next worker takes it over. The
+//! protocol is in [`super::protocol`].
 //!
 //! The worker gets an empty environment, `/` as its directory, no core
 //! dumps, and a low scheduling priority. The parent enforces a wall-clock
-//! timeout for loading and for each request (scaled to its audio), a memory
-//! cap by polling the worker's physical footprint (macOS does not enforce
-//! `RLIMIT_AS`), and a cancel flag; it kills and reaps the worker on any
-//! breach, on a malformed frame, and on drop.
+//! timeout for loading and for each request (scaled to its audio), the
+//! model's memory budget by polling the worker's physical footprint (macOS
+//! does not enforce `RLIMIT_AS`), and a [`StopCheck`] (cancel, memory
+//! pressure); it kills and reaps the worker on any breach, on a malformed
+//! frame, and on drop.
 
-use super::protocol::{self, FrameError, Request, Response, SegmentRequest, TranscriptLine};
+use super::protocol::{self, FrameError, Request, Response, SegmentRequest};
 use super::stream::{self, SpeechEngine, Streams};
-use super::{JobConfig, JobError, Transcriber, TranscriptionSession};
+use super::{JobConfig, JobError, StopCheck, Transcribed, Transcriber, TranscriptionSession};
 use crate::recording::policy;
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -138,6 +140,14 @@ pub(crate) fn run_worker_io<R: Read, W: Write>(
             Ok(Some(Request::Segment(request))) => request,
             Ok(Some(Request::Config { .. })) | Err(_) => return EXIT_PROTOCOL,
         };
+        if let Some(held) = &request.carry_in {
+            if streams
+                .restore(request.track, held, stream::read_segment)
+                .is_err()
+            {
+                return EXIT_AUDIO;
+            }
+        }
         let samples = match stream::read_segment(&request.wav_path) {
             Ok(samples) => samples,
             Err(_) => return EXIT_AUDIO,
@@ -146,7 +156,8 @@ pub(crate) fn run_worker_io<R: Read, W: Write>(
             Ok(lines) => lines,
             Err(_) => return EXIT_ENGINE,
         };
-        if protocol::write_frame(output, &Response::Lines { lines }).is_err() {
+        let held = streams.held(request.track);
+        if protocol::write_frame(output, &Response::Lines { lines, held }).is_err() {
             return EXIT_PROTOCOL;
         }
     }
@@ -196,6 +207,7 @@ pub(crate) struct WorkerLimits {
     pub load_timeout: Duration,
     /// Overrides [`policy::worker_request_timeout`] (tests).
     pub request_timeout: Option<Duration>,
+    /// [`WorkerTranscriber`] replaces it with the job's model budget.
     pub memory_bytes: u64,
 }
 
@@ -204,7 +216,7 @@ impl Default for WorkerLimits {
         Self {
             load_timeout: policy::WORKER_LOAD_TIMEOUT,
             request_timeout: None,
-            memory_bytes: policy::WORKER_MEMORY_BYTES,
+            memory_bytes: policy::WORKER_MEMORY_ACCURATE_BYTES,
         }
     }
 }
@@ -220,7 +232,7 @@ impl Drop for ChildGuard {
 }
 
 #[cfg(target_os = "macos")]
-fn footprint_bytes(pid: u32) -> Option<u64> {
+pub(crate) fn footprint_bytes(pid: u32) -> Option<u64> {
     let mut usage = std::mem::MaybeUninit::<libc::rusage_info_v2>::zeroed();
     // SAFETY: the buffer is a zeroed `rusage_info_v2`, the layout flavor 2
     // fills in, and `usage` outlives the call.
@@ -246,7 +258,7 @@ pub(crate) struct WorkerSession {
     stdin: std::process::ChildStdin,
     responses: Receiver<Result<Response, String>>,
     limits: WorkerLimits,
-    cancel: Arc<AtomicBool>,
+    stop: Arc<dyn StopCheck>,
 }
 
 impl WorkerSession {
@@ -256,7 +268,7 @@ impl WorkerSession {
         command: &WorkerCommand,
         config: &WorkerConfig,
         limits: WorkerLimits,
-        cancel: Arc<AtomicBool>,
+        stop: Arc<dyn StopCheck>,
     ) -> Result<Self, JobError> {
         let crash = || JobError::Failed(CRASH_MESSAGE.into());
         let mut process = std::process::Command::new(&command.program);
@@ -297,7 +309,7 @@ impl WorkerSession {
             stdin,
             responses,
             limits,
-            cancel,
+            stop,
         };
         session.send(&Request::Config {
             model_path: config.model_path.clone(),
@@ -346,8 +358,8 @@ impl WorkerSession {
                 Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => return Err(self.failure()),
                 Err(RecvTimeoutError::Timeout) => {}
             }
-            if self.cancel.load(Ordering::SeqCst) {
-                return Err(JobError::Cancelled);
+            if let Some(reason) = self.stop.stop_reason() {
+                return Err(reason);
             }
             if Instant::now() >= deadline {
                 return Err(JobError::Failed(TIMEOUT_MESSAGE.into()));
@@ -363,18 +375,18 @@ impl WorkerSession {
         &mut self,
         request: &SegmentRequest,
         audio_ms: u64,
-    ) -> Result<Vec<TranscriptLine>, JobError> {
+    ) -> Result<Transcribed, JobError> {
         self.send(&Request::Segment(request.clone()))?;
         let timeout = self
             .limits
             .request_timeout
             .unwrap_or_else(|| policy::worker_request_timeout(audio_ms));
         match self.wait(timeout)? {
-            Response::Lines { lines } => {
+            Response::Lines { lines, held } => {
                 if lines.iter().any(|line| line.track != request.track) {
                     return Err(JobError::Failed(CRASH_MESSAGE.into()));
                 }
-                Ok(lines)
+                Ok(Transcribed { lines, held })
             }
             Response::Ready => Err(JobError::Failed(CRASH_MESSAGE.into())),
         }
@@ -391,12 +403,12 @@ impl TranscriptionSession for WorkerSession {
         &mut self,
         request: &SegmentRequest,
         audio_ms: u64,
-    ) -> Result<Vec<TranscriptLine>, JobError> {
+    ) -> Result<Transcribed, JobError> {
         WorkerSession::transcribe(self, request, audio_ms)
     }
 }
 
-/// The real [`Transcriber`]: one worker process per job.
+/// The real [`Transcriber`]: one worker process per batch.
 pub(crate) struct WorkerTranscriber {
     pub command: WorkerCommand,
     pub limits: WorkerLimits,
@@ -406,15 +418,19 @@ impl Transcriber for WorkerTranscriber {
     fn open(
         &self,
         config: &JobConfig,
-        cancel: Arc<AtomicBool>,
+        stop: Arc<dyn StopCheck>,
     ) -> Result<Box<dyn TranscriptionSession>, JobError> {
+        let limits = WorkerLimits {
+            memory_bytes: config.memory_bytes,
+            ..self.limits
+        };
         let config = WorkerConfig {
             model_path: config.model_path.clone(),
             vad_model_path: config.vad_model_path.clone(),
             language: config.language.clone(),
             threads: config.threads,
         };
-        let session = WorkerSession::spawn(&self.command, &config, self.limits, cancel)?;
+        let session = WorkerSession::spawn(&self.command, &config, limits, stop)?;
         Ok(Box::new(session))
     }
 }
@@ -423,7 +439,9 @@ impl Transcriber for WorkerTranscriber {
 mod tests {
     use super::*;
     use crate::recording::capture::Track;
+    use crate::recording::transcribe::protocol::TranscriptLine;
     use crate::recording::transcribe::stream::tests::FakeEngine;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn config() -> WorkerConfig {
         WorkerConfig {
@@ -488,6 +506,7 @@ mod tests {
                 start_ms,
                 continues: false,
                 ends_run: true,
+                carry_in: None,
             })
         };
         let input = frames(&[config_frame(), segment(0), segment(60_000)]);
@@ -502,11 +521,94 @@ mod tests {
         let replies = responses(&out);
         assert_eq!(replies.len(), 3);
         assert_eq!(replies[0], Response::Ready);
-        let Response::Lines { lines } = &replies[2] else {
+        let Response::Lines { lines, held } = &replies[2] else {
             panic!("{replies:?}");
         };
         assert_eq!(lines.len(), 1);
         assert_eq!((lines[0].start_ms, lines[0].end_ms), (60_250, 60_500));
+        assert_eq!(held, &None, "the run ended");
+    }
+
+    /// One second of a run, `index` seconds in: speech over its last half
+    /// when `ends_in_speech`, and over its first half when `starts_in_speech`.
+    fn run_wav(dir: &std::path::Path, index: u32, starts: bool, ends: bool) -> PathBuf {
+        let path = dir.join(format!("mic-{index:04}.wav"));
+        let mut wav = crate::recording::segments::WavWriter::create(&path).unwrap();
+        let mut samples = vec![0i16; 16_000];
+        if starts {
+            samples[..8_000].fill(20_000);
+        }
+        if ends {
+            samples[8_000..].fill(20_000);
+        }
+        wav.write(&samples).unwrap();
+        wav.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn a_second_worker_takes_over_the_audio_the_first_held_back() {
+        let dir = crate::recording::test_support::TempDir::new();
+        let first = run_wav(dir.path(), 1, false, true);
+        let second = run_wav(dir.path(), 2, true, false);
+        let request = |path: &PathBuf, start_ms, continues, ends_run| SegmentRequest {
+            track: Track::Mic,
+            wav_path: path.clone(),
+            start_ms,
+            continues,
+            ends_run,
+            carry_in: None,
+        };
+        // The first worker transcribes the first file and is stopped.
+        let mut out = Vec::new();
+        let input = frames(&[
+            config_frame(),
+            Request::Segment(request(&first, 0, false, false)),
+        ]);
+        assert_eq!(
+            run_worker_io(&mut input.as_slice(), &mut out, fake_engine),
+            0
+        );
+        let replies = responses(&out);
+        let Response::Lines { lines, held } = &replies[1] else {
+            panic!("{replies:?}");
+        };
+        assert!(lines.is_empty(), "the speech at the end is held: {lines:?}");
+        let held = held.clone().expect("held audio is reported");
+        assert_eq!(held.pieces[0].wav_path, first);
+
+        // The next worker gets it back with the next file.
+        let mut carried = request(&second, 1_000, true, true);
+        carried.carry_in = Some(held);
+        let mut out = Vec::new();
+        let input = frames(&[config_frame(), Request::Segment(carried.clone())]);
+        assert_eq!(
+            run_worker_io(&mut input.as_slice(), &mut out, fake_engine),
+            0
+        );
+        let replies = responses(&out);
+        let Response::Lines { lines, held } = &replies[1] else {
+            panic!("{replies:?}");
+        };
+        let placed: Vec<(u64, u64, &str)> = lines
+            .iter()
+            .map(|l| (l.start_ms, l.end_ms, l.text.as_str()))
+            .collect();
+        assert_eq!(
+            placed,
+            [(500, 1_500, "speech 0.61035156 for 1000 ms")],
+            "one sentence across both workers"
+        );
+        assert_eq!(held, &None);
+
+        // Held audio that isn't in its file stops the worker.
+        let mut outside = carried;
+        outside.carry_in.as_mut().unwrap().pieces[0].from_sample = 16_000;
+        let input = frames(&[config_frame(), Request::Segment(outside)]);
+        assert_eq!(
+            run_worker_io(&mut input.as_slice(), &mut Vec::new(), fake_engine),
+            EXIT_AUDIO
+        );
     }
 
     #[test]
@@ -518,6 +620,7 @@ mod tests {
             start_ms: 0,
             continues: false,
             ends_run: true,
+            carry_in: None,
         });
         let run =
             |input: Vec<u8>| run_worker_io(&mut input.as_slice(), &mut Vec::new(), fake_engine);
@@ -621,6 +724,7 @@ mod tests {
                 start_ms: 0,
                 continues: false,
                 ends_run: true,
+                carry_in: None,
             }
         }
 
@@ -655,6 +759,7 @@ mod tests {
                     Response::Ready,
                     Response::Lines {
                         lines: vec![line(Track::Mic)],
+                        held: None,
                     },
                 ],
             );
@@ -666,7 +771,10 @@ mod tests {
             let mut session = spawn(&shell(&script), limits()).unwrap();
             assert_eq!(
                 session.transcribe(&request(), 60_000),
-                Ok(vec![line(Track::Mic)])
+                Ok(Transcribed {
+                    lines: vec![line(Track::Mic)],
+                    held: None
+                })
             );
         }
 
@@ -680,7 +788,13 @@ mod tests {
             junk.extend_from_slice(b"junk!");
             let junk = s.raw_file("junk", &junk);
             let oversized = s.raw_file("oversized", &u32::MAX.to_be_bytes());
-            let lines_first = s.frames_file("lines-first", &[Response::Lines { lines: vec![] }]);
+            let lines_first = s.frames_file(
+                "lines-first",
+                &[Response::Lines {
+                    lines: vec![],
+                    held: None,
+                }],
+            );
             for (name, file) in [
                 ("truncated", truncated),
                 ("junk", junk),
@@ -701,6 +815,7 @@ mod tests {
                     Response::Ready,
                     Response::Lines {
                         lines: vec![line(Track::System)],
+                        held: None,
                     },
                 ],
             );
@@ -824,6 +939,54 @@ mod tests {
                 Err(JobError::Cancelled)
             );
             assert!(started.elapsed() < Duration::from_secs(5));
+        }
+
+        /// Stops with [`JobError::Interrupted`] once `pressed` is set, as
+        /// the scheduler's check does under memory pressure.
+        struct Interrupt(AtomicBool);
+        impl StopCheck for Interrupt {
+            fn stop_reason(&self) -> Option<JobError> {
+                self.0
+                    .load(Ordering::SeqCst)
+                    .then_some(JobError::Interrupted)
+            }
+        }
+
+        #[test]
+        fn an_interruption_stops_a_request_or_a_load_and_kills_the_worker() {
+            let s = StandIn::new();
+            let ready = s.frames_file("ready", &[Response::Ready]);
+            let script = format!(
+                "echo $$ > '{}'; cat '{}'; exec sleep 30",
+                s.pid_file().display(),
+                ready.display()
+            );
+            let stop = Arc::new(Interrupt(AtomicBool::new(false)));
+            let mut session =
+                WorkerSession::spawn(&shell(&script), &config(), limits(), stop.clone()).unwrap();
+            let pid = s.pid();
+            let flag = stop.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(100));
+                flag.0.store(true, Ordering::SeqCst);
+            });
+            let started = Instant::now();
+            assert_eq!(
+                session.transcribe(&request(), 1_000),
+                Err(JobError::Interrupted)
+            );
+            assert!(started.elapsed() < Duration::from_secs(5));
+            drop(session);
+            assert!(!process_exists(pid));
+
+            // While the model loads.
+            let script = format!("echo $$ > '{}'; exec sleep 30", s.pid_file().display());
+            let stopped = Arc::new(Interrupt(AtomicBool::new(true)));
+            assert_eq!(
+                WorkerSession::spawn(&shell(&script), &config(), limits(), stopped).err(),
+                Some(JobError::Interrupted)
+            );
+            assert!(!process_exists(s.pid()));
         }
 
         #[test]

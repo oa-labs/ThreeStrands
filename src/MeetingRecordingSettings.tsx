@@ -82,7 +82,7 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
   const [message, setMessage] = useState<string | null>(null);
   const [deletingModel, setDeletingModel] = useState<TranscriptionModelName | null>(null);
   const models = useTranscriptionModels();
-  const ids = { record: useId(), keep: useId(), remind: useId(), usage: useId(), model: useId() };
+  const ids = { record: useId(), keep: useId(), remind: useId(), usage: useId(), model: useId(), during: useId() };
 
   const loadUsage = useCallback(async () => setUsage(await mailClient.recordingsUsage()), []);
   useEffect(() => {
@@ -210,6 +210,15 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
           The model file is removed from this Mac. Recordings wait to be transcribed until a model is downloaded again.
         </InlineConfirm>
       ) : null}
+
+      <label className="settings-switch">
+        <span>Transcribe During Meetings</span>
+        <input type="checkbox" checked={settings?.transcribeDuringMeetings ?? true} disabled={!settings} aria-describedby={ids.during}
+          onChange={(event) => void change({ transcribeDuringMeetings: event.target.checked })} />
+      </label>
+      <p className="settings-hint" id={ids.during}>
+        Transcribes in the background while a meeting is recorded, so the transcript is ready soon after you stop. Turn off to keep your Mac's memory and processor free during meetings.
+      </p>
 
       <label className="settings-switch">
         <span>Remind Me to Tell Participants</span>

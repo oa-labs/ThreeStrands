@@ -97,7 +97,7 @@ describe("native account requests", () => {
   it("reads and saves device-local recording settings through their own commands", async () => {
     await client.recordingSettings();
     expect(invoke).toHaveBeenLastCalledWith("recording_settings", undefined);
-    const settings = { recordMeetings: true, transcriptionModel: "accurate" as const, keepAudio: "days30" as const, offerToRecord: true, remindToTell: false, summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true };
+    const settings = { recordMeetings: true, transcriptionModel: "accurate" as const, transcribeDuringMeetings: false, keepAudio: "days30" as const, offerToRecord: true, remindToTell: false, summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true };
     await client.setRecordingSettings(settings);
     expect(invoke).toHaveBeenLastCalledWith("set_recording_settings", { settings });
   });
