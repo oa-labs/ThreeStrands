@@ -1,2 +1,18 @@
 [target.'cfg(target_os = "macos")']
 runner = "scripts/codesign-dev-runner.sh"
+
+# Build settings for whisper.cpp, which whisper-rs-sys compiles with CMake and
+# hands every GGML_* and CMAKE_* variable. The repository root's
+# .cargo/config.toml repeats them for cargo commands run from there.
+[env]
+# GGML_NATIVE defaults to ON, which compiles for the build machine's own CPU
+# (-mcpu=native, -march=native) and can crash on other CPUs of the same
+# architecture. OFF builds for the architecture's baseline, so one build runs
+# on every Mac it targets.
+GGML_NATIVE = "OFF"
+# whisper.cpp uses std::filesystem, which macOS has from 10.15. Release
+# builds pass Tauri's default minimumSystemVersion (10.13) down as
+# MACOSX_DEPLOYMENT_TARGET, and whisper.cpp does not compile for 10.13. The
+# app already needs newer macOS than either to launch (QuickLookThumbnailing,
+# Core Audio process taps), so this raises nothing in practice.
+CMAKE_OSX_DEPLOYMENT_TARGET = "10.15"

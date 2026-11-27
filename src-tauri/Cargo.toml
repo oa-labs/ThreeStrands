@@ -158,6 +158,12 @@ objc2-quick-look-thumbnailing = { version = "0.3", default-features = false, fea
 # so no cpal, rubato, or hound.
 objc2-core-audio = { version = "0.3", default-features = false, features = ["std", "AudioHardware", "objc2", "objc2-foundation", "objc2-core-audio-types"] }
 objc2-core-audio-types = { version = "0.3", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
+# Meeting transcription: whisper.cpp (with Silero voice activity detection)
+# through whisper-rs, run only inside the transcription worker process
+# (recording/transcribe/worker.rs). macOS-only like recording, so Windows,
+# Linux, and Android builds need no cmake or libclang. `.cargo/config.toml`
+# sets whisper.cpp's build options (GGML_NATIVE=OFF, the deployment target).
+whisper-rs = { version = "0.16", default-features = false, features = ["metal"] }
 
 # Files previews on Windows: the Shell thumbnail provider (IShellItemImageFactory,
 # the Explorer thumbnail pipeline — the same IThumbnailProvider extensions Quick

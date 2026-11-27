@@ -5,8 +5,8 @@
 //! Nothing here is sent anywhere. The model URLs are fetched only when the
 //! user chooses to download a model, and each download is checked against its
 //! pinned size and SHA-256 before it is used.
-// Offers (stage 5), transcription (stage 3), and the recap (stage 4) read
-// the limits here that nothing uses yet.
+// Offers (stage 5) and the recap (stage 4) read the limits here that
+// nothing uses yet.
 #![allow(dead_code)]
 
 use std::time::Duration;
@@ -80,8 +80,16 @@ pub const VAD_PAD_AFTER_MS: u32 = 400;
 /// Shortest span treated as speech, in milliseconds.
 pub const VAD_MIN_SPEECH_MS: u32 = 250;
 /// Longest single speech span handed to whisper, in milliseconds; longer
-/// spans are split.
+/// spans are split. Padding included, so whisper never sees more than this.
 pub const VAD_MAX_SPAN_MS: u32 = 30_000;
+/// Silence that ends a speech span, in milliseconds. Speech that reaches
+/// within this much of the end of the audio may still be going on, so at a
+/// segment file's end it is carried into the next segment of the run.
+pub const VAD_MIN_SILENCE_MS: u32 = 500;
+/// whisper.cpp derives the continue threshold from the start threshold as
+/// `threshold - 0.15`; [`VAD_CONTINUE_THRESHOLD`] is that value, checked by a
+/// test.
+pub const VAD_CONTINUE_OFFSET: f32 = 0.15;
 
 /// Merging the two tracks' transcripts: a microphone segment whose text
 /// overlaps a system segment by at least this fraction (0 to 1) is dropped
@@ -90,6 +98,111 @@ pub const ECHO_DROP_THRESHOLD: f32 = 0.5;
 /// Slack in milliseconds, either side, when deciding that two segments
 /// overlap in time.
 pub const MERGE_TIME_SLACK_MS: i64 = 1000;
+
+/// Lines dropped from a transcript as whisper hallucinations, compared by
+/// their words (case and punctuation ignored). Whisper produces these from
+/// silence, music, and noise; voice activity detection removes most of the
+/// audio that causes them, and this catches the rest. Text wholly inside
+/// brackets or parentheses ("[BLANK_AUDIO]", "(music)") is dropped too.
+pub const HALLUCINATIONS: &[&str] = &[
+    "Thank you.",
+    "Thanks for watching!",
+    "Thank you for watching.",
+    "Thank you so much for watching.",
+    "Please subscribe.",
+    "Subtitles by the Amara.org community",
+    "you",
+    "[BLANK_AUDIO]",
+];
+
+/// Whisper decoding: beam search width (the spike's accuracy figures used 5).
+pub const WHISPER_BEAM_SIZE: i32 = 5;
+/// Whisper's no-speech probability above which a window is treated as
+/// silence.
+pub const WHISPER_NO_SPEECH_THRESHOLD: f32 = 0.55;
+
+/// The transcription worker: wall-clock time allowed to load the models.
+pub const WORKER_LOAD_TIMEOUT: Duration = Duration::from_secs(120);
+/// The fixed part of the time allowed for one segment request.
+pub const WORKER_REQUEST_BASE_TIMEOUT: Duration = Duration::from_secs(60);
+/// The part that scales with the request's audio: this many seconds of
+/// wall-clock time per second of audio. Measured real-time factors are
+/// 0.04 to 0.32, so 4 leaves room for slow Macs and a busy machine.
+pub const WORKER_REQUEST_TIME_PER_AUDIO: u32 = 4;
+/// Physical footprint the worker may reach before it is killed. The spike
+/// measured 1.3 GB peak for the Accurate model on the CPU.
+pub const WORKER_MEMORY_BYTES: u64 = 3 * 1024 * 1024 * 1024;
+/// Largest frame either side of the worker protocol may send. One segment's
+/// lines are a few kilobytes.
+pub const WORKER_MAX_FRAME_BYTES: usize = 1024 * 1024;
+/// Largest segment file the worker reads: twice a full segment, so a
+/// damaged or foreign file can't make it read without bound.
+pub const WORKER_MAX_SEGMENT_FILE_BYTES: u64 =
+    44 + 2 * SEGMENT_LENGTH.as_secs() * OUTPUT_SAMPLE_RATE as u64 * 2;
+/// Scheduling priority (nice value) of the worker, so a transcription never
+/// competes with the call it records.
+pub const WORKER_NICE: i32 = 10;
+/// How often the transcription thread looks for work without being woken
+/// (new closed segments during a recording, a change of power source).
+pub const TRANSCRIPTION_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// Most whisper threads, whatever the core count.
+pub const WORKER_MAX_THREADS: usize = 8;
+
+/// Wall-clock time allowed for one segment request with this much audio.
+/// The audio carried over from the previous segment is at most one span, so
+/// it is added in.
+pub fn worker_request_timeout(audio_ms: u64) -> Duration {
+    let audio = Duration::from_millis(audio_ms + VAD_MAX_SPAN_MS as u64);
+    WORKER_REQUEST_BASE_TIMEOUT + audio * WORKER_REQUEST_TIME_PER_AUDIO
+}
+
+/// Whether a worker with this physical footprint is over its memory cap.
+pub fn worker_memory_exceeded(footprint_bytes: u64) -> bool {
+    footprint_bytes > WORKER_MEMORY_BYTES
+}
+
+/// Whisper threads for a machine with this many cores: half of them, so the
+/// call and the rest of the Mac stay responsive, at least one and at most
+/// [`WORKER_MAX_THREADS`].
+pub fn transcription_threads(cores: usize) -> usize {
+    (cores / 2).clamp(1, WORKER_MAX_THREADS)
+}
+
+/// Model downloads: redirects followed at most, all over https to
+/// [`model_host_allowed`] hosts.
+pub const MODEL_DOWNLOAD_MAX_REDIRECTS: usize = 5;
+/// Time allowed to connect to the download host.
+pub const MODEL_DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Longest wait for the next bytes of a download before it fails (and can
+/// be resumed).
+pub const MODEL_DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(60);
+/// Shortest time between two download progress events (at most 4 a second).
+pub const MODEL_PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Whether a download may follow its `count`th redirect.
+pub fn redirect_allowed(count: usize) -> bool {
+    count <= MODEL_DOWNLOAD_MAX_REDIRECTS
+}
+
+/// Whether a model may be downloaded from (or redirected to) this host:
+/// Hugging Face, which serves the pinned files and redirects to its own
+/// content hosts. `huggingface.co` and its subdomains, and subdomains of
+/// `hf.co`.
+pub fn model_host_allowed(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    host == "huggingface.co" || host.ends_with(".huggingface.co") || host.ends_with(".hf.co")
+}
+
+/// Whether a download progress event is due this long after the last one.
+pub fn progress_due(since_last: Duration) -> bool {
+    since_last >= MODEL_PROGRESS_INTERVAL
+}
+
+/// Whether a download of `remaining` more bytes leaves the floor recording
+/// needs, [`MIN_FREE_DISK_BYTES`], free.
+pub fn download_fits(free_bytes: u64, remaining: u64) -> bool {
+    free_bytes >= remaining.saturating_add(MIN_FREE_DISK_BYTES)
+}
 
 /// Most transcript text sent in one recap request, in UTF-8 bytes. A starting
 /// point: about a three-hour meeting, well inside current provider context
@@ -218,6 +331,109 @@ mod tests {
             assert!(file.url.ends_with(file.file_name));
             assert!(file.bytes > 0);
         }
+    }
+
+    #[test]
+    fn the_continue_threshold_is_what_whisper_cpp_derives() {
+        assert!((VAD_START_THRESHOLD - VAD_CONTINUE_OFFSET - VAD_CONTINUE_THRESHOLD).abs() < 1e-6);
+        assert!(VAD_PAD_BEFORE_MS + VAD_PAD_AFTER_MS < VAD_MAX_SPAN_MS);
+    }
+
+    #[test]
+    fn request_timeouts_scale_with_audio() {
+        assert_eq!(worker_request_timeout(0), Duration::from_secs(60 + 4 * 30));
+        assert_eq!(
+            worker_request_timeout(60_000),
+            Duration::from_secs(60 + 4 * 90)
+        );
+        assert!(worker_request_timeout(60_001) > worker_request_timeout(60_000));
+    }
+
+    #[test]
+    fn worker_memory_is_checked_below_at_and_above() {
+        assert!(!worker_memory_exceeded(WORKER_MEMORY_BYTES - 1));
+        assert!(!worker_memory_exceeded(WORKER_MEMORY_BYTES));
+        assert!(worker_memory_exceeded(WORKER_MEMORY_BYTES + 1));
+    }
+
+    #[test]
+    fn threads_are_half_the_cores_within_bounds() {
+        assert_eq!(transcription_threads(0), 1);
+        assert_eq!(transcription_threads(1), 1);
+        assert_eq!(transcription_threads(6), 3);
+        assert_eq!(
+            transcription_threads(2 * WORKER_MAX_THREADS - 1),
+            WORKER_MAX_THREADS - 1
+        );
+        assert_eq!(
+            transcription_threads(2 * WORKER_MAX_THREADS),
+            WORKER_MAX_THREADS
+        );
+        assert_eq!(
+            transcription_threads(2 * WORKER_MAX_THREADS + 2),
+            WORKER_MAX_THREADS
+        );
+    }
+
+    #[test]
+    fn redirects_are_capped_below_at_and_above() {
+        assert!(redirect_allowed(MODEL_DOWNLOAD_MAX_REDIRECTS - 1));
+        assert!(redirect_allowed(MODEL_DOWNLOAD_MAX_REDIRECTS));
+        assert!(!redirect_allowed(MODEL_DOWNLOAD_MAX_REDIRECTS + 1));
+    }
+
+    #[test]
+    fn progress_is_throttled_below_at_and_above() {
+        let ms = Duration::from_millis(1);
+        assert!(!progress_due(MODEL_PROGRESS_INTERVAL - ms));
+        assert!(progress_due(MODEL_PROGRESS_INTERVAL));
+        assert!(progress_due(MODEL_PROGRESS_INTERVAL + ms));
+        assert_eq!(MODEL_PROGRESS_INTERVAL * 4, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn downloads_keep_the_disk_floor_below_at_and_above() {
+        let remaining = 190_000_000;
+        assert!(!download_fits(
+            MIN_FREE_DISK_BYTES + remaining - 1,
+            remaining
+        ));
+        assert!(download_fits(MIN_FREE_DISK_BYTES + remaining, remaining));
+        assert!(download_fits(
+            MIN_FREE_DISK_BYTES + remaining + 1,
+            remaining
+        ));
+        assert!(!download_fits(u64::MAX - 1, u64::MAX));
+    }
+
+    #[test]
+    fn only_hugging_face_hosts_serve_models() {
+        for host in [
+            "huggingface.co",
+            "HuggingFace.co",
+            "cdn-lfs.huggingface.co",
+            "cdn-lfs-us-1.hf.co",
+            "cas-bridge.xethub.hf.co",
+            "huggingface.co.",
+        ] {
+            assert!(model_host_allowed(host), "{host}");
+        }
+        for host in [
+            "hf.co",
+            "evilhuggingface.co",
+            "huggingface.co.evil.com",
+            "huggingface.com",
+            "xhf.co",
+            "127.0.0.1",
+            "",
+        ] {
+            assert!(!model_host_allowed(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn segment_files_are_capped_at_twice_a_segment() {
+        assert_eq!(WORKER_MAX_SEGMENT_FILE_BYTES, 44 + 2 * 1_920_000);
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! Meeting recordings: one row per recording with its tracks, plus the
 //! device-local Meeting Recording settings. Nothing here replicates or enters
-//! settings transfer. Transcript segments have their own table (transcription
-//! stage); deleting a recording cascades to tracks and segments.
+//! settings transfer. Transcript lines have their own table,
+//! `meeting_recording_segments`; deleting a recording cascades to tracks and
+//! transcript lines.
 
 use super::{serialization_error, Database, DatabaseError, DbResult};
 use crate::note_entities::NoteReference;
@@ -125,6 +126,24 @@ pub struct MeetingRecording {
     pub state: RecordingState,
     pub error: Option<String>,
     pub tracks: Vec<MeetingRecordingTrack>,
+    /// No audio of this recording exists on disk: deleted (retention or
+    /// Delete Audio), or never saved. The database knows only the first;
+    /// the recording runtime adds the second.
+    pub audio_deleted: bool,
+    /// Whole percent while `transcribing`; set by the recording runtime.
+    pub transcription_percent: Option<u8>,
+    #[serde(skip)]
+    pub audio_dir: String,
+}
+
+/// A transcript line to store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptRow {
+    pub track: Track,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub text: String,
+    pub dropped_as_echo: bool,
 }
 
 /// A recording's audio, as retention and deletion see it.
@@ -177,7 +196,8 @@ fn tracks_of(connection: &Connection, id: &str) -> DbResult<Vec<MeetingRecording
     Ok(tracks)
 }
 
-const RECORDING_COLUMNS: &str = "id,event_ref,title,started_at,ended_at,duration_ms,state,error";
+const RECORDING_COLUMNS: &str =
+    "id,event_ref,title,started_at,ended_at,duration_ms,state,error,audio_deleted_at,audio_dir";
 
 fn read_recording(connection: &Connection, row: &rusqlite::Row<'_>) -> DbResult<MeetingRecording> {
     let id: String = row.get(0)?;
@@ -194,6 +214,9 @@ fn read_recording(connection: &Connection, row: &rusqlite::Row<'_>) -> DbResult<
         state: RecordingState::parse(&state)?,
         error: row.get(7)?,
         tracks: tracks_of(connection, &id)?,
+        audio_deleted: row.get::<_, Option<String>>(8)?.is_some(),
+        transcription_percent: None,
+        audio_dir: row.get(9)?,
         id,
     })
 }
@@ -254,7 +277,6 @@ impl Database {
         })
     }
 
-    #[allow(dead_code)] // The transcription stage moves recordings through states.
     pub fn set_recording_state(
         &self,
         id: &str,
@@ -295,7 +317,6 @@ impl Database {
         })
     }
 
-    #[allow(dead_code)] // Transcription and review look recordings up by ID.
     pub fn recording(&self, id: &str) -> DbResult<Option<MeetingRecording>> {
         self.with_connection(|c| {
             c.query_row(
@@ -401,6 +422,114 @@ impl Database {
                 "UPDATE meeting_recordings SET state='interrupted' WHERE state='recording'",
                 [],
             )?)
+        })
+    }
+
+    /// Startup recovery: a transcription can't still be running in a new
+    /// process, so its recording waits to be transcribed again. Returns how
+    /// many were reset.
+    pub fn reset_transcribing_recordings(&self) -> DbResult<usize> {
+        self.with_connection(|c| {
+            Ok(c.execute(
+                "UPDATE meeting_recordings SET state='recorded' WHERE state='transcribing'",
+                [],
+            )?)
+        })
+    }
+
+    /// Replaces a recording's transcript in one transaction and marks it
+    /// transcribed by `engine` with `model`. `system_first_ms` is where the
+    /// system track's audio starts, when it saved any; it fills in a first
+    /// frame the track didn't record, so speaker labels follow the audio.
+    pub fn save_transcript(
+        &self,
+        id: &str,
+        rows: &[TranscriptRow],
+        engine: &str,
+        model: &str,
+        system_first_ms: Option<i64>,
+    ) -> DbResult<()> {
+        self.with_transaction(|tx| {
+            let changed = tx.execute(
+                "UPDATE meeting_recordings SET state='transcribed',error=NULL,engine=?2,model=?3 WHERE id=?1",
+                params![id, engine, model],
+            )?;
+            if changed == 0 {
+                return Err(DatabaseError::NotFound("Recording"));
+            }
+            tx.execute(
+                "DELETE FROM meeting_recording_segments WHERE recording_id=?1",
+                [id],
+            )?;
+            for (seq, row) in rows.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO meeting_recording_segments
+                        (recording_id,seq,track,start_ms,end_ms,text,dropped_as_echo)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                    params![
+                        id,
+                        seq as i64,
+                        row.track.as_str(),
+                        row.start_ms,
+                        row.end_ms,
+                        row.text,
+                        row.dropped_as_echo
+                    ],
+                )?;
+            }
+            if let Some(first) = system_first_ms {
+                tx.execute(
+                    "UPDATE meeting_recording_tracks SET first_frame_offset_ms=?2
+                     WHERE recording_id=?1 AND track='system' AND first_frame_offset_ms IS NULL",
+                    params![id, first],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// A recording's transcript lines in order, echo included.
+    pub fn transcript_rows(&self, id: &str) -> DbResult<Vec<TranscriptRow>> {
+        self.with_connection(|c| {
+            let mut statement = c.prepare(
+                "SELECT track,start_ms,end_ms,text,dropped_as_echo
+                 FROM meeting_recording_segments WHERE recording_id=?1 ORDER BY seq",
+            )?;
+            let rows = statement.query_map([id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                let (track, start_ms, end_ms, text, dropped_as_echo) = row?;
+                out.push(TranscriptRow {
+                    track: Track::parse(&track)
+                        .ok_or_else(|| DatabaseError::corrupt(format!("Unknown track {track}")))?,
+                    start_ms,
+                    end_ms,
+                    text,
+                    dropped_as_echo,
+                });
+            }
+            Ok(out)
+        })
+    }
+
+    /// The engine and model a recording was transcribed with.
+    #[cfg(test)]
+    pub fn recording_engine(&self, id: &str) -> DbResult<Option<(Option<String>, Option<String>)>> {
+        self.with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT engine,model FROM meeting_recordings WHERE id=?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?)
         })
     }
 
@@ -592,6 +721,139 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 0, "{table}");
         }
+    }
+
+    fn row(track: Track, start_ms: i64, text: &str, echo: bool) -> TranscriptRow {
+        TranscriptRow {
+            track,
+            start_ms,
+            end_ms: start_ms + 1000,
+            text: text.into(),
+            dropped_as_echo: echo,
+        }
+    }
+
+    #[test]
+    fn a_saved_transcript_replaces_the_last_one_and_marks_the_recording() {
+        let database = Database::open_memory();
+        create(&database, "r1", None, "2026-11-27T10:00:00Z");
+        database
+            .set_recording_state("r1", RecordingState::Transcribing, None)
+            .unwrap();
+        database
+            .save_transcript(
+                "r1",
+                &[row(Track::Mic, 0, "Old.", false)],
+                "whisper.cpp",
+                "a.bin",
+                None,
+            )
+            .unwrap();
+        let rows = vec![
+            row(Track::Mic, 0, "Hello.", false),
+            row(Track::System, 500, "Hi there.", false),
+            row(Track::Mic, 600, "Hi there.", true),
+        ];
+        database
+            .save_transcript(
+                "r1",
+                &rows,
+                "whisper.cpp",
+                "ggml-small.en-q5_1.bin",
+                Some(250),
+            )
+            .unwrap();
+        assert_eq!(
+            database.transcript_rows("r1").unwrap(),
+            rows,
+            "in order, echo kept"
+        );
+        let recording = database.recording("r1").unwrap().unwrap();
+        assert_eq!(recording.state, RecordingState::Transcribed);
+        assert_eq!(recording.error, None);
+        assert_eq!(
+            database.recording_engine("r1").unwrap(),
+            Some((
+                Some("whisper.cpp".into()),
+                Some("ggml-small.en-q5_1.bin".into())
+            ))
+        );
+        let system = recording
+            .tracks
+            .iter()
+            .find(|t| t.track == Track::System)
+            .unwrap();
+        assert_eq!(system.first_frame_offset_ms, Some(250));
+        assert!(matches!(
+            database.save_transcript("missing", &rows, "e", "m", None),
+            Err(DatabaseError::NotFound(_))
+        ));
+        assert!(database.transcript_rows("missing").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_first_frame_already_recorded_is_kept() {
+        let database = Database::open_memory();
+        create(&database, "r1", None, "2026-11-27T10:00:00Z");
+        database
+            .update_recording_track(
+                "r1",
+                Track::System,
+                &TrackPatch {
+                    first_frame_offset_ms: Some(5),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        database
+            .save_transcript("r1", &[], "e", "m", Some(900))
+            .unwrap();
+        let recording = database.recording("r1").unwrap().unwrap();
+        let system = recording
+            .tracks
+            .iter()
+            .find(|t| t.track == Track::System)
+            .unwrap();
+        assert_eq!(system.first_frame_offset_ms, Some(5));
+    }
+
+    #[test]
+    fn transcribing_rows_go_back_to_recorded_at_launch() {
+        let database = Database::open_memory();
+        create(&database, "a", None, "2026-11-27T10:00:00Z");
+        create(&database, "b", None, "2026-11-27T11:00:00Z");
+        database
+            .set_recording_state("a", RecordingState::Transcribing, None)
+            .unwrap();
+        database
+            .set_recording_state("b", RecordingState::Transcribed, None)
+            .unwrap();
+        assert_eq!(database.reset_transcribing_recordings().unwrap(), 1);
+        assert_eq!(
+            database.recording("a").unwrap().unwrap().state,
+            RecordingState::Recorded
+        );
+        assert_eq!(
+            database.recording("b").unwrap().unwrap().state,
+            RecordingState::Transcribed
+        );
+    }
+
+    #[test]
+    fn listed_recordings_say_whether_their_audio_was_deleted() {
+        let database = Database::open_memory();
+        create(&database, "r1", Some(&event("e1")), "2026-11-27T10:00:00Z");
+        let listed = &database.list_recordings(&event("e1")).unwrap()[0];
+        assert!(!listed.audio_deleted);
+        assert_eq!(listed.transcription_percent, None);
+        let json = serde_json::to_value(listed).unwrap();
+        assert_eq!(json["audioDeleted"], false);
+        assert_eq!(json["transcriptionPercent"], serde_json::Value::Null);
+        assert!(json.get("audioDir").is_none(), "the path stays native");
+        database
+            .mark_recording_audio_deleted("r1", "2026-11-28T10:00:00Z")
+            .unwrap();
+        assert!(database.list_recordings(&event("e1")).unwrap()[0].audio_deleted);
     }
 
     #[test]

@@ -6,17 +6,26 @@
 //! Every method that can change the recording ends by publishing: the
 //! `recording-state` event goes out when the status changed (anything but
 //! the elapsed time), `recordings-changed` when a recording was created,
-//! finished, interrupted, or deleted, and the tray is refreshed. Publishing
-//! happens after the service lock is released, so a listener can call back
-//! in.
+//! finished, interrupted, deleted, or moved through transcription, and the
+//! tray is refreshed. Publishing happens after the service lock is
+//! released, so a listener can call back in.
+//!
+//! Transcription (stage 3) lives here too: the model store, and the
+//! scheduler whose step runs on its own thread
+//! ([`super::transcribe::scheduler`]).
 
 use super::capture::{CaptureBackend, SystemAudioSupport, Track};
 use super::retention;
 use super::segments;
-use super::settings::RecordingSettings;
+use super::settings::{RecordingSettings, TranscriptionModelChoice};
+use super::transcribe::models::{ModelStore, TranscriptionModelStatus};
+use super::transcribe::plan;
+use super::transcribe::power::PowerSource;
+use super::transcribe::scheduler::{Scheduler, TrayTranscription};
+use super::transcribe::Transcriber;
 use super::{policy, DiskProbe, RecordingPhase, RecordingService, RecordingStatus};
 use crate::clock::Clock;
-use crate::db::recordings::RecordingState;
+use crate::db::recordings::{MeetingRecording, RecordingState};
 use crate::db::Database;
 use crate::note_entities::NoteReference;
 use serde::Serialize;
@@ -30,8 +39,51 @@ pub trait RecordingNotifier: Send + Sync {
     fn state_changed(&self, status: &RecordingStatus);
     fn recordings_changed(&self, recording_id: &str);
     /// Called after every published change and every tick while a
-    /// recording is active, so the tray's elapsed time stays current.
-    fn refresh_tray(&self, status: &RecordingStatus, settings: &RecordingSettings, supported: bool);
+    /// recording is active, so the tray's elapsed time stays current, and
+    /// whenever a transcription after Stop changes.
+    fn refresh_tray(
+        &self,
+        status: &RecordingStatus,
+        settings: &RecordingSettings,
+        transcribing: Option<&TrayTranscription>,
+        supported: bool,
+    );
+    /// A transcription's whole percent changed.
+    fn transcription_progress(&self, recording_id: &str, percent: u8);
+    /// A transcription model's state or download progress changed.
+    fn models_changed(&self, statuses: &[TranscriptionModelStatus]);
+}
+
+/// What transcription needs: the worker, the power source, and the models.
+pub struct TranscriptionParts {
+    pub transcriber: Arc<dyn Transcriber>,
+    pub power: Arc<dyn PowerSource>,
+    pub models: Arc<ModelStore>,
+}
+
+/// A transcript as the app shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingTranscript {
+    pub recording_id: String,
+    pub speaker_labels: bool,
+    pub lines: Vec<RecordingTranscriptLine>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TranscriptSpeaker {
+    You,
+    Others,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingTranscriptLine {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub speaker: Option<TranscriptSpeaker>,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -49,6 +101,9 @@ pub struct RecordingsUsage {
 }
 
 const ACTIVE_REFUSAL: &str = "This recording is still in progress. Stop it first.";
+const TRANSCRIBING_REFUSAL: &str =
+    "Wait for the transcription to finish, or delete the whole recording.";
+const UNSUPPORTED_TRANSCRIPTION: &str = "Transcription isn't available on this platform yet.";
 
 fn rfc3339(time: SystemTime) -> String {
     chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -56,11 +111,12 @@ fn rfc3339(time: SystemTime) -> String {
 
 pub struct RecordingRuntime {
     service: Mutex<RecordingService>,
-    database: Arc<Database>,
+    pub(super) database: Arc<Database>,
     supported: bool,
     audio_root: PathBuf,
     clock: Arc<dyn Clock + Send + Sync>,
-    notifier: Arc<dyn RecordingNotifier>,
+    pub(super) notifier: Arc<dyn RecordingNotifier>,
+    pub(super) scheduler: Arc<Scheduler>,
     settings: Mutex<RecordingSettings>,
     /// The last status published, with its elapsed time zeroed.
     published: Mutex<Option<RecordingStatus>>,
@@ -81,12 +137,31 @@ impl RecordingRuntime {
         disk: Arc<dyn DiskProbe>,
         audio_root: PathBuf,
         notifier: Arc<dyn RecordingNotifier>,
+        transcription: TranscriptionParts,
     ) -> Self {
         let settings = database.recording_settings().unwrap_or_else(|error| {
             log::warn!(target: "recording", "reading recording settings: {error}");
             RecordingSettings::default()
         });
         let supported = backend.supported();
+        let scheduler = Arc::new(Scheduler::new(
+            transcription.transcriber,
+            transcription.power,
+            transcription.models.clone(),
+        ));
+        // A model becoming ready can start waiting recordings.
+        let listener_notifier = notifier.clone();
+        let listener_scheduler = Arc::downgrade(&scheduler);
+        transcription
+            .models
+            .set_listener(Arc::new(move |statuses, ready| {
+                listener_notifier.models_changed(statuses);
+                if ready.is_some() {
+                    if let Some(scheduler) = listener_scheduler.upgrade() {
+                        scheduler.wake();
+                    }
+                }
+            }));
         Self {
             service: Mutex::new(RecordingService::new(
                 database.clone(),
@@ -100,6 +175,7 @@ impl RecordingRuntime {
             audio_root,
             clock,
             notifier,
+            scheduler,
             settings: Mutex::new(settings),
             published: Mutex::new(None),
             last_sweep: Mutex::new(None),
@@ -131,7 +207,7 @@ impl RecordingRuntime {
         lock(&self.service).status().state != RecordingPhase::Idle
     }
 
-    fn active_id(&self) -> Option<String> {
+    pub(super) fn active_id(&self) -> Option<String> {
         lock(&self.service).status().recording_id
     }
 
@@ -150,9 +226,23 @@ impl RecordingRuntime {
             }
         }
         if changed || status.state != RecordingPhase::Idle {
-            self.notifier
-                .refresh_tray(&status, &self.settings(), self.supported);
+            self.notifier.refresh_tray(
+                &status,
+                &self.settings(),
+                self.scheduler.tray().as_ref(),
+                self.supported,
+            );
         }
+    }
+
+    /// Refreshes the tray outside a publish (transcription progress).
+    pub(super) fn refresh_tray_now(&self) {
+        self.notifier.refresh_tray(
+            &self.status(),
+            &self.settings(),
+            self.scheduler.tray().as_ref(),
+            self.supported,
+        );
     }
 
     pub fn start(
@@ -195,6 +285,8 @@ impl RecordingRuntime {
     pub fn stop(&self) -> Result<RecordingStatus, String> {
         let result = lock(&self.service).stop();
         self.publish();
+        // The stopped recording, or what it was waiting behind, can go on.
+        self.scheduler.wake();
         result
     }
 
@@ -227,11 +319,12 @@ impl RecordingRuntime {
             .map_err(String::from)?;
         let keep_changed = lock(&self.settings).keep_audio != settings.keep_audio;
         *lock(&self.settings) = settings.clone();
-        self.notifier
-            .refresh_tray(&self.status(), &settings, self.supported);
+        self.refresh_tray_now();
         if keep_changed {
             self.sweep();
         }
+        // Another model may be chosen, and ready.
+        self.scheduler.wake();
         Ok(())
     }
 
@@ -277,6 +370,10 @@ impl RecordingRuntime {
         if let Err(error) = self.database.mark_interrupted_recordings() {
             log::warn!(target: "recording", "marking interrupted: {error}");
         }
+        // A transcription ended with the process that ran it; start over.
+        if let Err(error) = self.database.reset_transcribing_recordings() {
+            log::warn!(target: "recording", "resetting transcriptions: {error}");
+        }
         recovered
     }
 
@@ -294,9 +391,13 @@ impl RecordingRuntime {
             }
         };
         let active = self.active_id();
+        let transcribing = self.scheduler.current().map(|job| job.recording_id);
         let mut deleted = 0;
         for row in rows {
-            if Some(&row.id) == active.as_ref() || !retention::audio_expired(keep, &row, now) {
+            let busy = Some(&row.id) == active.as_ref()
+                || Some(&row.id) == transcribing.as_ref()
+                || row.state == RecordingState::Transcribing;
+            if busy || !retention::audio_expired(keep, &row, now) {
                 continue;
             }
             if self.remove_audio(&row).is_ok() {
@@ -324,6 +425,7 @@ impl RecordingRuntime {
 
     pub fn delete_recording(&self, id: &str) -> Result<(), String> {
         self.refuse_active(id)?;
+        self.scheduler.cancel(id);
         let row = self
             .database
             .recording_audio_of(id)
@@ -338,6 +440,13 @@ impl RecordingRuntime {
 
     pub fn delete_recording_audio(&self, id: &str) -> Result<(), String> {
         self.refuse_active(id)?;
+        if self
+            .scheduler
+            .current()
+            .is_some_and(|job| job.recording_id == id)
+        {
+            return Err(TRANSCRIBING_REFUSAL.into());
+        }
         let row = self
             .database
             .recording_audio_of(id)
@@ -361,13 +470,18 @@ impl RecordingRuntime {
         })
     }
 
-    /// Deletes every recording's audio except the one in progress.
+    /// Deletes every recording's audio except the one in progress and the
+    /// one being transcribed.
     pub fn delete_all_audio(&self) -> Result<(), String> {
         let active = self.active_id();
+        let transcribing = self.scheduler.current().map(|job| job.recording_id);
         let rows = self.database.recording_audio().map_err(String::from)?;
         let mut first_error = None;
         for row in rows {
-            if Some(&row.id) == active.as_ref() || row.audio_deleted_at.is_some() {
+            if Some(&row.id) == active.as_ref()
+                || Some(&row.id) == transcribing.as_ref()
+                || row.audio_deleted_at.is_some()
+            {
                 continue;
             }
             match self.remove_audio(&row) {
@@ -389,6 +503,7 @@ impl RecordingRuntime {
             if Some(&row.id) == active.as_ref() {
                 continue;
             }
+            self.scheduler.cancel(&row.id);
             let removed = retention::delete_audio_dir(&self.audio_root, &row)
                 .map_err(|error| format!("Couldn't delete the recording's audio: {error}"))
                 .and_then(|()| {
@@ -405,6 +520,155 @@ impl RecordingRuntime {
             }
         }
         first_error.map_or(Ok(()), Err)
+    }
+
+    /// Whether a recording has no audio on disk: deleted, or never saved.
+    fn audio_missing(recording: &MeetingRecording) -> bool {
+        recording.audio_deleted
+            || (recording.state != RecordingState::Recording
+                && Track::ALL.iter().all(|&track| {
+                    segments::saved_track(Path::new(&recording.audio_dir), track).audio_ms == 0
+                }))
+    }
+
+    /// An event occurrence's recordings, newest first, with what only the
+    /// runtime knows: missing audio and transcription progress.
+    pub fn list_recordings(&self, event: &NoteReference) -> Result<Vec<MeetingRecording>, String> {
+        let mut recordings = self.database.list_recordings(event).map_err(String::from)?;
+        for recording in &mut recordings {
+            self.annotate(recording);
+        }
+        Ok(recordings)
+    }
+
+    /// Fills in a listed recording's missing audio and progress.
+    pub(super) fn annotate(&self, recording: &mut MeetingRecording) {
+        recording.audio_deleted = Self::audio_missing(recording);
+        if recording.state == RecordingState::Transcribing {
+            recording.transcription_percent = self
+                .scheduler
+                .current()
+                .filter(|job| job.recording_id == recording.id)
+                .and_then(|job| job.percent)
+                .or(Some(0));
+        }
+    }
+
+    fn refuse_unsupported(&self) -> Result<(), String> {
+        if self.supported && cfg!(target_os = "macos") {
+            Ok(())
+        } else {
+            Err(UNSUPPORTED_TRANSCRIPTION.into())
+        }
+    }
+
+    /// Queues a recording for transcription again (Retry), or nudges one
+    /// already waiting.
+    pub fn transcribe_recording(&self, id: &str) -> Result<(), String> {
+        self.refuse_unsupported()?;
+        let recording = self
+            .database
+            .recording(id)
+            .map_err(String::from)?
+            .ok_or("This recording no longer exists.")?;
+        match recording.state {
+            RecordingState::Recorded | RecordingState::Interrupted | RecordingState::Failed => {}
+            RecordingState::Recording => return Err(ACTIVE_REFUSAL.into()),
+            RecordingState::Transcribing => {
+                return Err("This recording is already being transcribed.".into())
+            }
+            RecordingState::Transcribed => {
+                return Err("This recording is already transcribed.".into())
+            }
+        }
+        if recording.audio_deleted || plan::plan(Path::new(&recording.audio_dir), true).is_empty() {
+            return Err("This recording has no audio to transcribe.".into());
+        }
+        if recording.state == RecordingState::Failed {
+            self.database
+                .set_recording_state(id, RecordingState::Recorded, None)
+                .map_err(String::from)?;
+            self.notifier.recordings_changed(id);
+        }
+        self.scheduler.wake();
+        Ok(())
+    }
+
+    /// A transcribed recording's transcript, in time order, without the
+    /// lines dropped as echo.
+    pub fn recording_transcript(&self, id: &str) -> Result<RecordingTranscript, String> {
+        let recording = self
+            .database
+            .recording(id)
+            .map_err(String::from)?
+            .ok_or("This recording no longer exists.")?;
+        if recording.state != RecordingState::Transcribed {
+            return Err("This recording hasn't been transcribed yet.".into());
+        }
+        let speaker_labels = recording
+            .tracks
+            .iter()
+            .any(|track| track.track == Track::System && track.first_frame_offset_ms.is_some());
+        let lines = self
+            .database
+            .transcript_rows(id)
+            .map_err(String::from)?
+            .into_iter()
+            .filter(|row| !row.dropped_as_echo)
+            .map(|row| RecordingTranscriptLine {
+                start_ms: row.start_ms,
+                end_ms: row.end_ms,
+                speaker: speaker_labels.then_some(match row.track {
+                    Track::Mic => TranscriptSpeaker::You,
+                    Track::System => TranscriptSpeaker::Others,
+                }),
+                text: row.text,
+            })
+            .collect();
+        Ok(RecordingTranscript {
+            recording_id: id.to_string(),
+            speaker_labels,
+            lines,
+        })
+    }
+
+    pub fn transcription_models(&self) -> Result<Vec<TranscriptionModelStatus>, String> {
+        self.refuse_unsupported()?;
+        Ok(self.scheduler.models.statuses())
+    }
+
+    /// Starts a model download in the background. Returns the download's
+    /// thread so tests can wait for it.
+    pub fn download_transcription_model(
+        &self,
+        model: TranscriptionModelChoice,
+    ) -> Result<std::thread::JoinHandle<()>, String> {
+        self.refuse_unsupported()?;
+        self.scheduler.models.start_download(model)
+    }
+
+    pub fn cancel_transcription_model_download(
+        &self,
+        model: TranscriptionModelChoice,
+    ) -> Result<(), String> {
+        self.refuse_unsupported()?;
+        self.scheduler.models.cancel_download(model);
+        Ok(())
+    }
+
+    pub fn delete_transcription_model(
+        &self,
+        model: TranscriptionModelChoice,
+    ) -> Result<(), String> {
+        self.refuse_unsupported()?;
+        self.scheduler.check_model_unused(model)?;
+        self.scheduler.models.delete(model)
+    }
+
+    /// Stops a running transcription (the app is quitting); its recording
+    /// is transcribed again at the next launch.
+    pub fn cancel_transcription(&self) {
+        self.scheduler.cancel_all();
     }
 }
 
@@ -451,12 +715,20 @@ mod tests {
                 .unwrap()
                 .push(Call::Changed(recording_id.into()));
         }
-        fn refresh_tray(&self, status: &RecordingStatus, settings: &RecordingSettings, _: bool) {
+        fn refresh_tray(
+            &self,
+            status: &RecordingStatus,
+            settings: &RecordingSettings,
+            _: Option<&TrayTranscription>,
+            _: bool,
+        ) {
             self.0
                 .lock()
                 .unwrap()
                 .push(Call::Tray(status.state, settings.record_meetings));
         }
+        fn transcription_progress(&self, _: &str, _: u8) {}
+        fn models_changed(&self, _: &[TranscriptionModelStatus]) {}
     }
 
     impl Recorder {
@@ -495,6 +767,7 @@ mod tests {
                 Arc::new(PlentyOfDisk(AtomicU64::new(u64::MAX))),
                 root.path().to_path_buf(),
                 calls.clone(),
+                crate::recording::test_support::idle_transcription(root.path()),
             );
             Self {
                 runtime,
@@ -678,6 +951,7 @@ mod tests {
             Arc::new(PlentyOfDisk(AtomicU64::new(u64::MAX))),
             root.path().to_path_buf(),
             Arc::new(Recorder::default()),
+            crate::recording::test_support::idle_transcription(root.path()),
         );
         assert_eq!(
             runtime.capabilities(),

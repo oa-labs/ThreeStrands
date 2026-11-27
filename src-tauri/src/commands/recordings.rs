@@ -11,8 +11,10 @@ use crate::db::recordings::MeetingRecording;
 use crate::note_entities::NoteReference;
 use crate::recording::capture::SystemAudioSupport;
 use crate::recording::permissions::{self, RecordingPermissions};
+use crate::recording::runtime::RecordingTranscript;
 use crate::recording::runtime::{RecordingCapabilities, RecordingsUsage};
-use crate::recording::settings::RecordingSettings;
+use crate::recording::settings::{RecordingSettings, TranscriptionModelChoice};
+use crate::recording::transcribe::models::TranscriptionModelStatus;
 use crate::recording::RecordingStatus;
 use crate::{run_database_task, AppResult, AppState};
 
@@ -77,8 +79,8 @@ pub(crate) async fn list_recordings(
     event_ref: NoteReference,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<MeetingRecording>> {
-    let database = state.database.clone();
-    run_database_task(move || database.list_recordings(&event_ref)).await
+    let runtime = state.recording.clone();
+    run_database_task(move || runtime.list_recordings(&event_ref)).await
 }
 
 #[tauri::command]
@@ -139,4 +141,56 @@ pub(crate) async fn recording_confirm_quit(
     .await?;
     let _ = app.emit("compose-before-exit", ());
     Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn transcription_models(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<TranscriptionModelStatus>> {
+    let runtime = state.recording.clone();
+    run_database_task(move || runtime.transcription_models()).await
+}
+
+/// Starts the download in the background and returns.
+#[tauri::command]
+pub(crate) async fn download_transcription_model(
+    model: TranscriptionModelChoice,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let runtime = state.recording.clone();
+    run_database_task(move || runtime.download_transcription_model(model).map(drop)).await
+}
+
+#[tauri::command]
+pub(crate) async fn cancel_transcription_model_download(
+    model: TranscriptionModelChoice,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let runtime = state.recording.clone();
+    run_database_task(move || runtime.cancel_transcription_model_download(model)).await
+}
+
+#[tauri::command]
+pub(crate) async fn delete_transcription_model(
+    model: TranscriptionModelChoice,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let runtime = state.recording.clone();
+    run_database_task(move || runtime.delete_transcription_model(model)).await
+}
+
+/// Queues a recording for transcription (Retry).
+#[tauri::command]
+pub(crate) async fn transcribe_recording(id: String, state: State<'_, AppState>) -> AppResult<()> {
+    let runtime = state.recording.clone();
+    run_database_task(move || runtime.transcribe_recording(&id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn recording_transcript(
+    id: String,
+    state: State<'_, AppState>,
+) -> AppResult<RecordingTranscript> {
+    let runtime = state.recording.clone();
+    run_database_task(move || runtime.recording_transcript(&id)).await
 }

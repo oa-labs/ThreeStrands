@@ -18,6 +18,7 @@ pub mod segments;
 pub mod settings;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod transcribe;
 
 use crate::clock::Clock;
 use crate::db::recordings::{NewRecording, RecordingState, TrackPatch, TrackState};
