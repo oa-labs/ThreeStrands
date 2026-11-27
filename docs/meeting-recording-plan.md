@@ -2,7 +2,7 @@
 
 **Status:** In progress. Stage 0 (the spike) ran in the VM on 2026-11-26; see
 [the findings](meeting-recording-spike-findings.md). Its host
-measurements are still open. Stage 1 started 2026-11-27. Stages 1 to 3 are
+measurements are still open. Stage 1 started 2026-11-27. Stages 1 to 5 are
 built.
 **Baseline:** 0.211.0, reviewed 2026-11-26.
 **Builds on:** [Meeting preparation and follow-through](meeting-preparation-design.md)
@@ -78,6 +78,18 @@ Settled by the developer on 2026-11-27:
 7. **Stage 5 offers cover both scheduled calendar meetings and unscheduled
    calls** from known conferencing apps (Zoom, Slack, Teams, FaceTime, etc.),
    while still never starting or stopping automatically.
+8. **Stage 8 cloud transcription starts with OpenRouter**
+   (`POST /api/v1/audio/transcriptions`, featuring Microsoft
+   `microsoft/mai-transcribe-2` alongside other configured OpenAI-compatible
+   `/audio/transcriptions` providers), with optional remote-track diarization
+   and per-recording **Re-transcribe with Cloud** escalation rather than an
+   automatic LLM-judged fallback loop. Direct Azure Speech Fast Transcription
+   is deferred until needed.
+9. **Custom transcription vocabulary is a user-reviewed list**, optionally
+   seeded via a **Suggest from Sent Mail** action that scans local Sent mail
+   for recurring domain terms, acronyms, and proper nouns. Users review and
+   approve every term before it is saved or sent to local engines or Stage 8
+   cloud biasing.
 
 ## User experience
 
@@ -104,6 +116,20 @@ A new settings page, off by default:
   the first ~30 s of speech per recording and pins it for the rest of the job)
   or an explicit language choice. Whisper **Fast** (`small.en`) is
   English-only.
+- **Custom Vocabulary**: a user-reviewed list of domain terms, acronyms, and
+  proper nouns (capped in `policy.rs`) used to bias Whisper (`initial_prompt`,
+  after the event title and attendees) and Stage 8 cloud transcription
+  (`phraseList` / `keyterms`). Includes a **Suggest from Sent Mail** button
+  that scans local Sent mail and opens a selectable list of suggested terms —
+  never adding or uploading unreviewed email text automatically.
+- **Cloud Transcription** (Stage 8, off by default): an opt-in switch behind an
+  explicit privacy disclosure stating that meeting audio and the user's
+  reviewed custom vocabulary are sent to the chosen provider. Offers a
+  provider/model selector featuring **`microsoft/mai-transcribe-2` via
+  OpenRouter** (reusing the configured OpenRouter API key) alongside configured
+  OpenAI-compatible `/audio/transcriptions` providers, an optional **Diarize
+  Remote Speakers** toggle (`system` track only), and usage counted against the
+  daily AI spending limit.
 - **Transcribe During Meetings**: on by default. Transcribes finished minutes
   in batches while the meeting is recorded, so the transcript is ready soon
   after Stop. Off, nothing is transcribed until Stop, which keeps the Mac's
@@ -223,7 +249,11 @@ the user typed.
 
 **Show Transcript** opens a read-only modal (the `modal` scope) with timestamped
 lines labelled You or Others, a **Copy** button, and a **Delete Recording**
-button that asks first. It has no editor, so the workspace stays read-only.
+button that asks first. When Stage 8 **Cloud Transcription** is enabled and the
+recording's audio is still retained, it also offers **Re-transcribe with
+Cloud** so users can stay local-by-default and selectively escalate difficult
+calls (noisy, accented, or multi-speaker) without automatic LLM-judged
+re-transcription. It has no editor, so the workspace stays read-only.
 
 ## Capture
 
@@ -338,15 +368,32 @@ Processing:
     the recording's clock. The parent checks every path: the exact file name
     the segment writer gives, resolved inside the recording's audio folder,
     including every path a worker reports holding.
-- **Vocabulary seeding and language pinning (Whisper).** `initial_prompt` is
-  seeded with a short, sanitized vocabulary hint (~50–80 tokens max) built from
-  the calendar event title and attendee display names, applied only to spans
-  ≥ ~1 s (with exact prompt-echo filtering) to improve proper-noun spelling
-  without hallucinations. Transcription follows the **Transcription Language**
-  setting: under **Auto**, language is detected once over the first ~30 s of
-  speech per recording and pinned for the remainder of the job (avoiding
-  per-span language drift under `set_no_context(true)`). Whisper **Fast**
-  (`small.en`) always passes `"en"`.
+- **Vocabulary seeding, Custom Vocabulary, and language pinning.**
+  Transcription biasing combines two sanitized sources: (1) meeting context
+  (calendar event title and attendee display names, highest priority) and (2)
+  the user-reviewed **Custom Vocabulary** list from Settings.
+  - **Suggest from Sent Mail**: scans **Sent** mail only in local SQLite
+    (excluding received mail so newsletters, marketing blasts, legal footers,
+    and spam cannot pollute suggestions). It extracts candidate domain and
+    out-of-vocabulary terms — ALL-CAPS acronyms (2–8 chars), mixed-case /
+    CamelCase identifiers, capitalized proper-noun phrases, and words absent
+    from a small embedded common-word stoplist — requires appearance across
+    **≥ 3 distinct sent threads**, and rejects tokens containing digits,
+    hex/base64-like strings, URLs, email addresses, or excessive length so
+    one-off typos, codes, and secrets do not surface. Suggestions are ranked by
+    distinct-thread frequency, capped, and saved only when explicitly selected
+    by the user.
+  - **Per-engine caps** (in `policy.rs`): Whisper's `initial_prompt` stays
+    capped at ~50–80 tokens (meeting title/attendees first, then top custom
+    terms), applied only to spans ≥ ~1 s (with exact prompt-echo filtering) to
+    improve proper-noun spelling without hallucinations. Stage 8 cloud requests
+    (`MAI-Transcribe-2` via OpenRouter) send up to a higher policy cap (e.g.,
+    100 terms) via `phraseList` / `keyterms`.
+  - **Language pinning**: transcription follows the **Transcription Language**
+    setting: under **Auto**, language is detected once over the first ~30 s of
+    speech per recording and pinned for the remainder of the job (avoiding
+    per-span language drift under `set_no_context(true)`). Whisper **Fast**
+    (`small.en`) always passes `"en"`.
 - **Speech across segment files.** Speech that reaches the end of a segment
   file is held back with the last half second of every file and transcribed
   with the next contiguous file of the same run, so a sentence is never cut at
@@ -565,8 +612,8 @@ stays well under the budget.
   table, because the tray, retention, and transcription read them while the
   window may be hidden. The webview reads and writes them through
   `recording_settings` and `set_recording_settings`. Fields added later
-  (`microphone_device_uid`, `transcription_engine`, `transcription_language`)
-  get serde defaults.
+  (`microphone_device_uid`, `transcription_engine`, `transcription_language`,
+  `custom_vocabulary`, and Stage 8 cloud settings) get serde defaults.
 - **Device-local.** These tables are not replicated entities and not part of
   settings transfer. Audio files are owner-only (`0700`/`0600`) and excluded from
   backups (`NSURLIsExcludedFromBackupKey`), and completed recordings are
@@ -589,11 +636,16 @@ stays well under the budget.
   waking a laptop never silently resumes microphone capture.
 - Pausing stops the audio hardware streams so the OS microphone indicator turns
   off during off-the-record sidebars.
-- Audio and transcripts stay on the device. Audio directories and files are
+- Audio and transcripts stay on the device unless the user explicitly enables
+  Stage 8 **Cloud Transcription** (or invokes **Re-transcribe with Cloud**), in
+  which case only the audio tracks and the user-reviewed custom vocabulary /
+  meeting hints are sent to the configured provider behind an explicit
+  disclosure — never raw unreviewed email text. Audio directories and files are
   created with owner-only permissions (`0700`/`0600`) and excluded from backups
   (`NSURLIsExcludedFromBackupKey`), along with `recording-models/`. Nothing
-  reaches an AI provider until the user turns on **Summarize with AI**, and then
-  only the transcript text and the reviewed event fields are sent.
+  reaches an AI provider for summarization until the user turns on **Summarize
+  with AI**, and then only the transcript text and the reviewed event fields are
+  sent.
 - Transcript text is untrusted. It is rendered as text, displayed evidence
   quotes are pulled directly from local SQLite by validated `segmentIds`, and
   instructions spoken in a meeting cannot authorize writes or tools.
@@ -715,12 +767,35 @@ in the first stage users can see (stage 2), and extend it in later stages.
 6. **Windows.** WASAPI loopback, tray, and installer permissions.
 7. **Linux.** The monitor source and the tray (AppIndicator), with
    `docs/linux-builds.md` updated.
-8. **Optional: cloud transcription.** OpenAI-compatible
-   `/audio/transcriptions` for providers that offer it, with per-minute prices
-   in the spending limit, behind its own switch and disclosure. Handle the
-   ~25 MB upload limit by compressing to M4A/Opus or VAD-chunking **per track**
-   (never mixing tracks before upload), with optional remote-track diarization
-   for providers that support it.
+8. **Optional: cloud transcription & custom vocabulary.**
+   - **OpenRouter + OpenAI-compatible `/audio/transcriptions`:** behind a
+     `CloudTranscriptionBackend` trait, starting with **`microsoft/mai-transcribe-2`
+     via OpenRouter** (`POST https://openrouter.ai/api/v1/audio/transcriptions`,
+     reusing the configured OpenRouter API key) alongside OpenAI-compatible
+     `/audio/transcriptions` for existing configured providers (direct Azure
+     Speech Fast Transcription is deferred until needed).
+   - **Opt-in & escalation:** behind its own **Cloud Transcription** switch and
+     privacy disclosure, plus per-recording **Re-transcribe with Cloud** in
+     **Show Transcript** for any recording whose audio is still retained (no
+     automatic LLM-judged fallback loop). Counts OpenRouter's returned
+     `usage.cost` / `usage.seconds` (and per-minute pricing estimates for other
+     providers) toward the daily AI spending limit.
+   - **Per-track upload & chunking:** never mixes `mic` and `system` before
+     upload; handles the ~25 MB upload limit by encoding or VAD-chunking **per
+     track** (decoding retained M4A to WAV/MP3/Opus on re-transcribe when
+     needed).
+   - **`MAI-Transcribe-2` options & speaker attribution:** passes
+     `response_format: "verbose_json"`, word/segment timestamps,
+     `transcribeStyle: "clean"`, `phraseList` / `keyterms` from the reviewed
+     custom vocabulary, and optional `diarization` on the `system` track only
+     (`mic` remains **You**). When a long `system` track is chunked under the
+     25 MB cap, speaker IDs are not guaranteed to match across chunk boundaries;
+     in group calls, remote speakers stay anonymous (`Others (Speaker 1)` /
+     `Others (Speaker 2)`) rather than guessing attendee names.
+   - **Custom Vocabulary & Sent-mail suggestions:** adds the **Custom
+     Vocabulary** list and **Suggest from Sent Mail** local extractor/review
+     flow in Settings (feeding both local Whisper `initial_prompt` and Stage 8
+     cloud biasing).
 
 ## Reference implementations
 
@@ -761,22 +836,30 @@ Following AGENTS.md, at the lowest level that owns each behavior:
   segment writer recovery from a truncated final file; gap timestamps; policy
   limits below, at, and above each one (length, disk floor, transcript bytes,
   400-word summary cap); model hash rejection; the worker protocol with
-  malformed frames, timeout, and kill; `initial_prompt` cap/sanitization and
-  detect-once language pinning; M4A/AAC transcode and decode-on-retry
-  round-trip; merge ordering, causal echo window, short-confirmation retention,
-  and RMS-assisted echo drop at the similarity threshold; recap schema
-  validation, withheld counts, unknown segment IDs, 1:1 deterministic naming vs
-  group non-guessing, and SQLite-sourced evidence quotes; prompt-injection text
-  in a transcript; conferencing allowlist/denylist filtering and post-call
-  silence nudge; retention sweep; migration; heap use that doesn't grow over two
-  hours of capture or of a transcription job (counted by a test allocator);
-  batches matching one worker's transcript; memory pressure and available
-  memory through a fake `MemoryProbe`.
+  malformed frames, timeout, and kill; `initial_prompt` and custom vocabulary
+  cap/sanitization, Sent-mail suggestion extraction (Sent-only scope, ≥ 3
+  distinct threads, digit/URL/email/secret rejection, stoplist filtering, and no
+  unreviewed auto-addition), and detect-once language pinning; M4A/AAC transcode
+  and decode-on-retry round-trip; merge ordering, causal echo window,
+  short-confirmation retention, and RMS-assisted echo drop at the similarity
+  threshold; recap schema validation, withheld counts, unknown segment IDs, 1:1
+  deterministic naming vs group non-guessing, and SQLite-sourced evidence
+  quotes; prompt-injection text in a transcript; conferencing allowlist/denylist
+  filtering and post-call silence nudge; Stage 8 cloud transcription (per-track
+  upload never mixing tracks, 25 MB chunking boundary, OpenRouter
+  `microsoft/mai-transcribe-2` payload with `phraseList` and `system`-only
+  diarization, spending-limit enforcement, and opt-in disclosure gating);
+  retention sweep; migration; heap use that doesn't grow over two hours of
+  capture or of a transcription job (counted by a test allocator); batches
+  matching one worker's transcript; memory pressure and available memory through
+  a fake `MemoryProbe`.
 - **Frontend**: the consent and review modals (initial focus, Tab trap,
   Escape restoring focus, background inert, edits kept on failure, Cmd/Ctrl+Enter
   submit); the Recording section rows and their omission when empty; the
   indicator never taking focus; no editable control in the event panel; no
-  note write before submission; and title-style labels.
+  note write before submission; Custom Vocabulary review/selection, Stage 8
+  disclosure gating, and **Re-transcribe with Cloud** action; and title-style
+  labels.
 - **App wiring (slim)**: palette commands reaching the service, **Record**
   reaching `recording_start` with the occurrence reference, and the tray's
   **Review** opening the dialog.
