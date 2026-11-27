@@ -570,6 +570,7 @@ pub(crate) async fn create_calendar_event(
         "",
         std::slice::from_ref(&event),
     )?;
+    state.recording.invalidate_calendar_offers();
     Ok(event)
 }
 
@@ -616,6 +617,7 @@ pub(crate) async fn update_calendar_event(
         "",
         std::slice::from_ref(&event),
     )?;
+    state.recording.invalidate_calendar_offers();
     Ok(event)
 }
 
@@ -807,6 +809,7 @@ pub(crate) async fn list_schedule_events(
                     &time_max,
                     &events,
                 )?;
+                state.recording.invalidate_calendar_offers();
                 merged.append(&mut events);
             }
             Err(error) => errors.push(format!("{}: {error}", account.email)),

@@ -4424,4 +4424,5 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .recording-signal-pill { padding: 0 var(--space-1); border-radius: var(--radius-sm); border: 1px solid var(--border); color: var(--muted); font-size: var(--text-meta); }
 .recording-signal-pill.active { border-color: var(--accent); color: var(--accent); }
 .recording-indicator-warning { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); text-align: center; color: var(--error); }
+.recording-indicator-nudge { color: var(--warning); font-size: var(--text-meta); text-align: center; }
 .recording-indicator-stop { min-width: 0; padding-inline: var(--space-1-5); }

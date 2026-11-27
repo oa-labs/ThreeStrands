@@ -33,7 +33,7 @@ function demoTranscript(recordingId: string, durationMs: number, labels: boolean
 
 const IDLE: RecordingStatus = {
   state: "idle", recordingId: null, title: null, eventRef: null, elapsedMs: 0, tracks: [],
-  systemAudio: { kind: "available" }, systemAudioSilentWarning: false, lastStopReason: null,
+  systemAudio: { kind: "available" }, systemAudioSilentWarning: false, lastStopReason: null, stillRecordingNudge: false,
 };
 
 /** In-memory equivalents of the native recording commands, for the browser preview and tests. */

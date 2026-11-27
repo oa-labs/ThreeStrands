@@ -96,6 +96,150 @@ pub const KEEP_AUDIO_LONG: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// How long before a meeting starts the app may offer to record it.
 pub const OFFER_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// Sustained microphone activity required before raising a tray badge/call
+/// offer, so a brief hardware check does not trigger it.
+pub const OFFER_MIC_DELAY: Duration = Duration::from_secs(3);
+/// How long an in-memory snapshot of the calendar cache is reused across ticks.
+pub const OFFER_CALENDAR_CACHE_TTL: Duration = Duration::from_secs(15);
+/// Silence across both tracks after a conferencing app releases the mic before
+/// showing a "Still recording — Stop?" nudge.
+pub const STILL_RECORDING_SILENCE: Duration = Duration::from_secs(3 * 60);
+/// Shorter silence threshold once the recorded meeting's scheduled end passes.
+pub const STILL_RECORDING_PAST_END_SILENCE: Duration = Duration::from_secs(30);
+
+/// Known conferencing apps that trigger tray recording offers (bundle id, display name).
+pub const CONFERENCING_APPS: &[(&str, &str)] = &[
+    ("us.zoom.xos", "Zoom"),
+    ("us.zoom.videomeetings", "Zoom"),
+    ("com.tinyspeck.slackmacgap", "Slack"),
+    ("com.microsoft.teams", "Microsoft Teams"),
+    ("com.microsoft.teams2", "Microsoft Teams"),
+    ("com.apple.FaceTime", "FaceTime"),
+    ("com.cisco.webexmeetingsapp", "Webex"),
+    ("Cisco-Systems.Spark", "Webex"),
+    ("com.webex.meetingmanager", "Webex"),
+    ("com.hnc.Discord", "Discord"),
+    ("com.hnc.DiscordPTB", "Discord"),
+    ("com.hnc.DiscordCanary", "Discord"),
+    ("com.amazon.Amazon-Chime", "Amazon Chime"),
+    ("com.skype.skype", "Skype"),
+    ("com.ringcentral.glip", "RingCentral"),
+    ("com.logmein.GoTo", "GoTo"),
+    ("net.whatsapp.WhatsApp", "WhatsApp"),
+    ("org.whispersystems.signal-desktop", "Signal"),
+    ("ru.keepcoder.Telegram", "Telegram"),
+    ("app.tuple.app", "Tuple"),
+    ("com.loom.desktop", "Loom"),
+    ("co.around.Around", "Around"),
+    ("com.pop.pop.app", "Pop"),
+];
+
+/// Web browsers whose mic usage triggers an offer badge only when a scheduled
+/// calendar meeting is active or starting soon.
+pub const BROWSER_BUNDLE_IDS: &[&str] = &[
+    "com.apple.Safari",
+    "com.apple.SafariTechnologyPreview",
+    "com.apple.WebKit.GPU",
+    "com.apple.WebKit.WebContent",
+    "com.google.Chrome",
+    "com.google.Chrome.beta",
+    "com.google.Chrome.canary",
+    "company.thebrowser.Browser",
+    "org.mozilla.firefox",
+    "org.mozilla.nightly",
+    "com.brave.Browser",
+    "com.microsoft.edgemac",
+    "com.vivaldi.Vivaldi",
+    "com.operasoftware.Opera",
+    "company.thebrowser.dia",
+    "app.zen-browser.zen",
+    "com.kagi.kagimacOS",
+];
+
+/// Dictation, voice assistants, and non-meeting recorders excluded from offers.
+pub const MIC_DENYLIST_BUNDLE_IDS: &[&str] = &[
+    "com.apple.Siri",
+    "com.apple.assistantd",
+    "com.apple.assistant_service",
+    "com.apple.SpeechRecognitionCore",
+    "com.apple.speech.speechsynthesisd",
+    "com.apple.DictationIM",
+    "com.apple.VoiceMemos",
+    "com.electron.wispr-flow",
+    "ai.wispr.flow",
+    "com.wispr.flow",
+    "com.superduper.superwhisper",
+    "com.goodsnooze.MacWhisper",
+    "com.raycast.macos",
+    "com.runningwithcrayons.Alfred",
+    "com.aquavoice.app",
+    "com.spokenly.app",
+    "com.apple.QuickTimePlayerX",
+    "com.apple.garageband10",
+    "com.apple.logic10",
+    "org.audacityteam.audacity",
+    "com.obsproject.obs-studio",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MicProcessKind {
+    Conferencing { app_name: &'static str },
+    Browser,
+    Denied,
+    Other,
+}
+
+fn matches_bundle_id(bundle_id: &str, entry: &str) -> bool {
+    if bundle_id.eq_ignore_ascii_case(entry) {
+        return true;
+    }
+    let Some((prefix, _)) = bundle_id.split_once('.') else {
+        return false;
+    };
+    let _ = prefix;
+    bundle_id.len() > entry.len()
+        && bundle_id[..entry.len()].eq_ignore_ascii_case(entry)
+        && bundle_id.as_bytes()[entry.len()] == b'.'
+}
+
+pub fn classify_bundle_id(bundle_id: &str) -> MicProcessKind {
+    let trimmed = bundle_id.trim();
+    if trimmed.is_empty() {
+        return MicProcessKind::Other;
+    }
+    if MIC_DENYLIST_BUNDLE_IDS
+        .iter()
+        .any(|entry| matches_bundle_id(trimmed, entry))
+    {
+        return MicProcessKind::Denied;
+    }
+    if let Some((_, app_name)) = CONFERENCING_APPS
+        .iter()
+        .find(|(entry, _)| matches_bundle_id(trimmed, entry))
+    {
+        return MicProcessKind::Conferencing { app_name };
+    }
+    if BROWSER_BUNDLE_IDS
+        .iter()
+        .any(|entry| matches_bundle_id(trimmed, entry))
+    {
+        return MicProcessKind::Browser;
+    }
+    MicProcessKind::Other
+}
+
+pub fn offer_delay_elapsed(elapsed: Duration) -> bool {
+    elapsed >= OFFER_MIC_DELAY
+}
+
+pub fn still_recording_silence_reached(silent_for: Duration, past_event_end: bool) -> bool {
+    let threshold = if past_event_end {
+        STILL_RECORDING_PAST_END_SILENCE
+    } else {
+        STILL_RECORDING_SILENCE
+    };
+    silent_for >= threshold
+}
 
 /// Voice activity detection (transcription stage): probability at which
 /// speech starts.
@@ -672,5 +816,67 @@ mod tests {
         assert_eq!(normalize_language_code(Some("pt-BR")), Some("pt-br".into()));
         assert_eq!(normalize_language_code(Some("en;rm")), None);
         assert_eq!(normalize_language_code(Some("x")), None);
+    }
+
+    #[test]
+    fn offer_delay_and_silence_nudges_hold_below_at_and_above_thresholds() {
+        let ms = Duration::from_millis(1);
+        assert!(!offer_delay_elapsed(OFFER_MIC_DELAY - ms));
+        assert!(offer_delay_elapsed(OFFER_MIC_DELAY));
+        assert!(offer_delay_elapsed(OFFER_MIC_DELAY + ms));
+
+        assert!(!still_recording_silence_reached(
+            STILL_RECORDING_SILENCE - ms,
+            false
+        ));
+        assert!(still_recording_silence_reached(
+            STILL_RECORDING_SILENCE,
+            false
+        ));
+        assert!(still_recording_silence_reached(
+            STILL_RECORDING_SILENCE + ms,
+            false
+        ));
+
+        assert!(!still_recording_silence_reached(
+            STILL_RECORDING_PAST_END_SILENCE - ms,
+            true
+        ));
+        assert!(still_recording_silence_reached(
+            STILL_RECORDING_PAST_END_SILENCE,
+            true
+        ));
+    }
+
+    #[test]
+    fn bundle_id_classifier_matches_conferencing_browsers_helpers_and_denylist() {
+        assert_eq!(
+            classify_bundle_id("us.zoom.xos"),
+            MicProcessKind::Conferencing { app_name: "Zoom" }
+        );
+        assert_eq!(
+            classify_bundle_id("com.tinyspeck.slackmacgap.helper"),
+            MicProcessKind::Conferencing { app_name: "Slack" }
+        );
+        assert_eq!(
+            classify_bundle_id("com.google.Chrome.helper.renderer"),
+            MicProcessKind::Browser
+        );
+        assert_eq!(classify_bundle_id("com.apple.Siri"), MicProcessKind::Denied);
+        assert_eq!(
+            classify_bundle_id("com.electron.wispr-flow"),
+            MicProcessKind::Denied
+        );
+        assert_eq!(
+            classify_bundle_id("com.apple.VoiceMemos"),
+            MicProcessKind::Denied
+        );
+        assert_eq!(
+            classify_bundle_id("com.apple.QuickTimePlayerX.helper"),
+            MicProcessKind::Denied
+        );
+        assert_eq!(classify_bundle_id("com.example.App"), MicProcessKind::Other);
+        assert_eq!(classify_bundle_id("us.zoom.xosEvil"), MicProcessKind::Other);
+        assert_eq!(classify_bundle_id(""), MicProcessKind::Other);
     }
 }

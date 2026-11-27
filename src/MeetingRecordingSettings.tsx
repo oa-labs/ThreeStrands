@@ -101,7 +101,7 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
   const [deletingModel, setDeletingModel] = useState<TranscriptionModelName | null>(null);
   const models = useTranscriptionModels();
   const ids = {
-    record: useId(), microphone: useId(), keep: useId(), remind: useId(),
+    record: useId(), microphone: useId(), keep: useId(), offer: useId(), remind: useId(),
     summarize: useId(), usage: useId(), model: useId(), language: useId(), during: useId(),
   };
 
@@ -289,6 +289,15 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
       </label>
       <p className="settings-hint" id={ids.during}>
         Transcribes in the background while a meeting is recorded, so the transcript is ready soon after you stop. Turn off to keep your Mac's memory and processor free during meetings.
+      </p>
+
+      <label className="settings-switch">
+        <span>Offer to Record Meetings</span>
+        <input type="checkbox" checked={settings?.offerToRecord ?? true} disabled={!settings} aria-describedby={ids.offer}
+          onChange={(event) => void change({ offerToRecord: event.target.checked })} />
+      </label>
+      <p className="settings-hint" id={ids.offer}>
+        Offers the current or upcoming meeting in the menu bar and shows a badge when a conferencing app or meeting in a browser uses your microphone. Never starts or stops a recording on its own.
       </p>
 
       <label className="settings-switch">

@@ -347,4 +347,15 @@ describe("Transcription Model", () => {
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, summarizeWithAi: true }));
     expect(toggle).toBeChecked();
   });
+
+  it("saves Offer to Record Meetings when toggled and attaches its help text", async () => {
+    const { save } = setup();
+    const toggle = await screen.findByRole("checkbox", { name: "Offer to Record Meetings" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).toBeChecked();
+    expect(toggle).toHaveAccessibleDescription();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, offerToRecord: false }));
+    expect(toggle).not.toBeChecked();
+  });
 });

@@ -1904,6 +1904,7 @@ export type RecordingStatus = {
   systemAudio: SystemAudioSupport;
   systemAudioSilentWarning: boolean;
   lastStopReason: RecordingStopReason | null;
+  stillRecordingNudge?: boolean;
 };
 
 export type MeetingRecordingState = "recording" | "interrupted" | "recorded" | "transcribing" | "transcribed" | "failed";

@@ -147,4 +147,19 @@ describe("App meeting recording wiring", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Review Last Recording/ }));
     expect(await screen.findByRole("dialog", { name: "Review Follow-through" })).toBeInTheDocument();
   });
+
+  it("starts an offered meeting recording from the menu bar offer command", async () => {
+    await mailClient.setRecordingSettings(settings());
+    const start = vi.spyOn(mailClient, "startRecording");
+    render(<App />);
+    await screen.findByRole("button", { name: "Command Palette (Ctrl+K)" });
+    const startRequest = {
+      eventRef: { version: 1 as const, kind: "event" as const, id: "evt-1", account: "me@example.com", calendar: "work" },
+      title: "Weekly Sync",
+      attendees: ["ann@example.org"],
+    };
+    await fire("recording-tray-command", { command: "startOffer", startRequest });
+    await waitFor(() => expect(start).toHaveBeenCalledWith(startRequest));
+    expect(await screen.findByRole("group", { name: "Recording" })).toBeInTheDocument();
+  });
 });

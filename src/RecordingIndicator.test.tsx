@@ -80,4 +80,16 @@ describe("RecordingIndicator", () => {
     expect(openSettings).toHaveBeenCalledOnce();
     openSettings.mockRestore();
   });
+
+  it("shows a Still recording nudge without taking focus, and hides it when paused", () => {
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+    const { rerender } = render(<RecordingIndicator status={status({ stillRecordingNudge: true })} onStop={vi.fn()} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Still recording?");
+    expect(outside).toHaveFocus();
+    rerender(<RecordingIndicator status={status({ state: "paused", stillRecordingNudge: true })} onStop={vi.fn()} />);
+    expect(screen.queryByText("Still recording?")).not.toBeInTheDocument();
+    outside.remove();
+  });
 });

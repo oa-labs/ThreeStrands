@@ -11,6 +11,7 @@
 
 pub mod capture;
 pub mod files;
+pub mod offers;
 pub mod permissions;
 pub mod policy;
 pub mod retention;
@@ -118,6 +119,9 @@ pub struct RecordingStatus {
     /// Why the last recording was stopped automatically; cleared by the
     /// next start and by a stop the user asked for.
     pub last_stop_reason: Option<StopReason>,
+    /// True when a call released the microphone (or event end passed) and
+    /// both tracks have been silent long enough to suggest stopping.
+    pub still_recording_nudge: bool,
 }
 
 enum RunState {
@@ -154,6 +158,8 @@ struct Active {
     all_outputs_headphones: Option<bool>,
     mic_speech_secs_while_tap_zero: u64,
     system_audio_silent_warning: bool,
+    both_tracks_silent_since: Option<SystemTime>,
+    still_recording_nudge: bool,
 }
 
 pub struct RecordingService {
@@ -313,6 +319,8 @@ impl RecordingService {
             all_outputs_headphones: None,
             mic_speech_secs_while_tap_zero: 0,
             system_audio_silent_warning: false,
+            both_tracks_silent_since: None,
+            still_recording_nudge: false,
         });
         Ok(self.status())
     }
@@ -332,6 +340,8 @@ impl RecordingService {
             return Err("The recording is already paused.".into());
         }
         active.paused_since = Some(now);
+        active.both_tracks_silent_since = None;
+        active.still_recording_nudge = false;
         for run in active.tracks.values_mut() {
             run.signal_active = false;
             if let Some(session) = run.session.as_mut() {
@@ -352,6 +362,8 @@ impl RecordingService {
             .take()
             .ok_or("The recording isn't paused.")?;
         active.paused_total += now.duration_since(since).unwrap_or_default();
+        active.both_tracks_silent_since = None;
+        active.still_recording_nudge = false;
         for run in active.tracks.values_mut() {
             // Silence while paused is not a stall.
             run.last_activity = now;
@@ -455,6 +467,10 @@ impl RecordingService {
                     run.last_activity = now;
                     run.restarts_used = 0;
                     run.signal_active = peak >= policy::SIGNAL_ACTIVE_PEAK;
+                    if run.signal_active {
+                        active.both_tracks_silent_since = None;
+                        active.still_recording_nudge = false;
+                    }
                     if peak > 0.0 {
                         run.ever_nonzero_audio = true;
                     }
@@ -559,6 +575,42 @@ impl RecordingService {
             }
         }
         self.stop_if_all_failed();
+        if let Some(active) = self.active.as_mut() {
+            if active.paused_since.is_some() {
+                active.both_tracks_silent_since = None;
+                active.still_recording_nudge = false;
+            } else {
+                let any_signal = active
+                    .tracks
+                    .values()
+                    .any(|run| matches!(run.state, RunState::Active) && run.signal_active);
+                if any_signal {
+                    active.both_tracks_silent_since = None;
+                    active.still_recording_nudge = false;
+                } else {
+                    active.both_tracks_silent_since.get_or_insert(now);
+                }
+            }
+        }
+    }
+
+    pub fn both_tracks_silent_for(&self) -> Duration {
+        self.active
+            .as_ref()
+            .and_then(|a| a.both_tracks_silent_since)
+            .map_or(Duration::ZERO, |since| {
+                self.clock.now().duration_since(since).unwrap_or_default()
+            })
+    }
+
+    pub fn set_still_recording_nudge(&mut self, nudge: bool) {
+        if let Some(active) = self.active.as_mut() {
+            active.still_recording_nudge = if active.paused_since.is_some() {
+                false
+            } else {
+                nudge
+            };
+        }
     }
 
     pub fn status(&self) -> RecordingStatus {
@@ -574,6 +626,7 @@ impl RecordingService {
                 system_audio,
                 system_audio_silent_warning: false,
                 last_stop_reason: self.last_stop_reason,
+                still_recording_nudge: false,
             };
         };
         let mut tracks: Vec<TrackStatus> = active
@@ -605,6 +658,7 @@ impl RecordingService {
             system_audio,
             system_audio_silent_warning: active.system_audio_silent_warning,
             last_stop_reason: self.last_stop_reason,
+            still_recording_nudge: active.still_recording_nudge,
         }
     }
 

@@ -2625,3 +2625,159 @@ fn upgrades_of_pre_star_notes_can_rebuild_their_derived_indexes() {
         assert_eq!(db.list_starred_notes(10).unwrap()[0].id, note.id);
     }
 }
+
+#[test]
+fn active_or_upcoming_meeting_and_cached_event_end_respect_lead_status_and_kind() {
+    use chrono::{TimeZone, Utc};
+    use std::time::{Duration, SystemTime};
+
+    let db = database();
+    db.adopt_calendar_account("you@example.com").unwrap();
+    db.adopt_calendar_account("off@example.com").unwrap();
+    db.remove_calendar_account("off@example.com").unwrap();
+
+    let mk = |id: &str,
+              account: &str,
+              title: &str,
+              start: &str,
+              end: &str,
+              all_day: bool,
+              response: Option<&str>,
+              event_type: Option<&str>,
+              wloc: Option<&str>|
+     -> crate::models::ScheduleEvent {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "seriesId": null,
+            "accountId": account,
+            "calendarId": "work",
+            "title": title,
+            "start": start,
+            "end": end,
+            "allDay": all_day,
+            "attendees": ["ann@example.org"],
+            "attendeeResponses": {},
+            "responseStatus": response,
+            "canRespond": true,
+            "canEdit": false,
+            "eventType": event_type,
+            "workingLocationType": wloc
+        }))
+        .unwrap()
+    };
+
+    let events = vec![
+        // Disconnected account: ignored
+        mk(
+            "off-evt",
+            "off@example.com",
+            "Disconnected",
+            "2026-11-27T15:00:00Z",
+            "2026-11-27T16:00:00Z",
+            false,
+            None,
+            None,
+            None,
+        ),
+        // All-day: ignored
+        mk(
+            "allday",
+            "you@example.com",
+            "Offsite",
+            "2026-11-27T00:00:00Z",
+            "2026-11-28T00:00:00Z",
+            true,
+            None,
+            None,
+            None,
+        ),
+        // Declined: ignored
+        mk(
+            "declined",
+            "you@example.com",
+            "Declined Sync",
+            "2026-11-27T15:00:00Z",
+            "2026-11-27T16:00:00Z",
+            false,
+            Some("declined"),
+            None,
+            None,
+        ),
+        // Working location: ignored
+        mk(
+            "wloc",
+            "you@example.com",
+            "Home",
+            "2026-11-27T15:00:00Z",
+            "2026-11-27T16:00:00Z",
+            false,
+            None,
+            Some("workingLocation"),
+            Some("home"),
+        ),
+        // Upcoming at 15:10
+        mk(
+            "upcoming",
+            "you@example.com",
+            "Design Review",
+            "2026-11-27T15:10:00Z",
+            "2026-11-27T15:40:00Z",
+            false,
+            Some("accepted"),
+            None,
+            None,
+        ),
+        // In-progress 14:45..15:15
+        mk(
+            "live",
+            "you@example.com",
+            "Weekly Sync",
+            "2026-11-27T14:45:00Z",
+            "2026-11-27T15:15:00Z",
+            false,
+            Some("accepted"),
+            None,
+            None,
+        ),
+    ];
+    db.cache_note_events("you@example.com", &[], "", "", &events)
+        .unwrap();
+    db.cache_note_events("off@example.com", &[], "", "", &events[..1])
+        .unwrap();
+
+    let lead = Duration::from_secs(10 * 60);
+    // At 14:34:59 (below 10 min lead before 14:45): no offer yet.
+    let before = SystemTime::from(Utc.with_ymd_and_hms(2026, 11, 27, 14, 34, 59).unwrap());
+    assert_eq!(db.active_or_upcoming_meeting(before, lead).unwrap(), None);
+
+    // At 14:35:00 (exact 10 min lead before 14:45): offers Weekly Sync.
+    let at_lead = SystemTime::from(Utc.with_ymd_and_hms(2026, 11, 27, 14, 35, 0).unwrap());
+    let first = db
+        .active_or_upcoming_meeting(at_lead, lead)
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.title, "Weekly Sync");
+    assert_eq!(first.event_ref.id, "live");
+
+    // At 15:05:00 (both live and upcoming are inside window): prefers in-progress Weekly Sync.
+    let during = SystemTime::from(Utc.with_ymd_and_hms(2026, 11, 27, 15, 5, 0).unwrap());
+    let picked = db
+        .active_or_upcoming_meeting(during, lead)
+        .unwrap()
+        .unwrap();
+    assert_eq!(picked.event_ref.id, "live");
+
+    // At 15:15:00 (live has ended): moves to upcoming Design Review.
+    let after_live = SystemTime::from(Utc.with_ymd_and_hms(2026, 11, 27, 15, 15, 0).unwrap());
+    let next = db
+        .active_or_upcoming_meeting(after_live, lead)
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.event_ref.id, "upcoming");
+    assert_eq!(
+        db.cached_event_end(&next.event_ref).unwrap(),
+        Some(SystemTime::from(
+            Utc.with_ymd_and_hms(2026, 11, 27, 15, 40, 0).unwrap()
+        ))
+    );
+}

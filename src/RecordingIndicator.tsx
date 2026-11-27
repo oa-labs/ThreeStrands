@@ -69,6 +69,9 @@ export function RecordingIndicator({ status, onStop }: { status: RecordingStatus
           </button>
         </div>
       ) : null}
+      {status.stillRecordingNudge && !paused ? (
+        <span className="recording-indicator-nudge" role="status">Still recording?</span>
+      ) : null}
       <button type="button" className="btn btn-sm recording-indicator-stop" aria-label="Stop Recording" onClick={onStop}>Stop</button>
     </div>
   );

@@ -10,7 +10,7 @@ import { useTranscriptionModels } from "./useTranscriptionModels";
 
 export const IDLE_RECORDING_STATUS: RecordingStatus = {
   state: "idle", recordingId: null, title: null, eventRef: null, elapsedMs: 0, tracks: [],
-  systemAudio: { kind: "available" }, systemAudioSilentWarning: false, lastStopReason: null,
+  systemAudio: { kind: "available" }, systemAudioSilentWarning: false, lastStopReason: null, stillRecordingNudge: false,
 };
 
 export type RecordingController = {
@@ -200,8 +200,8 @@ export function useMeetingRecording({ onNotice, onOpenSettings }: {
   }, [settings?.summarizeWithAi]);
 
   // The listeners call through a ref so they are set up once, not on each render.
-  const latest = useRef({ applyStatus, startAdHoc, onOpenSettings, openLatestReview, maybeAutoSummarize, onNotice });
-  latest.current = { applyStatus, startAdHoc, onOpenSettings, openLatestReview, maybeAutoSummarize, onNotice };
+  const latest = useRef({ applyStatus, start, startAdHoc, onOpenSettings, openLatestReview, maybeAutoSummarize, onNotice });
+  latest.current = { applyStatus, start, startAdHoc, onOpenSettings, openLatestReview, maybeAutoSummarize, onNotice };
   useEffect(() => {
     if (!supported) return;
     const stops = [
@@ -212,6 +212,10 @@ export function useMeetingRecording({ onNotice, onOpenSettings }: {
       }),
       listenForRecordingEvent("recording-tray-command", (payload) => {
         if (payload.command === "start") void latest.current.startAdHoc();
+        else if (payload.command === "startOffer") {
+          if (payload.startRequest) void latest.current.start(payload.startRequest);
+          else void latest.current.startAdHoc();
+        }
         else if (payload.command === "openSettings") latest.current.onOpenSettings();
         else if (payload.command === "review") {
           if (payload.recordingId) {

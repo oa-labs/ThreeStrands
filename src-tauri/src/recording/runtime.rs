@@ -15,6 +15,7 @@
 //! ([`super::transcribe::scheduler`]).
 
 use super::capture::{AudioInputDevice, CaptureBackend, SystemAudioSupport, Track};
+use super::offers::{self, MicActivityProbe, OfferEngine, OfferInput, TrayOffer};
 use super::retention;
 use super::segments;
 use super::settings::{RecordingSettings, TranscriptionModelChoice};
@@ -26,6 +27,7 @@ use super::transcribe::scheduler::{Scheduler, TrayTranscription};
 use super::transcribe::Transcriber;
 use super::{policy, DiskProbe, RecordingPhase, RecordingService, RecordingStatus};
 use crate::clock::Clock;
+use crate::db::note_entities::OfferedMeeting;
 use crate::db::recordings::{MeetingRecording, RecordingState};
 use crate::db::Database;
 use crate::note_entities::NoteReference;
@@ -55,6 +57,7 @@ pub trait RecordingNotifier: Send + Sync {
         settings: &RecordingSettings,
         transcribing: Option<&TrayTranscription>,
         review: Option<&TrayReview>,
+        offer: Option<&TrayOffer>,
         supported: bool,
     );
     /// A transcription's whole percent changed.
@@ -135,6 +138,11 @@ pub struct RecordingRuntime {
     /// The last status published, with its elapsed time zeroed.
     published: Mutex<Option<RecordingStatus>>,
     last_sweep: Mutex<Option<SystemTime>>,
+    mic_probe: Arc<dyn MicActivityProbe>,
+    offers: Mutex<OfferEngine>,
+    current_offer: Mutex<Option<TrayOffer>>,
+    cached_meeting: Mutex<Option<(SystemTime, Option<OfferedMeeting>)>>,
+    cached_event_end: Mutex<Option<(String, Option<SystemTime>)>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -152,6 +160,29 @@ impl RecordingRuntime {
         audio_root: PathBuf,
         notifier: Arc<dyn RecordingNotifier>,
         transcription: TranscriptionParts,
+    ) -> Self {
+        Self::with_mic_probe(
+            database,
+            backend,
+            clock,
+            disk,
+            audio_root,
+            notifier,
+            transcription,
+            offers::platform_mic_probe(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_mic_probe(
+        database: Arc<Database>,
+        backend: Arc<dyn CaptureBackend>,
+        clock: Arc<dyn Clock + Send + Sync>,
+        disk: Arc<dyn DiskProbe>,
+        audio_root: PathBuf,
+        notifier: Arc<dyn RecordingNotifier>,
+        transcription: TranscriptionParts,
+        mic_probe: Arc<dyn MicActivityProbe>,
     ) -> Self {
         let settings = database.recording_settings().unwrap_or_else(|error| {
             log::warn!(target: "recording", "reading recording settings: {error}");
@@ -198,6 +229,11 @@ impl RecordingRuntime {
             settings: Mutex::new(settings),
             published: Mutex::new(None),
             last_sweep: Mutex::new(None),
+            mic_probe,
+            offers: Mutex::new(OfferEngine::default()),
+            current_offer: Mutex::new(None),
+            cached_meeting: Mutex::new(None),
+            cached_event_end: Mutex::new(None),
         }
     }
 
@@ -238,8 +274,8 @@ impl RecordingRuntime {
         lock(&self.service).status().recording_id
     }
 
-    /// Sends what changed since the last publish.
-    fn publish(&self) {
+    /// Sends what changed since the last publish. Returns true when it refreshed the tray.
+    fn publish(&self) -> bool {
         let status = self.status();
         let mut comparable = status.clone();
         comparable.elapsed_ms = 0;
@@ -253,16 +289,20 @@ impl RecordingRuntime {
                 self.notifier.recordings_changed(&ended);
             }
         }
-        if changed || status.state != RecordingPhase::Idle {
+        let refreshed = changed || status.state != RecordingPhase::Idle;
+        if refreshed {
             let review = self.review_candidate();
+            let offer = lock(&self.current_offer).clone();
             self.notifier.refresh_tray(
                 &status,
                 &self.settings(),
                 self.scheduler.tray().as_ref(),
                 review.as_ref(),
+                offer.as_ref(),
                 self.supported,
             );
         }
+        refreshed
     }
 
     fn review_candidate(&self) -> Option<TrayReview> {
@@ -280,6 +320,18 @@ impl RecordingRuntime {
         self.review_candidate()
     }
 
+    pub fn current_offer(&self) -> Option<TrayOffer> {
+        lock(&self.current_offer).clone()
+    }
+
+    pub fn invalidate_calendar_offers(&self) {
+        *lock(&self.cached_meeting) = None;
+        *lock(&self.cached_event_end) = None;
+        if self.evaluate_offers() {
+            self.refresh_tray_now();
+        }
+    }
+
     pub fn notify_recordings_changed(&self, recording_id: &str) {
         self.notifier.recordings_changed(recording_id);
         self.refresh_tray_now();
@@ -292,13 +344,114 @@ impl RecordingRuntime {
     /// Refreshes the tray outside a publish (transcription progress or review change).
     pub(super) fn refresh_tray_now(&self) {
         let review = self.review_candidate();
+        let offer = lock(&self.current_offer).clone();
         self.notifier.refresh_tray(
             &self.status(),
             &self.settings(),
             self.scheduler.tray().as_ref(),
             review.as_ref(),
+            offer.as_ref(),
             self.supported,
         );
+    }
+
+    fn scheduled_meeting(&self, now: SystemTime) -> Option<OfferedMeeting> {
+        if let Some((fetched_at, cached)) = lock(&self.cached_meeting).as_ref() {
+            if now.duration_since(*fetched_at).unwrap_or_default()
+                < policy::OFFER_CALENDAR_CACHE_TTL
+            {
+                return cached.clone();
+            }
+        }
+        let fresh = self
+            .database
+            .active_or_upcoming_meeting(now, policy::OFFER_WINDOW)
+            .ok()
+            .flatten();
+        *lock(&self.cached_meeting) = Some((now, fresh.clone()));
+        fresh
+    }
+
+    fn active_recording_end(
+        &self,
+        recording_id: &str,
+        event_ref: &NoteReference,
+    ) -> Option<SystemTime> {
+        if let Some((cached_id, end)) = lock(&self.cached_event_end).as_ref() {
+            if cached_id == recording_id {
+                return *end;
+            }
+        }
+        let end = self.database.cached_event_end(event_ref).ok().flatten();
+        *lock(&self.cached_event_end) = Some((recording_id.to_string(), end));
+        end
+    }
+
+    /// Evaluates active conferencing/calendar offers and post-call silence nudges.
+    /// Returns true if `current_offer` changed.
+    fn evaluate_offers(&self) -> bool {
+        if !self.supported {
+            return false;
+        }
+        let now = self.clock.now();
+        let settings = self.settings();
+        if !settings.record_meetings || !settings.offer_to_record {
+            let empty_mic = offers::MicActivitySnapshot::default();
+            let outcome = lock(&self.offers).evaluate(OfferInput {
+                now,
+                settings: &settings,
+                phase: RecordingPhase::Idle,
+                recording_id: None,
+                scheduled_meeting: None,
+                recording_event_end: None,
+                both_tracks_silent_for: Duration::ZERO,
+                mic: &empty_mic,
+            });
+            let _ = outcome;
+            lock(&self.service).set_still_recording_nudge(false);
+            let prev = lock(&self.current_offer).take();
+            return prev.is_some();
+        }
+
+        let (phase, recording_id, event_ref, silent_for) = {
+            let service = lock(&self.service);
+            let status = service.status();
+            (
+                status.state,
+                status.recording_id,
+                status.event_ref,
+                service.both_tracks_silent_for(),
+            )
+        };
+        let scheduled = if phase == RecordingPhase::Idle {
+            self.scheduled_meeting(now)
+        } else {
+            None
+        };
+        let recording_event_end = match (recording_id.as_deref(), event_ref.as_ref()) {
+            (Some(id), Some(ref_val)) if phase != RecordingPhase::Idle => {
+                self.active_recording_end(id, ref_val)
+            }
+            _ => None,
+        };
+        let mic = self.mic_probe.snapshot();
+        let outcome = lock(&self.offers).evaluate(OfferInput {
+            now,
+            settings: &settings,
+            phase,
+            recording_id: recording_id.as_deref(),
+            scheduled_meeting: scheduled.as_ref(),
+            recording_event_end,
+            both_tracks_silent_for: silent_for,
+            mic: &mic,
+        });
+        if phase != RecordingPhase::Idle {
+            lock(&self.service).set_still_recording_nudge(outcome.still_recording_nudge);
+        }
+        let mut current = lock(&self.current_offer);
+        let changed = *current != outcome.offer;
+        *current = outcome.offer;
+        changed
     }
 
     #[cfg(test)]
@@ -376,11 +529,15 @@ impl RecordingRuntime {
         }
     }
 
-    /// The once-a-second work: capture health and limits, then the daily
+    /// The once-a-second work: capture health and limits, offers, then the daily
     /// retention sweep.
     pub fn tick(&self) {
         lock(&self.service).tick();
-        self.publish();
+        let offer_changed = self.evaluate_offers();
+        let refreshed = self.publish();
+        if !refreshed && offer_changed {
+            self.refresh_tray_now();
+        }
         let now = self.clock.now();
         let due = lock(&self.last_sweep).is_none_or(|last| {
             now.duration_since(last).unwrap_or_default() >= policy::RETENTION_SWEEP_INTERVAL
@@ -398,6 +555,8 @@ impl RecordingRuntime {
         self.scheduler
             .set_transcribe_during_meetings(settings.transcribe_during_meetings);
         *lock(&self.settings) = settings.clone();
+        *lock(&self.cached_meeting) = None;
+        self.evaluate_offers();
         self.refresh_tray_now();
         if keep_changed {
             self.sweep();
@@ -800,6 +959,7 @@ mod tests {
             settings: &RecordingSettings,
             _: Option<&TrayTranscription>,
             _: Option<&TrayReview>,
+            _: Option<&TrayOffer>,
             _: bool,
         ) {
             self.0
@@ -832,15 +992,22 @@ mod tests {
 
     impl Harness {
         fn new() -> Self {
-            Self::with_backend(FakeBackend::new())
+            Self::with_backend_and_probe(FakeBackend::new(), Arc::new(offers::NullMicProbe))
         }
 
         fn with_backend(backend: FakeBackend) -> Self {
+            Self::with_backend_and_probe(backend, Arc::new(offers::NullMicProbe))
+        }
+
+        fn with_backend_and_probe(
+            backend: FakeBackend,
+            mic_probe: Arc<dyn MicActivityProbe>,
+        ) -> Self {
             let database = Arc::new(Database::open_memory());
             let clock = Arc::new(TestClock(Mutex::new(at("2026-11-27T10:00:00Z"))));
             let calls = Arc::new(Recorder::default());
             let root = TempDir::new();
-            let runtime = RecordingRuntime::new(
+            let runtime = RecordingRuntime::with_mic_probe(
                 database.clone(),
                 Arc::new(backend.clone()),
                 clock.clone(),
@@ -848,6 +1015,7 @@ mod tests {
                 root.path().to_path_buf(),
                 calls.clone(),
                 crate::recording::test_support::idle_transcription(root.path()),
+                mic_probe,
             );
             Self {
                 runtime,
@@ -1285,5 +1453,73 @@ mod tests {
         h.runtime.stop_if_active();
         assert!(!h.runtime.is_active());
         assert!(!h.backend.is_running(Track::Mic));
+    }
+
+    struct FakeProbe(Mutex<offers::MicActivitySnapshot>);
+    impl FakeProbe {
+        fn set(&self, snap: offers::MicActivitySnapshot) {
+            *self.0.lock().unwrap() = snap;
+        }
+    }
+    impl MicActivityProbe for FakeProbe {
+        fn snapshot(&self) -> offers::MicActivitySnapshot {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    #[test]
+    fn offers_and_post_call_silence_nudge_update_across_ticks_without_stopping_recording() {
+        let probe = Arc::new(FakeProbe(Mutex::new(offers::MicActivitySnapshot {
+            mic_running: true,
+            processes: vec![offers::ActiveMicProcess {
+                pid: 4242,
+                bundle_id: Some("us.zoom.xos".into()),
+                name: Some("zoom.us".into()),
+            }],
+        })));
+        let h = Harness::with_backend_and_probe(FakeBackend::new(), probe.clone());
+        h.runtime
+            .set_settings(RecordingSettings {
+                record_meetings: true,
+                offer_to_record: true,
+                ..Default::default()
+            })
+            .unwrap();
+
+        // First tick starts the delay clock: no unscheduled offer yet.
+        h.runtime.tick();
+        assert_eq!(h.runtime.current_offer(), None);
+
+        // Past OFFER_MIC_DELAY: raises badged "Zoom Call" offer.
+        h.advance(policy::OFFER_MIC_DELAY);
+        h.runtime.tick();
+        let offer = h.runtime.current_offer().unwrap();
+        assert_eq!(offer.title, "Zoom Call");
+        assert!(offer.badged);
+
+        // Starting the recording transitions into recording phase.
+        h.runtime.start(None, &offer.title).unwrap();
+        h.runtime.tick();
+        assert!(h.runtime.is_active());
+        assert!(!h.runtime.status().still_recording_nudge);
+
+        // Call releases mic; track stays silent for 3 minutes -> nudge rises, recording keeps running!
+        probe.set(offers::MicActivitySnapshot::default());
+        h.runtime.tick();
+        h.advance(policy::STILL_RECORDING_SILENCE);
+        h.runtime.tick();
+        assert!(h.runtime.status().still_recording_nudge);
+        assert!(h.runtime.is_active());
+
+        // Turning offer_to_record off clears the nudge immediately.
+        h.runtime
+            .set_settings(RecordingSettings {
+                record_meetings: true,
+                offer_to_record: false,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!h.runtime.status().still_recording_nudge);
+        assert!(h.runtime.is_active());
     }
 }

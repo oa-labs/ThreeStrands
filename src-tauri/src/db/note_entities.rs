@@ -569,6 +569,15 @@ fn prep_task_id(note: &Note, occurrence: &NoteReference) -> DbResult<Option<Stri
         .map(|item| format!("note:{}:{}", note.id, item.id)))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfferedMeeting {
+    pub event_ref: NoteReference,
+    pub title: String,
+    pub attendees: Vec<String>,
+    pub start: std::time::SystemTime,
+    pub end: std::time::SystemTime,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteLinkChoice {
@@ -616,6 +625,109 @@ impl Database {
             for body in rows { let event:crate::models::ScheduleEvent=serde_json::from_str(&body).map_err(super::serialization_error)?; if event.id==reference.id || event.series_id.as_ref()==Some(&reference.id) { return Ok(Some(event)); } }
             Ok(None)
         })
+    }
+
+    pub fn cached_event_end(
+        &self,
+        reference: &NoteReference,
+    ) -> DbResult<Option<std::time::SystemTime>> {
+        let Some(event) = self.resolve_note_event(reference)? else {
+            return Ok(None);
+        };
+        let end = chrono::DateTime::parse_from_rfc3339(&event.end)
+            .ok()
+            .map(std::time::SystemTime::from);
+        Ok(end)
+    }
+
+    /// The timed, undeclined meeting under way at `now` or starting within
+    /// `lead` in any connected calendar account, preferring an in-progress
+    /// meeting over an upcoming one.
+    pub fn active_or_upcoming_meeting(
+        &self,
+        now: std::time::SystemTime,
+        lead: std::time::Duration,
+    ) -> DbResult<Option<OfferedMeeting>> {
+        let bodies = self.with_connection(|c| {
+            let mut q = c.prepare(
+                "SELECT body FROM note_event_cache WHERE EXISTS(SELECT 1 FROM calendar_accounts WHERE email=account AND status='connected')",
+            )?;
+            let rows = q
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })?;
+        let horizon = now + lead;
+        let mut best: Option<OfferedMeeting> = None;
+        for body in bodies {
+            let Ok(event) = serde_json::from_str::<crate::models::ScheduleEvent>(&body) else {
+                continue;
+            };
+            if event.all_day
+                || event.response_status.as_deref() == Some("declined")
+                || event.event_type.as_deref() == Some("workingLocation")
+                || event.working_location_type.is_some()
+            {
+                continue;
+            }
+            let (Ok(start), Ok(end)) = (
+                chrono::DateTime::parse_from_rfc3339(&event.start),
+                chrono::DateTime::parse_from_rfc3339(&event.end),
+            ) else {
+                continue;
+            };
+            let start = std::time::SystemTime::from(start);
+            let end = std::time::SystemTime::from(end);
+            if now >= end || horizon < start {
+                continue;
+            }
+            let candidate = OfferedMeeting {
+                event_ref: NoteReference {
+                    version: 1,
+                    kind: "event".into(),
+                    series: event.series_id.filter(|series| series != &event.id),
+                    id: event.id,
+                    account: Some(event.account_id),
+                    calendar: Some(event.calendar_id),
+                    note: None,
+                    contact: None,
+                },
+                title: event.title,
+                attendees: event.attendees,
+                start,
+                end,
+            };
+            let replace = match &best {
+                None => true,
+                Some(current) => {
+                    let cand_live = candidate.start <= now;
+                    let curr_live = current.start <= now;
+                    match (cand_live, curr_live) {
+                        (true, false) => true,
+                        (false, true) => false,
+                        (true, true) => {
+                            (
+                                candidate.end,
+                                std::cmp::Reverse(candidate.start),
+                                &candidate.event_ref.id,
+                            ) < (
+                                current.end,
+                                std::cmp::Reverse(current.start),
+                                &current.event_ref.id,
+                            )
+                        }
+                        (false, false) => {
+                            (candidate.start, &candidate.event_ref.id)
+                                < (current.start, &current.event_ref.id)
+                        }
+                    }
+                }
+            };
+            if replace {
+                best = Some(candidate);
+            }
+        }
+        Ok(best)
     }
     pub fn note_link_choices(&self, kind: &str, query: &str) -> DbResult<Vec<NoteLinkChoice>> {
         // Reuse Contacts' saved and mail-derived profiles outside the connection lock.
