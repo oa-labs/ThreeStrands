@@ -1,26 +1,36 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
-import type { MeetingRecording, RecordingTranscript } from "./domain";
+import type { MeetingRecording, RecordingSettings, RecordingTranscript } from "./domain";
 import { TranscriptDialog } from "./TranscriptDialog";
 
 const recording: MeetingRecording = {
   id: "r1", eventRef: null, title: "Weekly Sync", startedAt: "2026-11-27T15:00:00Z", endedAt: "2026-11-27T16:10:00Z",
   durationMs: 70 * 60_000, state: "transcribed", error: null, audioDeleted: false, transcriptionPercent: null, tracks: [],
 };
-const line = (startMs: number, speaker: "you" | "others" | null, text: string) => ({ startMs, endMs: startMs + 1000, speaker, text });
+const cloudEnabledSettings: RecordingSettings = {
+  recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast", transcriptionLanguage: null,
+  transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true, summarizeWithAi: false, includeMyNotes: false,
+  attachTranscript: false, consentAcknowledged: true, customVocabulary: ["ThreeStrands"], cloudTranscriptionEnabled: true,
+  cloudTranscriptionDisclosureAcknowledged: true, cloudTranscriptionDefault: false, cloudTranscriptionProvider: "openrouter",
+  cloudTranscriptionModel: "microsoft/mai-transcribe-2", cloudTranscriptionEndpoint: null, cloudTranscriptionDiarize: true,
+};
+const line = (startMs: number, speaker: "you" | "others" | null, text: string, speakerLabel?: string | null) => ({
+  startMs, endMs: startMs + 1000, speaker, ...(speakerLabel !== undefined ? { speakerLabel } : {}), text,
+});
 const labelled: RecordingTranscript = { recordingId: "r1", speakerLabels: true, lines: [line(754_000, "you", "Hello"), line(3_723_000, "others", "Hi there")] };
 
-function open(transcript: RecordingTranscript | Error = labelled) {
+function open(transcript: RecordingTranscript | Error = labelled, settings: RecordingSettings = { ...cloudEnabledSettings, cloudTranscriptionEnabled: false }, targetRecording: MeetingRecording = recording) {
   const read = vi.spyOn(mailClient, "recordingTranscript");
   if (transcript instanceof Error) read.mockRejectedValue(transcript); else read.mockResolvedValue(transcript);
+  vi.spyOn(mailClient, "recordingSettings").mockResolvedValue(settings);
   const onClose = vi.fn();
   const onDeleted = vi.fn();
   const opener = document.createElement("button");
   opener.textContent = "Show Transcript";
   document.body.append(opener);
   opener.focus();
-  const view = render(<TranscriptDialog recording={recording} onClose={onClose} onDeleted={onDeleted} />);
+  const view = render(<TranscriptDialog recording={targetRecording} onClose={onClose} onDeleted={onDeleted} />);
   return { onClose, onDeleted, opener, view };
 }
 
@@ -138,5 +148,32 @@ describe("TranscriptDialog", () => {
     expect(await within(dialog).findByText("Line 299")).toBeInTheDocument();
     expect(within(dialog).getByRole("region", { name: "Transcript text" })).toHaveClass("transcript-lines");
     expect(within(dialog).getAllByRole("button", { name: "Close" })).toHaveLength(2);
+  });
+
+  it("offers Re-transcribe with Cloud only when enabled with audio on disk, updates remote speaker labels, and keeps transcript on failure", async () => {
+    open(labelled, cloudEnabledSettings, { ...recording, audioDeleted: true });
+    await screen.findByText("Hello");
+    expect(screen.queryByRole("button", { name: "Re-transcribe with Cloud" })).not.toBeInTheDocument();
+    cleanup();
+
+    open(labelled, cloudEnabledSettings, recording);
+    await screen.findByText("Hello");
+    const cloudBtn = await screen.findByRole("button", { name: "Re-transcribe with Cloud" });
+    const retranscribe = vi.spyOn(mailClient, "cloudTranscribeRecording")
+      .mockRejectedValueOnce(new Error("Daily AI budget reached"))
+      .mockResolvedValueOnce({
+        recordingId: "r1",
+        speakerLabels: true,
+        lines: [line(0, "you", "Local to cloud"), line(1000, "others", "Remote speaker", "Speaker 1")],
+      });
+
+    fireEvent.click(cloudBtn);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Daily AI budget reached");
+    expect(screen.getByText("Hello")).toBeInTheDocument();
+
+    fireEvent.click(cloudBtn);
+    expect(await screen.findByText("Remote speaker")).toBeInTheDocument();
+    expect(screen.getByText("Others (Speaker 1)")).toBeInTheDocument();
+    expect(retranscribe).toHaveBeenCalledWith("r1", "openrouter", "microsoft/mai-transcribe-2", null, true);
   });
 });

@@ -6,7 +6,8 @@
 //! Every field has a default and unknown fields are ignored, so JSON stored
 //! by an older or newer build still loads.
 
-use super::policy::TranscriptionModel;
+use super::policy::{self, TranscriptionModel};
+use crate::ai::AiProvider;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -90,6 +91,14 @@ pub struct RecordingSettings {
     pub include_my_notes: bool,
     pub attach_transcript: bool,
     pub consent_acknowledged: bool,
+    pub custom_vocabulary: Vec<String>,
+    pub cloud_transcription_enabled: bool,
+    pub cloud_transcription_disclosure_acknowledged: bool,
+    pub cloud_transcription_default: bool,
+    pub cloud_transcription_provider: Option<AiProvider>,
+    pub cloud_transcription_model: String,
+    pub cloud_transcription_endpoint: Option<String>,
+    pub cloud_transcription_diarize: bool,
 }
 
 impl Default for RecordingSettings {
@@ -108,6 +117,14 @@ impl Default for RecordingSettings {
             include_my_notes: false,
             attach_transcript: false,
             consent_acknowledged: false,
+            custom_vocabulary: Vec::new(),
+            cloud_transcription_enabled: false,
+            cloud_transcription_disclosure_acknowledged: false,
+            cloud_transcription_default: false,
+            cloud_transcription_provider: None,
+            cloud_transcription_model: policy::CLOUD_DEFAULT_MODEL_OPENROUTER.to_string(),
+            cloud_transcription_endpoint: None,
+            cloud_transcription_diarize: true,
         }
     }
 }
@@ -132,6 +149,16 @@ mod tests {
         assert_eq!(settings.keep_audio, KeepAudio::Days7);
         assert_eq!(settings.transcription_model, TranscriptionModelChoice::Fast);
         assert!(settings.transcribe_during_meetings);
+        assert!(settings.custom_vocabulary.is_empty());
+        assert!(!settings.cloud_transcription_enabled);
+        assert!(!settings.cloud_transcription_disclosure_acknowledged);
+        assert!(!settings.cloud_transcription_default);
+        assert_eq!(settings.cloud_transcription_provider, None);
+        assert_eq!(
+            settings.cloud_transcription_model,
+            policy::CLOUD_DEFAULT_MODEL_OPENROUTER
+        );
+        assert!(settings.cloud_transcription_diarize);
     }
 
     #[test]
@@ -143,6 +170,15 @@ mod tests {
         assert_eq!(json["microphoneDeviceUid"], serde_json::Value::Null);
         assert_eq!(json["transcriptionLanguage"], serde_json::Value::Null);
         assert_eq!(json["recordMeetings"], false);
+        assert_eq!(json["customVocabulary"], serde_json::json!([]));
+        assert_eq!(json["cloudTranscriptionEnabled"], false);
+        assert_eq!(json["cloudTranscriptionDisclosureAcknowledged"], false);
+        assert_eq!(json["cloudTranscriptionDefault"], false);
+        assert_eq!(
+            json["cloudTranscriptionModel"],
+            policy::CLOUD_DEFAULT_MODEL_OPENROUTER
+        );
+        assert_eq!(json["cloudTranscriptionDiarize"], true);
         let older: RecordingSettings = serde_json::from_str(
             r#"{"recordMeetings":true,"keepAudio":"untilTranscribed","futureField":1}"#,
         )
@@ -152,6 +188,9 @@ mod tests {
         assert_eq!(older.transcription_engine, TranscriptionEngineChoice::Auto);
         assert_eq!(older.microphone_device_uid, None);
         assert_eq!(older.transcription_language, None);
+        assert!(older.custom_vocabulary.is_empty());
+        assert!(!older.cloud_transcription_enabled);
+        assert!(older.cloud_transcription_diarize);
         assert!(older.offer_to_record, "a missing field takes its default");
         assert!(
             older.transcribe_during_meetings,

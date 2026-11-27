@@ -19,12 +19,14 @@ use super::offers::{self, MicActivityProbe, OfferEngine, OfferInput, TrayOffer};
 use super::retention;
 use super::segments;
 use super::settings::{RecordingSettings, TranscriptionModelChoice};
+use super::transcribe::cloud::CloudTranscriptionBackend;
 use super::transcribe::memory::MemoryProbe;
 use super::transcribe::models::{ModelStore, TranscriptionModelStatus};
 use super::transcribe::plan;
 use super::transcribe::power::PowerSource;
 use super::transcribe::scheduler::{Scheduler, TrayTranscription};
 use super::transcribe::Transcriber;
+use super::vocabulary::{self, VocabularySuggestion};
 use super::{policy, DiskProbe, RecordingPhase, RecordingService, RecordingStatus};
 use crate::clock::Clock;
 use crate::db::note_entities::OfferedMeeting;
@@ -66,10 +68,11 @@ pub trait RecordingNotifier: Send + Sync {
     fn models_changed(&self, statuses: &[TranscriptionModelStatus]);
 }
 
-/// What transcription needs: the worker, the power source, the memory
-/// probe, and the models.
+/// What transcription needs: the worker, cloud backend, power source, memory
+/// probe, and models.
 pub struct TranscriptionParts {
     pub transcriber: Arc<dyn Transcriber>,
+    pub cloud: Arc<dyn CloudTranscriptionBackend>,
     pub power: Arc<dyn PowerSource>,
     pub memory: Arc<dyn MemoryProbe>,
     pub models: Arc<ModelStore>,
@@ -97,6 +100,8 @@ pub struct RecordingTranscriptLine {
     pub start_ms: i64,
     pub end_ms: i64,
     pub speaker: Option<TranscriptSpeaker>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker_label: Option<String>,
     pub text: String,
 }
 
@@ -134,6 +139,7 @@ pub struct RecordingRuntime {
     clock: Arc<dyn Clock + Send + Sync>,
     pub(super) notifier: Arc<dyn RecordingNotifier>,
     pub(super) scheduler: Arc<Scheduler>,
+    pub(super) cloud: Arc<dyn CloudTranscriptionBackend>,
     settings: Mutex<RecordingSettings>,
     /// The last status published, with its elapsed time zeroed.
     published: Mutex<Option<RecordingStatus>>,
@@ -226,6 +232,7 @@ impl RecordingRuntime {
             clock,
             notifier,
             scheduler,
+            cloud: transcription.cloud,
             settings: Mutex::new(settings),
             published: Mutex::new(None),
             last_sweep: Mutex::new(None),
@@ -547,7 +554,12 @@ impl RecordingRuntime {
         }
     }
 
-    pub fn set_settings(&self, settings: RecordingSettings) -> Result<(), String> {
+    pub fn set_settings(&self, mut settings: RecordingSettings) -> Result<(), String> {
+        settings.custom_vocabulary =
+            policy::sanitize_custom_vocabulary(&settings.custom_vocabulary);
+        if !settings.cloud_transcription_enabled {
+            settings.cloud_transcription_default = false;
+        }
         self.database
             .set_recording_settings(&settings)
             .map_err(String::from)?;
@@ -860,6 +872,11 @@ impl RecordingRuntime {
                     Track::Mic => TranscriptSpeaker::You,
                     Track::System => TranscriptSpeaker::Others,
                 }),
+                speaker_label: if speaker_labels && row.track == Track::System {
+                    row.speaker_label
+                } else {
+                    None
+                },
                 text: row.text,
             })
             .collect();
@@ -868,6 +885,179 @@ impl RecordingRuntime {
             speaker_labels,
             lines,
         })
+    }
+
+    /// Scans Sent email locally for recurring domain terms, acronyms, and
+    /// proper nouns. Never saves suggestions automatically.
+    pub fn suggest_vocabulary(&self) -> Result<Vec<VocabularySuggestion>, String> {
+        let existing = self.settings().custom_vocabulary;
+        let messages = self
+            .database
+            .sent_message_texts_for_vocabulary(policy::SENT_VOCAB_SCAN_LIMIT)
+            .map_err(String::from)?;
+        Ok(vocabulary::extract_vocabulary_suggestions(
+            &messages, &existing,
+        ))
+    }
+
+    /// Explicitly uploads an existing recording's per-track audio for cloud
+    /// transcription, preserving any prior transcript if the upload fails.
+    pub fn cloud_transcribe_recording(
+        &self,
+        id: &str,
+        provider: crate::ai::AiProvider,
+        model: &str,
+        endpoint: Option<&str>,
+        diarize: bool,
+        api_key: &str,
+    ) -> Result<RecordingTranscript, String> {
+        self.cloud_transcribe_recording_with_requests(
+            id,
+            provider,
+            model,
+            endpoint,
+            diarize,
+            api_key,
+            &crate::ai::requests::RUNTIME,
+        )
+    }
+
+    pub(crate) fn cloud_transcribe_recording_with_requests(
+        &self,
+        id: &str,
+        provider: crate::ai::AiProvider,
+        model: &str,
+        endpoint: Option<&str>,
+        diarize: bool,
+        api_key: &str,
+        requests: &crate::ai::requests::Runtime,
+    ) -> Result<RecordingTranscript, String> {
+        self.refuse_unsupported()?;
+        let settings = self.settings();
+        if !settings.cloud_transcription_enabled
+            || !settings.cloud_transcription_disclosure_acknowledged
+        {
+            return Err(
+                "Turn on Cloud Transcription in Settings → Meeting Recording and confirm the privacy disclosure first."
+                    .into(),
+            );
+        }
+        if self
+            .scheduler
+            .current()
+            .is_some_and(|job| job.recording_id == id)
+        {
+            return Err("This recording is already being transcribed.".into());
+        }
+        let recording = self
+            .database
+            .recording(id)
+            .map_err(String::from)?
+            .ok_or("This recording no longer exists.")?;
+        match recording.state {
+            RecordingState::Recording => return Err(ACTIVE_REFUSAL.into()),
+            RecordingState::Transcribing => {
+                return Err("This recording is already being transcribed.".into())
+            }
+            RecordingState::Recorded
+            | RecordingState::Interrupted
+            | RecordingState::Transcribed
+            | RecordingState::Failed => {}
+        }
+        if recording.audio_deleted || plan::plan(Path::new(&recording.audio_dir), true).is_empty() {
+            return Err("This recording has no audio to transcribe.".into());
+        }
+
+        let previous_state = recording.state;
+        let previous_error = recording.error.clone();
+        let attendees = self.database.recording_attendees(id).unwrap_or_default();
+        let headphones = recording
+            .tracks
+            .iter()
+            .any(|t| t.track == Track::System && t.is_headphones == Some(true));
+        let audio_dir = PathBuf::from(&recording.audio_dir);
+        let system_start = plan::standing(&audio_dir, true, |_| true)
+            .system_start_ms
+            .map(|start| start as i64);
+
+        self.database
+            .set_recording_state(id, RecordingState::Transcribing, None)
+            .map_err(String::from)?;
+        self.notifier.recordings_changed(id);
+        self.notifier.transcription_progress(id, 0);
+
+        let result = super::transcribe::cloud::transcribe_recording_cloud(
+            self.cloud.as_ref(),
+            requests,
+            super::transcribe::cloud::CloudJobInput {
+                recording_id: id,
+                title: &recording.title,
+                attendees: &attendees,
+                audio_dir: &audio_dir,
+                provider,
+                model,
+                endpoint,
+                api_key,
+                language: settings.transcription_language.as_deref(),
+                custom_vocabulary: &settings.custom_vocabulary,
+                diarize,
+                headphones,
+            },
+            None,
+            |percent| self.notifier.transcription_progress(id, percent),
+        );
+
+        match result {
+            Ok(rows) => {
+                self.database
+                    .save_transcript(
+                        id,
+                        &rows,
+                        policy::CLOUD_TRANSCRIPTION_ENGINE,
+                        model.trim(),
+                        system_start,
+                    )
+                    .map_err(String::from)?;
+                if settings.keep_audio != super::settings::KeepAudio::UntilTranscribed {
+                    if let Err(error) =
+                        super::transcribe::transcode::transcode_recording_dir(&audio_dir)
+                    {
+                        log::warn!(target: "recording", "transcoding completed recording: {error}");
+                    }
+                }
+                self.notifier.recordings_changed(id);
+                self.refresh_tray_now();
+                self.sweep();
+                self.recording_transcript(id)
+            }
+            Err(error) => {
+                let message = match error {
+                    super::transcribe::JobError::Failed(msg) => msg,
+                    super::transcribe::JobError::Cancelled => {
+                        "Cloud transcription was cancelled.".into()
+                    }
+                    super::transcribe::JobError::Interrupted => {
+                        "Cloud transcription was interrupted.".into()
+                    }
+                };
+                if previous_state == RecordingState::Transcribed {
+                    let _ = self.database.set_recording_state(
+                        id,
+                        RecordingState::Transcribed,
+                        previous_error.as_deref(),
+                    );
+                } else {
+                    let _ = self.database.set_recording_state(
+                        id,
+                        RecordingState::Failed,
+                        Some(&message),
+                    );
+                }
+                self.notifier.recordings_changed(id);
+                self.refresh_tray_now();
+                Err(message)
+            }
+        }
     }
 
     pub fn transcription_models(&self) -> Result<Vec<TranscriptionModelStatus>, String> {
@@ -1521,5 +1711,199 @@ mod tests {
             .unwrap();
         assert!(!h.runtime.status().still_recording_nudge);
         assert!(h.runtime.is_active());
+    }
+
+    #[test]
+    fn cloud_transcribe_requires_opt_in_and_preserves_prior_transcript_on_failure() {
+        use crate::recording::transcribe::cloud::{
+            CloudChunkRequest, CloudChunkResponse, CloudSegmentLine,
+        };
+        use std::sync::atomic::AtomicBool;
+
+        struct ScriptedCloud(AtomicBool);
+        impl CloudTranscriptionBackend for ScriptedCloud {
+            fn transcribe_chunk(
+                &self,
+                req: &CloudChunkRequest,
+            ) -> Result<CloudChunkResponse, String> {
+                if self.0.load(Ordering::SeqCst) {
+                    return Err("OpenRouter 503".into());
+                }
+                Ok(CloudChunkResponse {
+                    lines: vec![CloudSegmentLine {
+                        start_ms: 0,
+                        end_ms: 900,
+                        text: match req.track {
+                            Track::Mic => "Cloud mic line".into(),
+                            Track::System => "Cloud remote line".into(),
+                        },
+                        speaker_label: (req.track == Track::System).then(|| "Speaker 1".into()),
+                    }],
+                    cost_usd: Some(0.001),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    raw_body: "{}".into(),
+                })
+            }
+        }
+
+        let database = Arc::new(Database::open_memory());
+        let clock = Arc::new(TestClock(Mutex::new(at("2026-11-27T10:00:00Z"))));
+        let calls = Arc::new(Recorder::default());
+        let root = TempDir::new();
+        let mut parts = crate::recording::test_support::idle_transcription(root.path());
+        let cloud_script = Arc::new(ScriptedCloud(AtomicBool::new(true)));
+        parts.cloud = cloud_script.clone();
+        let runtime = RecordingRuntime::with_mic_probe(
+            database.clone(),
+            Arc::new(FakeBackend::new()),
+            clock,
+            Arc::new(PlentyOfDisk(AtomicU64::new(u64::MAX))),
+            root.path().to_path_buf(),
+            calls,
+            parts,
+            Arc::new(offers::NullMicProbe),
+        );
+
+        let dir = root.path().join("rec-cloud");
+        database
+            .create_recording(&crate::db::recordings::NewRecording {
+                id: "rec-cloud",
+                event_ref: None,
+                title: "Design Sync",
+                attendees: &[],
+                started_at: "2026-11-27T10:00:00Z",
+                audio_dir: &dir.to_string_lossy(),
+                tracks: &[
+                    (Track::Mic, crate::db::recordings::TrackState::Active),
+                    (Track::System, crate::db::recordings::TrackState::Active),
+                ],
+            })
+            .unwrap();
+        let mut mic = SegmentWriter::open(&dir, Track::Mic).unwrap();
+        mic.write(&vec![2_000; 16_000], 0).unwrap();
+        drop(mic);
+        let mut sys = SegmentWriter::open(&dir, Track::System).unwrap();
+        sys.write(&vec![2_000; 16_000], 0).unwrap();
+        drop(sys);
+        database
+            .save_transcript(
+                "rec-cloud",
+                &[crate::db::recordings::TranscriptRow {
+                    track: Track::Mic,
+                    start_ms: 0,
+                    end_ms: 900,
+                    text: "Existing local line".into(),
+                    rms: Some(0.1),
+                    dropped_as_echo: false,
+                    speaker_label: None,
+                }],
+                "speech_analyzer",
+                "apple-on-device",
+                Some(0),
+            )
+            .unwrap();
+
+        let requests = crate::ai::requests::Runtime::new();
+
+        // Refused without opt-in and disclosure acknowledgment.
+        let gate_err = runtime
+            .cloud_transcribe_recording_with_requests(
+                "rec-cloud",
+                crate::ai::AiProvider::OpenRouter,
+                policy::CLOUD_DEFAULT_MODEL_OPENROUTER,
+                None,
+                true,
+                "key",
+                &requests,
+            )
+            .unwrap_err();
+        assert!(gate_err.contains("Cloud Transcription"));
+
+        runtime
+            .set_settings(RecordingSettings {
+                cloud_transcription_enabled: true,
+                cloud_transcription_disclosure_acknowledged: true,
+                ..Default::default()
+            })
+            .unwrap();
+
+        // When cloud fails on an already-transcribed recording, its prior transcript stays intact.
+        let fail_err = runtime
+            .cloud_transcribe_recording_with_requests(
+                "rec-cloud",
+                crate::ai::AiProvider::OpenRouter,
+                policy::CLOUD_DEFAULT_MODEL_OPENROUTER,
+                None,
+                true,
+                "key",
+                &requests,
+            )
+            .unwrap_err();
+        assert!(fail_err.contains("OpenRouter 503"));
+        assert_eq!(
+            database.recording("rec-cloud").unwrap().unwrap().state,
+            RecordingState::Transcribed
+        );
+        assert_eq!(
+            runtime.recording_transcript("rec-cloud").unwrap().lines[0].text,
+            "Existing local line"
+        );
+
+        // Once cloud succeeds, transcript is replaced and remote speaker labels are kept.
+        cloud_script.0.store(false, Ordering::SeqCst);
+        let transcript = runtime
+            .cloud_transcribe_recording_with_requests(
+                "rec-cloud",
+                crate::ai::AiProvider::OpenRouter,
+                policy::CLOUD_DEFAULT_MODEL_OPENROUTER,
+                None,
+                true,
+                "key",
+                &requests,
+            )
+            .unwrap();
+        assert!(transcript.speaker_labels);
+        assert_eq!(transcript.lines.len(), 2);
+        assert_eq!(transcript.lines[0].speaker, Some(TranscriptSpeaker::You));
+        assert_eq!(transcript.lines[0].speaker_label, None);
+        assert_eq!(transcript.lines[1].speaker, Some(TranscriptSpeaker::Others));
+        assert_eq!(
+            transcript.lines[1].speaker_label.as_deref(),
+            Some("Speaker 1")
+        );
+    }
+
+    #[test]
+    fn suggest_vocabulary_reads_sent_mail_without_saving_automatically() {
+        let h = Harness::new();
+        h.database
+            .test_with_connection(|c| {
+                for (tid, mid, body) in [
+                    ("t1", "m1", "Shipping CoreAudio update."),
+                    ("t2", "m2", "Verifying CoreAudio behavior."),
+                    ("t3", "m3", "Documenting CoreAudio flags."),
+                ] {
+                    c.execute(
+                        "INSERT INTO threads(id,provider_thread_id,subject,snippet,participants_json,last_message_at,labels_json,account_id)
+                         VALUES(?1,?1,'Sync','','[]','2026-11-27T10:00:00Z','[]','me@example.com')",
+                        [tid],
+                    )?;
+                    c.execute(
+                        "INSERT INTO messages(id,thread_id,sender,recipients_json,sent_at,body_html,body_text)
+                         VALUES(?1,?2,'me@example.com','[]','2026-11-27T10:00:00Z','',?3)",
+                        [mid, tid, body],
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let suggested = h.runtime.suggest_vocabulary().unwrap();
+        assert_eq!(suggested.len(), 1);
+        assert_eq!(suggested[0].term, "CoreAudio");
+        assert!(
+            h.runtime.settings().custom_vocabulary.is_empty(),
+            "suggestions must stay un-saved until the user selects them"
+        );
     }
 }

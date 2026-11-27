@@ -55,6 +55,15 @@ pub(crate) fn idle_transcription(root: &Path) -> crate::recording::runtime::Tran
             Err(JobError::Failed("No worker in this test.".into()))
         }
     }
+    struct NoCloud;
+    impl crate::recording::transcribe::cloud::CloudTranscriptionBackend for NoCloud {
+        fn transcribe_chunk(
+            &self,
+            _: &crate::recording::transcribe::cloud::CloudChunkRequest,
+        ) -> Result<crate::recording::transcribe::cloud::CloudChunkResponse, String> {
+            Err("No cloud backend in this test.".into())
+        }
+    }
     struct Ac;
     impl crate::recording::transcribe::power::PowerSource for Ac {
         fn on_ac_power(&self) -> bool {
@@ -69,6 +78,7 @@ pub(crate) fn idle_transcription(root: &Path) -> crate::recording::runtime::Tran
     }
     crate::recording::runtime::TranscriptionParts {
         transcriber: Arc::new(NoWorker),
+        cloud: Arc::new(NoCloud),
         power: Arc::new(Ac),
         memory: Arc::new(PlentyOfMemory),
         models: Arc::new(ModelStore::new(

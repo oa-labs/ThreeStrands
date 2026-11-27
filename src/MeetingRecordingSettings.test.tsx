@@ -24,6 +24,8 @@ const defaults: RecordingSettings = {
   recordMeetings: false, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast", transcriptionLanguage: null,
   transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
   summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: false,
+  customVocabulary: [], cloudTranscriptionEnabled: false, cloudTranscriptionDisclosureAcknowledged: false, cloudTranscriptionDefault: false,
+  cloudTranscriptionProvider: null, cloudTranscriptionModel: "microsoft/mai-transcribe-2", cloudTranscriptionEndpoint: null, cloudTranscriptionDiarize: true,
 };
 const builtInMic: AudioInputDevice = { uid: "built-in", name: "MacBook Pro Microphone", isDefault: true, isBluetooth: false };
 
@@ -357,5 +359,71 @@ describe("Transcription Model", () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, offerToRecord: false }));
     expect(toggle).not.toBeChecked();
+  });
+
+  it("lets the user add, review Sent-mail suggestions, and remove Custom Vocabulary without auto-saving suggestions", async () => {
+    const { save } = setup();
+    const suggest = vi.spyOn(mailClient, "suggestRecordingVocabulary").mockResolvedValue([
+      { term: "ThreeStrands", threadCount: 5 },
+      { term: "QBR", threadCount: 3 },
+    ]);
+    const input = await screen.findByRole("textbox", { name: "Custom Vocabulary term" });
+    await waitFor(() => expect(input).toBeEnabled());
+
+    fireEvent.change(input, { target: { value: "CoreAudio" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, customVocabulary: ["CoreAudio"] }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Suggest from Sent Mail" }));
+    const panel = await screen.findByRole("region", { name: "Sent Mail Vocabulary Suggestions" });
+    expect(suggest).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // Uncheck QBR and confirm only ThreeStrands is added alongside CoreAudio.
+    fireEvent.click(within(panel).getByRole("checkbox", { name: /QBR/ }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Add Selected" }));
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({
+      ...defaults,
+      customVocabulary: ["CoreAudio", "ThreeStrands"],
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove CoreAudio" }));
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({
+      ...defaults,
+      customVocabulary: ["ThreeStrands"],
+    }));
+  });
+
+  it("requires privacy disclosure confirmation before enabling Cloud Transcription", async () => {
+    localStorage.setItem("threestrands.settings.ai.provider", "openrouter");
+    try {
+      const { save } = setup();
+      const toggle = await screen.findByRole("checkbox", { name: "Cloud Transcription" });
+      await waitFor(() => expect(toggle).toBeEnabled());
+      expect(toggle).not.toBeChecked();
+      expect(toggle).toHaveAccessibleDescription();
+
+      fireEvent.click(toggle);
+      const confirm = screen.getByRole("group", { name: "Confirm Cloud Transcription" });
+      await waitFor(() => expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus());
+      expect(save).not.toHaveBeenCalled();
+
+      fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+      expect(toggle).not.toBeChecked();
+      expect(save).not.toHaveBeenCalled();
+
+      fireEvent.click(toggle);
+      fireEvent.click(within(screen.getByRole("group", { name: "Confirm Cloud Transcription" })).getByRole("button", { name: "Enable Cloud Transcription" }));
+      await waitFor(() => expect(save).toHaveBeenLastCalledWith({
+        ...defaults,
+        cloudTranscriptionEnabled: true,
+        cloudTranscriptionDisclosureAcknowledged: true,
+        cloudTranscriptionProvider: "openrouter",
+        cloudTranscriptionModel: "microsoft/mai-transcribe-2",
+      }));
+      expect(await screen.findByRole("textbox", { name: "Cloud Transcription Model" })).toHaveValue("microsoft/mai-transcribe-2");
+    } finally {
+      localStorage.removeItem("threestrands.settings.ai.provider");
+    }
   });
 });

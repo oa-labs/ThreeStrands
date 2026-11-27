@@ -72,6 +72,7 @@ const MIGRATIONS: &[Migration] = &[
     (125, to_v125),
     (126, to_v126),
     (127, to_v127),
+    (128, to_v128),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1606,6 +1607,21 @@ fn to_v120(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v128(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('meeting_recording_segments') WHERE name='speaker_label')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)?;
+    if !exists {
+        tx.execute_batch("ALTER TABLE meeting_recording_segments ADD COLUMN speaker_label TEXT;")
+            .map_err(error)?;
+    }
+    Ok(())
+}
+
 fn to_v127(tx: &rusqlite::Transaction) -> Result<(), String> {
     let has_column = |table: &str, column: &str| -> Result<bool, String> {
         tx.query_row(
@@ -2586,6 +2602,40 @@ mod tests {
             .unwrap();
         assert_eq!(version, super::LATEST_VERSION);
         // Running it again changes nothing.
+        super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v128_adds_segment_speaker_label_and_keeps_existing_data() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO meeting_recordings(id,title,started_at,state,audio_dir)
+                 VALUES('r128','Sync','2026-11-27T10:00:00Z','transcribed','/a/r128');
+                 INSERT INTO meeting_recording_segments(recording_id,seq,track,start_ms,end_ms,text,rms,dropped_as_echo)
+                 VALUES('r128',0,'system',0,1000,'Hi',0.1,0);
+                 PRAGMA user_version=127;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('meeting_recording_segments') WHERE name='speaker_label')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(exists, "meeting_recording_segments.speaker_label");
+        let text: String = connection
+            .query_row(
+                "SELECT text FROM meeting_recording_segments WHERE recording_id='r128' AND seq=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(text, "Hi");
         super::migrate(&mut connection).unwrap();
     }
 

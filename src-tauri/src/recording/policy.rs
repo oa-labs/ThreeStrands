@@ -298,19 +298,90 @@ pub const ECHO_STOP_WORDS: &[&str] = &[
 ];
 
 /// Whisper vocabulary seeding: maximum whitespace tokens and UTF-8 bytes in
-/// `initial_prompt`, built from meeting title and attendee names.
+/// `initial_prompt`, built from meeting title, attendee names, and custom vocabulary.
 pub const WHISPER_INITIAL_PROMPT_MAX_TOKENS: usize = 80;
 pub const WHISPER_INITIAL_PROMPT_MAX_CHARS: usize = 320;
 /// Shortest speech span (ms) that receives `initial_prompt`, so brief noises
 /// don't parrot the prompt back.
 pub const WHISPER_PROMPT_MIN_SPAN_MS: u32 = 1000;
 
+/// Stage 8 custom vocabulary limits and Sent-mail suggestion parameters.
+pub const CUSTOM_VOCAB_MAX_TERMS: usize = 100;
+pub const CUSTOM_VOCAB_MAX_TERM_CHARS: usize = 64;
+pub const SENT_VOCAB_SCAN_LIMIT: usize = 500;
+pub const SENT_VOCAB_MIN_THREADS: usize = 3;
+pub const SENT_VOCAB_MAX_SUGGESTIONS: usize = 40;
+pub const SENT_VOCAB_MAX_TOKEN_CHARS: usize = 40;
+
+/// Stage 8 cloud transcription upload limits, timeout, engine name, and pricing.
+pub const CLOUD_TRANSCRIPTION_MAX_UPLOAD_BYTES: usize = 24 * 1024 * 1024;
+/// Raw WAV byte limit for OpenRouter's JSON base64 `input_audio` payload so
+/// base64 expansion (~4/3) plus JSON metadata stays within the 25 MB cap.
+pub const CLOUD_OPENROUTER_MAX_RAW_BYTES: usize = 18 * 1024 * 1024;
+/// Maximum audio duration in a single uploaded track chunk (8 min; ~15.36 MB raw PCM WAV).
+pub const CLOUD_TRANSCRIPTION_MAX_CHUNK_MS: u64 = 8 * 60 * 1000;
+pub const CLOUD_TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(180);
+pub const CLOUD_TRANSCRIPTION_ENGINE: &str = "cloud";
+pub const CLOUD_DEFAULT_MODEL_OPENROUTER: &str = "microsoft/mai-transcribe-2";
+pub const CLOUD_DEFAULT_MODEL_OPENAI: &str = "gpt-4o-mini-transcribe";
+pub const CLOUD_DEFAULT_MODEL_FIREWORKS: &str = "whisper-v3-turbo";
+pub const CLOUD_MAI_TRANSCRIBE_2_USD_PER_MIN: f64 = 0.10 / 60.0;
+pub const CLOUD_OPENAI_MINI_TRANSCRIBE_USD_PER_MIN: f64 = 0.003;
+pub const CLOUD_DEFAULT_USD_PER_MIN: f64 = 0.006;
+
+/// Sanitizes, deduplicates (case-insensitively, keeping first casing), and
+/// caps user-reviewed custom vocabulary terms.
+pub fn sanitize_custom_vocabulary(terms: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for raw in terms {
+        let cleaned: String = raw
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let trimmed = cleaned.trim_matches(|c: char| {
+            !c.is_alphanumeric() && !matches!(c, '-' | '\'' | '.' | '+' | '/')
+        });
+        let trimmed = trimmed.trim();
+        if trimmed.is_empty() || trimmed.chars().count() > CUSTOM_VOCAB_MAX_TERM_CHARS {
+            continue;
+        }
+        let key = trimmed.to_ascii_lowercase();
+        if seen.insert(key) {
+            out.push(trimmed.to_string());
+            if out.len() >= CUSTOM_VOCAB_MAX_TERMS {
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// Builds a short, sanitized `initial_prompt` from the meeting title and
-/// attendee display names, capped in tokens and characters.
+/// attendee display names.
 pub fn sanitize_initial_prompt(title: &str, attendees: &[String]) -> Option<String> {
+    sanitize_initial_prompt_with_vocab(title, attendees, &[])
+}
+
+/// Builds a short, sanitized `initial_prompt` prioritizing the meeting title
+/// and attendee display names first, then appending user-reviewed custom
+/// vocabulary terms up to [`WHISPER_INITIAL_PROMPT_MAX_TOKENS`] and
+/// [`WHISPER_INITIAL_PROMPT_MAX_CHARS`].
+pub fn sanitize_initial_prompt_with_vocab(
+    title: &str,
+    attendees: &[String],
+    custom_vocab: &[String],
+) -> Option<String> {
+    let sanitized_vocab = sanitize_custom_vocabulary(custom_vocab);
     let mut seen = std::collections::HashSet::new();
     let mut terms: Vec<String> = Vec::new();
-    for raw in std::iter::once(title).chain(attendees.iter().map(String::as_str)) {
+    for raw in std::iter::once(title)
+        .chain(attendees.iter().map(String::as_str))
+        .chain(sanitized_vocab.iter().map(String::as_str))
+    {
         let cleaned: String = raw
             .chars()
             .map(|c| if c.is_control() { ' ' } else { c })
@@ -346,6 +417,40 @@ pub fn sanitize_initial_prompt(title: &str, attendees: &[String]) -> Option<Stri
         out.push_str(&term);
     }
     (!out.is_empty()).then_some(out)
+}
+
+/// Whether `provider` exposes a supported cloud audio transcription endpoint.
+pub fn cloud_provider_supported(provider: crate::ai::AiProvider) -> bool {
+    matches!(
+        provider,
+        crate::ai::AiProvider::OpenRouter
+            | crate::ai::AiProvider::OpenAi
+            | crate::ai::AiProvider::Fireworks
+            | crate::ai::AiProvider::Custom
+    )
+}
+
+/// Conservative per-minute USD estimate used to reserve against the daily AI
+/// spending limit before uploading an audio chunk.
+pub fn estimate_cloud_transcription_cost_usd(
+    provider: crate::ai::AiProvider,
+    model: &str,
+    total_audio_ms: u64,
+) -> f64 {
+    if total_audio_ms == 0 {
+        return 0.0;
+    }
+    let lower = model.trim().to_ascii_lowercase();
+    let per_minute = if lower.contains("mai-transcribe-2") {
+        CLOUD_MAI_TRANSCRIBE_2_USD_PER_MIN
+    } else if lower.contains("gpt-4o-mini-transcribe")
+        || matches!(provider, crate::ai::AiProvider::Fireworks)
+    {
+        CLOUD_OPENAI_MINI_TRANSCRIBE_USD_PER_MIN
+    } else {
+        CLOUD_DEFAULT_USD_PER_MIN
+    };
+    (total_audio_ms as f64 / 60_000.0) * per_minute
 }
 
 /// Normalizes a user-chosen language setting (`None` or `"auto"` -> `None`,
@@ -878,5 +983,71 @@ mod tests {
         assert_eq!(classify_bundle_id("com.example.App"), MicProcessKind::Other);
         assert_eq!(classify_bundle_id("us.zoom.xosEvil"), MicProcessKind::Other);
         assert_eq!(classify_bundle_id(""), MicProcessKind::Other);
+    }
+
+    #[test]
+    fn custom_vocabulary_sanitizes_deduplicates_and_enforces_caps() {
+        let long_ok = "a".repeat(CUSTOM_VOCAB_MAX_TERM_CHARS);
+        let too_long = "b".repeat(CUSTOM_VOCAB_MAX_TERM_CHARS + 1);
+        let mut raw = vec![
+            "  ThreeStrands\n ".to_string(),
+            "threestrands".to_string(),
+            long_ok.clone(),
+            too_long,
+            "   ".to_string(),
+            "whisper.cpp".to_string(),
+        ];
+        for i in 0..(CUSTOM_VOCAB_MAX_TERMS + 10) {
+            raw.push(format!("Term{i}"));
+        }
+        let cleaned = sanitize_custom_vocabulary(&raw);
+        assert_eq!(cleaned.len(), CUSTOM_VOCAB_MAX_TERMS);
+        assert_eq!(cleaned[0], "ThreeStrands");
+        assert_eq!(cleaned[1], long_ok);
+        assert_eq!(cleaned[2], "whisper.cpp");
+    }
+
+    #[test]
+    fn initial_prompt_with_vocab_puts_meeting_context_before_custom_terms() {
+        let prompt = sanitize_initial_prompt_with_vocab(
+            "Launch Sync",
+            &["Ann".into()],
+            &[
+                "ThreeStrands".into(),
+                "Launch".into(),
+                "SpeechAnalyzer".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(prompt, "Launch, Sync, Ann, ThreeStrands, SpeechAnalyzer");
+    }
+
+    #[test]
+    fn cloud_limits_and_estimates_stay_within_provider_caps() {
+        // OpenRouter JSON base64 (4/3 + overhead) fits inside the 25 MB upload limit.
+        assert!((CLOUD_OPENROUTER_MAX_RAW_BYTES * 4) / 3 <= CLOUD_TRANSCRIPTION_MAX_UPLOAD_BYTES);
+        let one_chunk_wav = 44
+            + (CLOUD_TRANSCRIPTION_MAX_CHUNK_MS / 1000) as usize * OUTPUT_SAMPLE_RATE as usize * 2;
+        assert!(one_chunk_wav < CLOUD_OPENROUTER_MAX_RAW_BYTES);
+        assert!(cloud_provider_supported(crate::ai::AiProvider::OpenRouter));
+        assert!(cloud_provider_supported(crate::ai::AiProvider::OpenAi));
+        assert!(cloud_provider_supported(crate::ai::AiProvider::Fireworks));
+        assert!(cloud_provider_supported(crate::ai::AiProvider::Custom));
+        assert!(!cloud_provider_supported(crate::ai::AiProvider::Anthropic));
+        assert!(!cloud_provider_supported(crate::ai::AiProvider::None));
+        let mai = estimate_cloud_transcription_cost_usd(
+            crate::ai::AiProvider::OpenRouter,
+            CLOUD_DEFAULT_MODEL_OPENROUTER,
+            60 * 60 * 1000,
+        );
+        assert!((mai - 0.10).abs() < 1e-9);
+        assert_eq!(
+            estimate_cloud_transcription_cost_usd(
+                crate::ai::AiProvider::OpenRouter,
+                CLOUD_DEFAULT_MODEL_OPENROUTER,
+                0
+            ),
+            0.0
+        );
     }
 }

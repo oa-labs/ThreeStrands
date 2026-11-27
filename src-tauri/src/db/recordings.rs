@@ -151,6 +151,7 @@ pub struct TranscriptRow {
     pub text: String,
     pub rms: Option<f32>,
     pub dropped_as_echo: bool,
+    pub speaker_label: Option<String>,
 }
 
 /// A recording's audio, as retention and deletion see it.
@@ -487,7 +488,7 @@ impl Database {
     ) -> DbResult<()> {
         self.with_transaction(|tx| {
             let changed = tx.execute(
-                "UPDATE meeting_recordings SET state='transcribed',error=NULL,engine=?2,model=?3 WHERE id=?1",
+                "UPDATE meeting_recordings SET state='transcribed',error=NULL,engine=?2,model=?3,recap_json=NULL WHERE id=?1",
                 params![id, engine, model],
             )?;
             if changed == 0 {
@@ -500,8 +501,8 @@ impl Database {
             for (seq, row) in rows.iter().enumerate() {
                 tx.execute(
                     "INSERT INTO meeting_recording_segments
-                        (recording_id,seq,track,start_ms,end_ms,text,rms,dropped_as_echo)
-                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                        (recording_id,seq,track,start_ms,end_ms,text,rms,dropped_as_echo,speaker_label)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
                     params![
                         id,
                         seq as i64,
@@ -510,7 +511,8 @@ impl Database {
                         row.end_ms,
                         row.text,
                         row.rms.map(f64::from),
-                        row.dropped_as_echo
+                        row.dropped_as_echo,
+                        row.speaker_label
                     ],
                 )?;
             }
@@ -529,7 +531,7 @@ impl Database {
     pub fn transcript_rows(&self, id: &str) -> DbResult<Vec<TranscriptRow>> {
         self.with_connection(|c| {
             let mut statement = c.prepare(
-                "SELECT track,start_ms,end_ms,text,rms,dropped_as_echo
+                "SELECT track,start_ms,end_ms,text,rms,dropped_as_echo,speaker_label
                  FROM meeting_recording_segments WHERE recording_id=?1 ORDER BY seq",
             )?;
             let rows = statement.query_map([id], |row| {
@@ -540,11 +542,12 @@ impl Database {
                     row.get(3)?,
                     row.get::<_, Option<f64>>(4)?,
                     row.get(5)?,
+                    row.get(6)?,
                 ))
             })?;
             let mut out = Vec::new();
             for row in rows {
-                let (track, start_ms, end_ms, text, rms, dropped_as_echo) = row?;
+                let (track, start_ms, end_ms, text, rms, dropped_as_echo, speaker_label) = row?;
                 out.push(TranscriptRow {
                     track: Track::parse(&track)
                         .ok_or_else(|| DatabaseError::corrupt(format!("Unknown track {track}")))?,
@@ -553,6 +556,7 @@ impl Database {
                     text,
                     rms: rms.map(|v| v as f32),
                     dropped_as_echo,
+                    speaker_label,
                 });
             }
             Ok(out)
@@ -658,6 +662,38 @@ impl Database {
             Ok(())
         })
     }
+
+    /// Most recent sent messages (excluding received mail) for local custom
+    /// vocabulary suggestion extraction, returning `(thread_id, text)`.
+    pub fn sent_message_texts_for_vocabulary(
+        &self,
+        limit: usize,
+    ) -> DbResult<Vec<(String, String)>> {
+        self.with_connection(|c| {
+            let mut statement = c.prepare(
+                "SELECT m.thread_id, t.subject, m.body_text, m.body_text_z
+                 FROM messages m
+                 JOIN threads t ON t.id = m.thread_id
+                 WHERE EXISTS (
+                     SELECT 1 FROM contact_interactions ci
+                     WHERE ci.message_id = m.id
+                       AND ci.account_id = t.account_id
+                       AND ci.direction = 'sent'
+                 )
+                 OR lower(trim(m.sender)) = lower(trim(t.account_id))
+                 OR lower(trim(m.sender)) LIKE '%<' || lower(trim(t.account_id)) || '>'
+                 ORDER BY m.sent_at DESC
+                 LIMIT ?1",
+            )?;
+            let rows = statement.query_map([limit as i64], |row| {
+                let thread_id: String = row.get(0)?;
+                let subject: String = row.get(1)?;
+                let body = super::messages::resolve_body(2, row.get(2)?, row.get(3)?)?;
+                Ok((thread_id, format!("{subject}\n{body}")))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        })
+    }
 }
 
 /// Attachment file name for a saved transcript: `Transcript – <meeting> – <date>.md`.
@@ -705,8 +741,11 @@ pub fn format_transcript_markdown(
                 Track::System => TranscriptSpeaker::Others,
             };
             let label = match speaker {
-                TranscriptSpeaker::You => "You",
-                TranscriptSpeaker::Others => "Others",
+                TranscriptSpeaker::You => "You".to_string(),
+                TranscriptSpeaker::Others => match row.speaker_label.as_deref() {
+                    Some(remote) if !remote.trim().is_empty() => format!("Others ({remote})"),
+                    _ => "Others".to_string(),
+                },
             };
             out.push_str(&format!("- **[{stamp}] {label}:** {}\n", row.text.trim()));
         } else {
@@ -883,6 +922,7 @@ mod tests {
             text: text.into(),
             rms: Some(0.1),
             dropped_as_echo: echo,
+            speaker_label: None,
         }
     }
 

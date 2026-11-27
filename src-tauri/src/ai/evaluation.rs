@@ -389,6 +389,9 @@ async fn execute(case: &Case, provider: AiProvider, options: &Options) -> Result
             Err("Meeting preparation does not use quality evaluations yet".into())
         }
         Feature::MeetingRecap => Err("Meeting recaps do not use quality evaluations yet".into()),
+        Feature::CloudTranscription => {
+            Err("Cloud transcription does not use offline replay evaluations".into())
+        }
         Feature::AgentStaleReads | Feature::AgentResolvedSweeper | Feature::AgentAgingReplies => {
             Err("Inbox assistants do not use offline replay evaluations".into())
         }

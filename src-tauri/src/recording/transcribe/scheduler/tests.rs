@@ -212,6 +212,7 @@ impl TranscriptionSession for FakeSession {
                 end_ms: request.start_ms + audio_ms,
                 text,
                 rms: None,
+                speaker_label: None,
             }],
             held,
             detected_language,
@@ -306,6 +307,16 @@ impl Harness {
             Arc::new(Plenty),
             urls,
         ));
+        struct NoCloud;
+        impl crate::recording::transcribe::cloud::CloudTranscriptionBackend for NoCloud {
+            fn transcribe_chunk(
+                &self,
+                _: &crate::recording::transcribe::cloud::CloudChunkRequest,
+            ) -> Result<crate::recording::transcribe::cloud::CloudChunkResponse, String>
+            {
+                Err("No cloud backend in this test.".into())
+            }
+        }
         let runtime = Arc::new(RecordingRuntime::new(
             database.clone(),
             Arc::new(backend.clone()),
@@ -315,6 +326,7 @@ impl Harness {
             calls.clone(),
             TranscriptionParts {
                 transcriber,
+                cloud: Arc::new(NoCloud),
                 power: power.clone(),
                 memory: memory.clone(),
                 models,
@@ -1733,6 +1745,7 @@ impl TranscriptionSession for TextSession {
                     request.track.as_str()
                 ),
                 rms: None,
+                speaker_label: None,
             })
             .collect();
         let bytes: usize = lines

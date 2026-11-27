@@ -22,6 +22,7 @@ pub mod sleep;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod transcribe;
+pub mod vocabulary;
 
 use crate::clock::Clock;
 use crate::db::recordings::{NewRecording, RecordingState, TrackPatch, TrackState};

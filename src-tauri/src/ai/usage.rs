@@ -114,19 +114,24 @@ pub fn set_usage_recorder(recorder: UsageRecorder) {
 pub(super) fn record_usage(request: &ProviderRequest<'_>, body: &str) {
     let (input_tokens, output_tokens, cost_usd) =
         parse_usage(request.provider.descriptor().protocol, body);
+    record_event(UsageEvent {
+        provider: request.provider,
+        model: request.model.to_string(),
+        input_tokens,
+        output_tokens,
+        cost_usd,
+        purpose: REQUEST_PURPOSE.try_with(Clone::clone).ok(),
+    });
+}
+
+/// Persists a usage event into whichever AI activity recorder is active.
+pub fn record_event(event: UsageEvent) {
     let recorder = REQUEST_RECORDER
         .try_with(Clone::clone)
         .ok()
         .or_else(|| USAGE_RECORDER.read().ok().and_then(|slot| slot.clone()));
     if let Some(recorder) = recorder {
-        recorder(&UsageEvent {
-            provider: request.provider,
-            model: request.model.to_string(),
-            input_tokens,
-            output_tokens,
-            cost_usd,
-            purpose: REQUEST_PURPOSE.try_with(Clone::clone).ok(),
-        });
+        recorder(&event);
     }
 }
 

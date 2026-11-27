@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useId, useState } from "react";
+import { readAiEndpoint, readAiProvider } from "./aiSettings";
 import { mailClient } from "./data/client";
-import type { AudioInputDevice, KeepAudio, RecordingCapabilities, RecordingSettings, RecordingsUsage, TranscriptionModelName, TranscriptionModelStatus } from "./domain";
+import type { AudioInputDevice, KeepAudio, RecordingCapabilities, RecordingSettings, RecordingsUsage, TranscriptionModelName, TranscriptionModelStatus, VocabularySuggestion } from "./domain";
 import { errorMessage } from "./errors";
 import { InlineConfirm } from "./InlineConfirm";
+import { defaultCloudTranscriptionModel, isCloudTranscriptionProvider } from "./recordingPolicy";
 import { announceRecordingSettingsChanged } from "./recordingEvents";
 import { formatAttachmentSize } from "./threadPresentation";
 import { useTranscriptionModels } from "./useTranscriptionModels";
@@ -99,10 +101,15 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
   const [confirming, setConfirming] = useState<Confirming>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [deletingModel, setDeletingModel] = useState<TranscriptionModelName | null>(null);
+  const [newVocabTerm, setNewVocabTerm] = useState("");
+  const [suggestions, setSuggestions] = useState<VocabularySuggestion[] | null>(null);
+  const [selectedSuggestions, setSelectedSuggestions] = useState<string[]>([]);
+  const [confirmingCloud, setConfirmingCloud] = useState(false);
   const models = useTranscriptionModels();
   const ids = {
     record: useId(), microphone: useId(), keep: useId(), offer: useId(), remind: useId(),
     summarize: useId(), usage: useId(), model: useId(), language: useId(), during: useId(),
+    vocab: useId(), cloud: useId(), cloudModel: useId(), cloudDiarize: useId(), cloudDefault: useId(),
   };
 
   const loadUsage = useCallback(async () => setUsage(await mailClient.recordingsUsage()), []);
@@ -164,6 +171,65 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
     try { await run(); } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
   const confirm = (kind: Confirming) => { setMessage(null); setConfirming(kind); };
+
+  const addCustomVocab = async (termsToAdd: string[]) => {
+    if (!settings) return;
+    const seen = new Set(settings.customVocabulary.map((term) => term.toLowerCase()));
+    const next = [...settings.customVocabulary];
+    for (const raw of termsToAdd) {
+      const cleaned = raw.trim();
+      if (!cleaned) continue;
+      const key = cleaned.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        next.push(cleaned);
+      }
+    }
+    await change({ customVocabulary: next });
+  };
+  const removeCustomVocab = async (term: string) => {
+    if (!settings) return;
+    await change({ customVocabulary: settings.customVocabulary.filter((item) => item !== term) });
+  };
+  const loadVocabSuggestions = async () => {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const found = await mailClient.suggestRecordingVocabulary();
+      setSuggestions(found);
+      setSelectedSuggestions(found.map((item) => item.term));
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggleCloudTranscription = async (on: boolean) => {
+    if (!settings) return;
+    setError(null);
+    if (!on) {
+      setConfirmingCloud(false);
+      await change({ cloudTranscriptionEnabled: false, cloudTranscriptionDefault: false });
+      return;
+    }
+    setConfirmingCloud(true);
+  };
+  const confirmEnableCloud = async () => {
+    if (!settings) return;
+    const activeProvider = readAiProvider();
+    const provider = settings.cloudTranscriptionProvider ?? (isCloudTranscriptionProvider(activeProvider) ? activeProvider : null);
+    const model = settings.cloudTranscriptionModel.trim() || defaultCloudTranscriptionModel(provider ?? "openrouter") || "microsoft/mai-transcribe-2";
+    const endpoint = settings.cloudTranscriptionEndpoint ?? (activeProvider === "custom" ? readAiEndpoint().trim() || null : null);
+    setConfirmingCloud(false);
+    await change({
+      cloudTranscriptionEnabled: true,
+      cloudTranscriptionDisclosureAcknowledged: true,
+      cloudTranscriptionProvider: provider,
+      cloudTranscriptionModel: model,
+      cloudTranscriptionEndpoint: endpoint,
+    });
+  };
 
   const system = capabilities.systemAudio;
   const activeDevice = settings?.microphoneDeviceUid
@@ -254,6 +320,119 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
       <p className="settings-hint settings-field-detail" id={ids.language}>
         Auto detects the spoken language once near the start of each recording. Whisper Fast supports English only.
       </p>
+
+      <div className="settings-field settings-field-row">
+        <span>Custom Vocabulary</span>
+        <div className="recording-vocab-add">
+          <input
+            type="text"
+            aria-label="Custom Vocabulary term"
+            placeholder="Add product, acronym, or name"
+            value={newVocabTerm}
+            disabled={!settings || busy}
+            aria-describedby={ids.vocab}
+            onChange={(event) => setNewVocabTerm(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && newVocabTerm.trim()) {
+                event.preventDefault();
+                const term = newVocabTerm.trim();
+                setNewVocabTerm("");
+                void addCustomVocab([term]);
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="btn"
+            disabled={!settings || busy || !newVocabTerm.trim()}
+            onClick={() => {
+              const term = newVocabTerm.trim();
+              setNewVocabTerm("");
+              void addCustomVocab([term]);
+            }}
+          >Add</button>
+          <button
+            type="button"
+            className="btn"
+            disabled={!settings || busy}
+            onClick={() => void loadVocabSuggestions()}
+          >Suggest from Sent Mail</button>
+        </div>
+      </div>
+      <p className="settings-hint settings-field-detail" id={ids.vocab}>
+        Terms you approve here help Whisper and Cloud Transcription spell names, acronyms, and project vocabulary accurately.
+      </p>
+      {settings && settings.customVocabulary.length > 0 ? (
+        <ul className="settings-field-detail recording-vocab-list" aria-label="Custom Vocabulary list">
+          {settings.customVocabulary.map((term) => (
+            <li key={term} className="recording-vocab-chip">
+              <span>{term}</span>
+              <button
+                type="button"
+                className="btn-link"
+                aria-label={`Remove ${term}`}
+                disabled={busy}
+                onClick={() => void removeCustomVocab(term)}
+              >×</button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {suggestions ? (
+        <div className="settings-field-detail">
+          <div className="recording-vocab-suggestions" role="region" aria-label="Sent Mail Vocabulary Suggestions">
+            {suggestions.length === 0 ? (
+              <p className="settings-hint">No recurring vocabulary terms were found in recent Sent mail.</p>
+            ) : (
+              <>
+                <p className="settings-hint">Review recurring terms found in your Sent mail before adding them:</p>
+                <div className="recording-vocab-suggestion-list">
+                  {suggestions.map((item) => {
+                    const checked = selectedSuggestions.includes(item.term);
+                    return (
+                      <label key={item.term} className="recording-vocab-suggestion">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => {
+                            if (event.target.checked) setSelectedSuggestions((cur) => [...cur, item.term]);
+                            else setSelectedSuggestions((cur) => cur.filter((value) => value !== item.term));
+                          }}
+                        />
+                        <span>{item.term}</span>
+                        <span className="settings-hint">{item.threadCount} threads</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="transcription-model-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={busy || selectedSuggestions.length === 0}
+                    onClick={() => {
+                      const chosen = [...selectedSuggestions];
+                      setSuggestions(null);
+                      setSelectedSuggestions([]);
+                      void addCustomVocab(chosen);
+                    }}
+                  >Add Selected</button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => { setSuggestions(null); setSelectedSuggestions([]); }}
+                  >Cancel</button>
+                </div>
+              </>
+            )}
+            {suggestions.length === 0 ? (
+              <div className="transcription-model-actions">
+                <button type="button" className="btn" onClick={() => setSuggestions(null)}>Close</button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <div className="settings-field-detail transcription-models">
         {MODELS.map((option) => (
           <TranscriptionModelRow
@@ -317,6 +496,71 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
       <p className="settings-hint" id={ids.summarize}>
         Uses your configured AI provider to draft a summary, decisions, actions, and open questions when a transcription finishes. When off, recordings stop at the transcript.
       </p>
+
+      <label className="settings-switch">
+        <span>Cloud Transcription</span>
+        <input type="checkbox" checked={settings?.cloudTranscriptionEnabled ?? false} disabled={!settings || busy} aria-describedby={ids.cloud}
+          onChange={(event) => void toggleCloudTranscription(event.target.checked)} />
+      </label>
+      <p className="settings-hint" id={ids.cloud}>
+        Lets you transcribe or re-transcribe recordings using OpenRouter (Microsoft MAI-Transcribe-2) or an OpenAI-compatible audio provider, sending separate audio tracks and your reviewed Custom Vocabulary within your daily AI budget.
+      </p>
+      {confirmingCloud ? (
+        <InlineConfirm
+          ariaLabel="Confirm Cloud Transcription"
+          title="Enable cloud transcription?"
+          cancelLabel="Cancel"
+          onCancel={() => setConfirmingCloud(false)}
+          disabled={busy}
+          focusCancel
+          actions={[{ label: "Enable Cloud Transcription", className: "btn-primary", onClick: () => void confirmEnableCloud() }]}
+        >
+          When you use Cloud Transcription, separate microphone and system audio tracks and your reviewed Custom Vocabulary are sent to your configured AI provider and counted toward your daily AI budget.
+        </InlineConfirm>
+      ) : null}
+      {settings?.cloudTranscriptionEnabled ? (
+        <>
+          {!isCloudTranscriptionProvider(readAiProvider()) && !(settings.cloudTranscriptionProvider && isCloudTranscriptionProvider(settings.cloudTranscriptionProvider)) ? (
+            <p className="settings-hint settings-field-detail" role="note">
+              Configure OpenRouter, OpenAI, Fireworks, or Custom Endpoint in AI settings to use Cloud Transcription.
+            </p>
+          ) : null}
+          <label className="settings-field settings-field-row">
+            <span>Cloud Transcription Model</span>
+            <input
+              type="text"
+              value={settings.cloudTranscriptionModel}
+              placeholder="microsoft/mai-transcribe-2"
+              aria-describedby={ids.cloudModel}
+              onChange={(event) => void change({ cloudTranscriptionModel: event.target.value })}
+            />
+          </label>
+          <p className="settings-hint settings-field-detail" id={ids.cloudModel}>
+            Recommended on OpenRouter: microsoft/mai-transcribe-2 (low cost, custom vocabulary biasing, and remote speaker diarization).
+          </p>
+          <label className="settings-switch">
+            <span>Diarize Remote Speakers</span>
+            <input type="checkbox" checked={settings.cloudTranscriptionDiarize} disabled={busy} aria-describedby={ids.cloudDiarize}
+              onChange={(event) => void change({ cloudTranscriptionDiarize: event.target.checked })} />
+          </label>
+          <p className="settings-hint" id={ids.cloudDiarize}>
+            Separates remote voices on the computer-audio track (Others (Speaker 1), Others (Speaker 2)) while keeping your microphone track as You.
+          </p>
+          <label className="settings-switch">
+            <span>Use Cloud by Default</span>
+            <input type="checkbox" checked={settings.cloudTranscriptionDefault} disabled={busy} aria-describedby={ids.cloudDefault}
+              onChange={(event) => {
+                const activeProvider = readAiProvider();
+                const provider = settings.cloudTranscriptionProvider ?? (isCloudTranscriptionProvider(activeProvider) ? activeProvider : null);
+                const endpoint = settings.cloudTranscriptionEndpoint ?? (activeProvider === "custom" ? readAiEndpoint().trim() || null : null);
+                void change({ cloudTranscriptionDefault: event.target.checked, cloudTranscriptionProvider: provider, cloudTranscriptionEndpoint: endpoint });
+              }} />
+          </label>
+          <p className="settings-hint" id={ids.cloudDefault}>
+            Automatically uploads finished recordings after you stop recording. Leave off to keep transcription on this Mac and only re-transcribe selected calls from Show Transcript.
+          </p>
+        </>
+      ) : null}
 
       <h3>Recordings on This Mac</h3>
       <p className="settings-hint" id={ids.usage} role="status">

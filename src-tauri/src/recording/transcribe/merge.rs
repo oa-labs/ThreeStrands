@@ -225,6 +225,7 @@ mod tests {
             end_ms,
             text: text.into(),
             rms: None,
+            speaker_label: None,
         }
     }
 
@@ -235,6 +236,7 @@ mod tests {
             end_ms,
             text: text.into(),
             rms: Some(rms),
+            speaker_label: None,
         }
     }
 

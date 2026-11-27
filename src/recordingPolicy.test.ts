@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingRecording, RecordingStatus, ScheduleEvent, TranscriptionModelStatus } from "./domain";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { adHocRecordingTitle, canRecordEvent, canRetryTranscription, canShowTranscript, transcriptCopyText, formatElapsed, isRecordingOf, RECORD_LEAD_MS, recordingDetail, recordOffer, stopReasonNotice } from "./recordingPolicy";
+import { adHocRecordingTitle, canRecordEvent, canRetryTranscription, canShowTranscript, defaultCloudTranscriptionModel, formatElapsed, isCloudTranscriptionProvider, isRecordingOf, RECORD_LEAD_MS, recordingDetail, recordOffer, speakerLabel, stopReasonNotice, transcriptCopyText } from "./recordingPolicy";
 
 const event = (overrides: Partial<ScheduleEvent> = {}): ScheduleEvent => ({
   id: "evt", accountId: "me@example.com", calendarId: "work", title: "Weekly Sync",
@@ -139,13 +139,34 @@ describe("transcript actions", () => {
 });
 
 describe("transcriptCopyText", () => {
-  const line = (startMs: number, speaker: "you" | "others" | null, text: string) => ({ startMs, endMs: startMs + 1000, speaker, text });
+  const line = (startMs: number, speaker: "you" | "others" | null, text: string, speakerLabel?: string | null) => ({
+    startMs, endMs: startMs + 1000, speaker, ...(speakerLabel !== undefined ? { speakerLabel } : {}), text,
+  });
   it("writes one labelled line per transcript line, with hours past an hour", () => {
     const text = transcriptCopyText({ recordingId: "r", speakerLabels: true, lines: [line(754_000, "you", "Hello"), line(3_723_000, "others", "Hi there"), line(0, null, "Unlabelled")] });
     expect(text).toBe("[12:34] You: Hello\n[1:02:03] Others: Hi there\n[0:00] Unlabelled");
   });
+  it("includes remote speaker labels only on others lines", () => {
+    expect(speakerLabel("you", "Speaker 1")).toBe("You");
+    expect(speakerLabel("others", "Speaker 1")).toBe("Others (Speaker 1)");
+    expect(speakerLabel("others", null)).toBe("Others");
+    const text = transcriptCopyText({ recordingId: "r", speakerLabels: true, lines: [line(0, "others", "First", "Speaker 1"), line(1000, "you", "Reply", "Speaker 2")] });
+    expect(text).toBe("[0:00] Others (Speaker 1): First\n[0:01] You: Reply");
+  });
   it("leaves labels out when there are none", () => {
     expect(transcriptCopyText({ recordingId: "r", speakerLabels: false, lines: [line(754_000, null, "Hello"), line(3_723_000, null, "Again")] })).toBe("[12:34] Hello\n[1:02:03] Again");
+  });
+});
+
+describe("cloud provider helpers", () => {
+  it("recognizes supported cloud audio providers and defaults OpenRouter to MAI-Transcribe-2", () => {
+    expect(isCloudTranscriptionProvider("openrouter")).toBe(true);
+    expect(isCloudTranscriptionProvider("openai")).toBe(true);
+    expect(isCloudTranscriptionProvider("fireworks")).toBe(true);
+    expect(isCloudTranscriptionProvider("custom")).toBe(true);
+    expect(isCloudTranscriptionProvider("anthropic")).toBe(false);
+    expect(isCloudTranscriptionProvider("none")).toBe(false);
+    expect(defaultCloudTranscriptionModel("openrouter")).toBe("microsoft/mai-transcribe-2");
   });
 });
 

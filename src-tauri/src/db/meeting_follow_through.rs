@@ -150,7 +150,7 @@ fn attach_transcript_in_tx(
     )?;
     let rows: Vec<TranscriptRow> = {
         let mut statement = tx.prepare(
-            "SELECT track,start_ms,end_ms,text,rms,dropped_as_echo
+            "SELECT track,start_ms,end_ms,text,rms,dropped_as_echo,speaker_label
              FROM meeting_recording_segments WHERE recording_id=?1 ORDER BY seq",
         )?;
         let mapped = statement.query_map([recording_id], |row| {
@@ -161,11 +161,12 @@ fn attach_transcript_in_tx(
                 row.get::<_, String>(3)?,
                 row.get::<_, Option<f64>>(4)?,
                 row.get::<_, bool>(5)?,
+                row.get::<_, Option<String>>(6)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in mapped {
-            let (track, start_ms, end_ms, text, rms, dropped_as_echo) = row?;
+            let (track, start_ms, end_ms, text, rms, dropped_as_echo, speaker_label) = row?;
             out.push(TranscriptRow {
                 track: Track::parse(&track)
                     .ok_or_else(|| DatabaseError::corrupt(format!("Unknown track {track}")))?,
@@ -174,6 +175,7 @@ fn attach_transcript_in_tx(
                 text,
                 rms: rms.map(|v| v as f32),
                 dropped_as_echo,
+                speaker_label,
             });
         }
         out

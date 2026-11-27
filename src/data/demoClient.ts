@@ -97,6 +97,14 @@ const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
   includeMyNotes: false,
   attachTranscript: false,
   consentAcknowledged: false,
+  customVocabulary: [],
+  cloudTranscriptionEnabled: false,
+  cloudTranscriptionDisclosureAcknowledged: false,
+  cloudTranscriptionDefault: false,
+  cloudTranscriptionProvider: null,
+  cloudTranscriptionModel: "microsoft/mai-transcribe-2",
+  cloudTranscriptionEndpoint: null,
+  cloudTranscriptionDiarize: true,
 };
 
 export function createDemoClient(dataset: DemoDataset): MailClient {

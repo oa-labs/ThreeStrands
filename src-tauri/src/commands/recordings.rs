@@ -216,6 +216,38 @@ pub(crate) async fn recording_transcript(
     run_database_task(move || runtime.recording_transcript(&id)).await
 }
 
+#[tauri::command]
+pub(crate) async fn suggest_recording_vocabulary(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::recording::vocabulary::VocabularySuggestion>> {
+    let runtime = state.recording.clone();
+    run_database_task(move || runtime.suggest_vocabulary()).await
+}
+
+#[tauri::command]
+pub(crate) async fn cloud_transcribe_recording(
+    id: String,
+    provider: ai::AiProvider,
+    model: String,
+    endpoint: Option<String>,
+    diarize: bool,
+    state: State<'_, AppState>,
+) -> AppResult<RecordingTranscript> {
+    let api_key = ai::get_key()?.ok_or_else(|| AppError::from("No AI API key configured"))?;
+    let runtime = state.recording.clone();
+    run_database_task(move || {
+        runtime.cloud_transcribe_recording(
+            &id,
+            provider,
+            &model,
+            endpoint.as_deref(),
+            diarize,
+            &api_key,
+        )
+    })
+    .await
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RecordingReviewContext {

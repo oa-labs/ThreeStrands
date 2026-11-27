@@ -23,7 +23,10 @@ vi.mock("./recordingEvents", async (original) => ({
 
 const settings = (overrides: Partial<RecordingSettings> = {}): RecordingSettings => ({
   recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast", transcriptionLanguage: null, transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
-  summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true, ...overrides,
+  summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true,
+  customVocabulary: [], cloudTranscriptionEnabled: false, cloudTranscriptionDisclosureAcknowledged: false, cloudTranscriptionDefault: false,
+  cloudTranscriptionProvider: null, cloudTranscriptionModel: "microsoft/mai-transcribe-2", cloudTranscriptionEndpoint: null, cloudTranscriptionDiarize: true,
+  ...overrides,
 });
 
 async function fire<K extends keyof RecordingEvents>(name: K, payload: RecordingEvents[K]) {

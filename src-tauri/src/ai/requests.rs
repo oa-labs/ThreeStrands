@@ -192,7 +192,7 @@ impl State {
 }
 
 impl Runtime {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(State {
                 saved: Saved::default(),
@@ -485,16 +485,13 @@ impl Runtime {
     }
     pub fn reserve(
         &self,
-        mut record: RequestRecord,
+        record: RequestRecord,
         input_bytes: usize,
         output_tokens: usize,
     ) -> Result<Reservation, String> {
         let running = RUNNING
             .try_with(Clone::clone)
             .map_err(|_| "AI request has no native lifecycle")?;
-        let _write = self.write_gate.lock().unwrap();
-        let mut state = self.state.lock().unwrap();
-        state.prune();
         // UTF-8 bytes are a conservative estimate for supported text tokenizers;
         // framing/schema overhead and the full output allowance are reserved too.
         let estimate = running.price.as_ref().map(|price| {
@@ -503,12 +500,57 @@ impl Runtime {
                 output_tokens as u64,
             )
         });
-        if state.saved.policy.daily_budget_usd.is_some() && estimate.is_none() {
+        let has_budget = self
+            .state
+            .lock()
+            .unwrap()
+            .saved
+            .policy
+            .daily_budget_usd
+            .is_some();
+        if has_budget && estimate.is_none() {
             return Err(
                 "Set this model's input and output prices before using the daily AI budget".into(),
             );
         }
-        let reserved = estimate.unwrap_or(0.0);
+        self.reserve_amount(
+            record,
+            estimate.unwrap_or(0.0),
+            running.id,
+            running.price,
+            Some(running.latest),
+        )
+    }
+
+    /// Reserves an explicit estimated USD amount against the daily AI budget
+    /// without requiring token-based task-local pricing (used for audio uploads).
+    pub fn reserve_fixed_cost(
+        &self,
+        record: RequestRecord,
+        estimated_usd: f64,
+    ) -> Result<Reservation, String> {
+        if !estimated_usd.is_finite() || estimated_usd < 0.0 {
+            return Err("Invalid estimated AI cost".into());
+        }
+        let request_id = if record.request_id.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            record.request_id.clone()
+        };
+        self.reserve_amount(record, estimated_usd, request_id, None, None)
+    }
+
+    fn reserve_amount(
+        &self,
+        mut record: RequestRecord,
+        reserved: f64,
+        request_id: String,
+        price: Option<ModelPrice>,
+        latest: Option<Arc<Mutex<Option<RequestRecord>>>>,
+    ) -> Result<Reservation, String> {
+        let _write = self.write_gate.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        state.prune();
         if state
             .saved
             .policy
@@ -517,8 +559,8 @@ impl Runtime {
         {
             return Err("This request would exceed today's estimated AI budget".into());
         }
-        record.request_id = running.id;
-        record.price = running.price;
+        record.request_id = request_id;
+        record.price = price;
         record.charged_usd = reserved;
         state.saved.charged_usd += reserved;
         let bytes = Arc::new(serde_json::to_vec(&record).expect("record JSON"));
@@ -529,10 +571,11 @@ impl Runtime {
         state.saved.records.push(record.clone());
         let day = state.saved.day.clone();
         self.persist(state)?;
-        *running.latest.lock().unwrap() = Some(record.clone());
+        let latest = latest.unwrap_or_else(|| Arc::new(Mutex::new(None)));
+        *latest.lock().unwrap() = Some(record.clone());
         Ok(Reservation {
             runtime: self.clone(),
-            latest: running.latest.clone(),
+            latest,
             request_id: record.request_id,
             attempt_id: record.attempt_id,
             reserved,
@@ -813,6 +856,21 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("prices"));
         assert_eq!(runtime.snapshot().unwrap().charged_usd, 0.0);
+
+        // Fixed-cost reservations also enforce the boundary and reconcile reported cost.
+        let fixed_runtime = Runtime::new();
+        fixed_runtime
+            .configure(RequestPolicy {
+                daily_budget_usd: Some(0.05),
+            })
+            .unwrap();
+        let over = fixed_runtime.reserve_fixed_cost(record(), 0.051);
+        assert!(over.is_err());
+        let reservation = fixed_runtime.reserve_fixed_cost(record(), 0.05).unwrap();
+        reservation
+            .finish(r#"{"text":"ok"}"#, 0, 0, Some(0.02), true, "received")
+            .unwrap();
+        assert!((fixed_runtime.snapshot().unwrap().charged_usd - 0.02).abs() < 1e-12);
     }
     #[tokio::test]
     async fn interrupted_reservations_survive_restart_and_successful_usage_settles_them_without_text(

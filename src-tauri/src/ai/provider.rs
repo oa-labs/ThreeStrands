@@ -12,7 +12,7 @@ use super::usage::record_usage;
 const SERVICE: &str = "app.threestrands.mail";
 const KEY: &str = "ai-provider-api-key";
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AiProvider {
     None,
@@ -124,7 +124,7 @@ impl AiProvider {
         matches!(self, Self::OpenRouter | Self::Straitly)
     }
 
-    fn base_url(self, endpoint: Option<&str>) -> Result<String, String> {
+    pub(crate) fn base_url(self, endpoint: Option<&str>) -> Result<String, String> {
         if let Some(base_url) = self.descriptor().base_url {
             return Ok(base_url.to_string());
         }

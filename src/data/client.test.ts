@@ -97,7 +97,10 @@ describe("native account requests", () => {
   it("reads and saves device-local recording settings through their own commands", async () => {
     await client.recordingSettings();
     expect(invoke).toHaveBeenLastCalledWith("recording_settings", undefined);
-    const settings = { recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto" as const, transcriptionModel: "accurate" as const, transcriptionLanguage: null, transcribeDuringMeetings: false, keepAudio: "days30" as const, offerToRecord: true, remindToTell: false, summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true };
+    const settings = {
+      recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto" as const, transcriptionModel: "accurate" as const, transcriptionLanguage: null, transcribeDuringMeetings: false, keepAudio: "days30" as const, offerToRecord: true, remindToTell: false, summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true,
+      customVocabulary: [], cloudTranscriptionEnabled: false, cloudTranscriptionDisclosureAcknowledged: false, cloudTranscriptionDefault: false, cloudTranscriptionProvider: null, cloudTranscriptionModel: "microsoft/mai-transcribe-2", cloudTranscriptionEndpoint: null, cloudTranscriptionDiarize: true,
+    };
     await client.setRecordingSettings(settings);
     expect(invoke).toHaveBeenLastCalledWith("set_recording_settings", { settings });
   });
@@ -122,6 +125,8 @@ describe("native account requests", () => {
       [() => client.deleteAllRecordings(), "delete_all_recordings", undefined],
       [() => client.requestRecordingPermissions(), "request_recording_permissions", undefined],
       [() => client.confirmRecordingQuit(), "recording_confirm_quit", undefined],
+      [() => client.suggestRecordingVocabulary(), "suggest_recording_vocabulary", undefined],
+      [() => client.cloudTranscribeRecording("r1", "openrouter", "microsoft/mai-transcribe-2", null, true), "cloud_transcribe_recording", { id: "r1", provider: "openrouter", model: "microsoft/mai-transcribe-2", endpoint: null, diarize: true }],
     ];
     for (const [call, command, args] of calls) {
       await call();

@@ -206,6 +206,7 @@ pub(crate) fn run_worker_io<R: Read, W: Write>(
                             end_ms: request.start_ms + to_ms,
                             text,
                             rms: Some(rms),
+                            speaker_label: None,
                         }
                     })
                     .collect();
@@ -815,6 +816,7 @@ mod tests {
                 end_ms: 2,
                 text: "Hello.".into(),
                 rms: None,
+                speaker_label: None,
             }
         }
 

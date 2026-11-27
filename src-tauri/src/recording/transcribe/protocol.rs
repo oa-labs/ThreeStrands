@@ -104,6 +104,8 @@ pub struct TranscriptLine {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rms: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -260,6 +262,7 @@ mod tests {
                 end_ms: 2,
                 text: "Hi.".into(),
                 rms: Some(0.125),
+                speaker_label: None,
             }],
             held: Some(held.clone()),
             detected_language: Some("en".into()),

@@ -43,6 +43,7 @@
 //! read the job's state at any time. The app runs it on its own thread;
 //! tests call it directly.
 
+use super::cloud::{self, CloudJobInput};
 use super::memory::{MemoryPressure, MemoryProbe};
 use super::merge;
 use super::models::ModelStore;
@@ -104,12 +105,27 @@ impl StopCheck for JobControl {
     }
 }
 
+struct CloudPlan {
+    provider: crate::ai::AiProvider,
+    model: String,
+    endpoint: Option<String>,
+    api_key: String,
+    title: String,
+    attendees: Vec<String>,
+    language: Option<String>,
+    custom_vocabulary: Vec<String>,
+    diarize: bool,
+}
+
 struct Job {
     recording_id: String,
     audio_dir: PathBuf,
     engine: EffectiveEngine,
     model: TranscriptionModelChoice,
     model_name: String,
+    /// When set, runs cloud transcription instead of an on-device worker
+    /// (stopped recordings only).
+    cloud: Option<CloudPlan>,
     /// User-chosen language setting (`None` = Auto detect-once).
     configured_language: Option<String>,
     /// Auto-detected language pinned by the first speech span across batches.
@@ -457,9 +473,6 @@ impl RecordingRuntime {
         let engine =
             settings::effective_engine(settings.transcription_engine, self.speech_analyzer);
         let model = settings.transcription_model;
-        if engine == EffectiveEngine::Whisper && !self.scheduler.models.is_ready(model) {
-            return None;
-        }
         let rows = match self.database.recording_audio() {
             Ok(rows) => rows,
             Err(error) => {
@@ -475,6 +488,29 @@ impl RecordingRuntime {
             ) && row.audio_deleted_at.is_none()
                 && Some(&row.id) != active.as_ref()
         });
+        let cloud_default_plan = if waiting.is_some()
+            && settings.cloud_transcription_enabled
+            && settings.cloud_transcription_disclosure_acknowledged
+            && settings.cloud_transcription_default
+        {
+            settings
+                .cloud_transcription_provider
+                .filter(|provider| policy::cloud_provider_supported(*provider))
+                .and_then(|provider| {
+                    crate::ai::get_key()
+                        .ok()
+                        .flatten()
+                        .map(|api_key| (provider, api_key))
+                })
+        } else {
+            None
+        };
+        if cloud_default_plan.is_none()
+            && engine == EffectiveEngine::Whisper
+            && !self.scheduler.models.is_ready(model)
+        {
+            return None;
+        }
         let row = match waiting {
             Some(row) => {
                 let audio_dir = Path::new(&row.audio_dir);
@@ -499,7 +535,7 @@ impl RecordingRuntime {
                 row
             }
         };
-        if !self.scheduler.memory_allows(engine, model) {
+        if cloud_default_plan.is_none() && !self.scheduler.memory_allows(engine, model) {
             // Waits, still `recorded`, for pressure to fall or memory to
             // free up; the transcription thread looks again shortly.
             return None;
@@ -516,18 +552,46 @@ impl RecordingRuntime {
             .database
             .recording_attendees(&row.id)
             .unwrap_or_default();
-        let initial_prompt = policy::sanitize_initial_prompt(&title, &attendees);
+        let initial_prompt = policy::sanitize_initial_prompt_with_vocab(
+            &title,
+            &attendees,
+            &settings.custom_vocabulary,
+        );
         let configured_language =
             policy::normalize_language_code(settings.transcription_language.as_deref());
-        // A model that fails its check is marked failed; the recording
-        // waits for it.
-        let (config, model_name) = self.job_config(
-            engine,
-            model,
-            configured_language.as_deref(),
-            None,
-            initial_prompt.clone(),
-        )?;
+        let (config, model_name, cloud) = if let Some((provider, api_key)) = cloud_default_plan {
+            let cloud_model = if settings.cloud_transcription_model.trim().is_empty() {
+                policy::CLOUD_DEFAULT_MODEL_OPENROUTER.to_string()
+            } else {
+                settings.cloud_transcription_model.trim().to_string()
+            };
+            (
+                None,
+                cloud_model.clone(),
+                Some(CloudPlan {
+                    provider,
+                    model: cloud_model,
+                    endpoint: settings.cloud_transcription_endpoint.clone(),
+                    api_key,
+                    title: title.clone(),
+                    attendees,
+                    language: configured_language.clone(),
+                    custom_vocabulary: settings.custom_vocabulary.clone(),
+                    diarize: settings.cloud_transcription_diarize,
+                }),
+            )
+        } else {
+            // A model that fails its check is marked failed; the recording
+            // waits for it.
+            let (config, model_name) = self.job_config(
+                engine,
+                model,
+                configured_language.as_deref(),
+                None,
+                initial_prompt.clone(),
+            )?;
+            (Some(config), model_name, None)
+        };
         let control = Arc::new(JobControl {
             cancel: AtomicBool::new(false),
             live: AtomicBool::new(live),
@@ -549,10 +613,11 @@ impl RecordingRuntime {
             engine,
             model,
             model_name,
+            cloud,
             configured_language,
             detected_language: None,
             initial_prompt,
-            config: Some(config),
+            config,
             control,
             session: None,
             done_through: HashMap::new(),
@@ -654,6 +719,9 @@ impl RecordingRuntime {
         if self.scheduler.is_cancelled(&job.recording_id) {
             self.job_failed(job, false, JobError::Cancelled);
             return true;
+        }
+        if let Some(cloud_plan) = job.cloud.take() {
+            return self.run_cloud_job(job, cloud_plan);
         }
         let active = self.active_id().as_deref() == Some(job.recording_id.as_str());
         if !active {
@@ -892,6 +960,7 @@ impl RecordingRuntime {
                     text: line.line.text,
                     rms: line.line.rms,
                     dropped_as_echo: line.dropped_as_echo,
+                    speaker_label: line.line.speaker_label,
                 })
                 .collect();
         let saved =
@@ -915,6 +984,102 @@ impl RecordingRuntime {
                 log::warn!(target: "recording", "saving the transcript: {error}");
                 self.fail_recording(&id, "The transcript couldn't be saved.");
                 self.refresh_tray_now();
+            }
+        }
+    }
+
+    fn run_cloud_job(&self, mut job: Job, plan_cfg: CloudPlan) -> bool {
+        if !job.announced {
+            self.announce(&mut job);
+        }
+        let id = job.recording_id.clone();
+        let audio_dir = job.audio_dir.clone();
+        let system_start = plan::standing(&audio_dir, true, |_| true)
+            .system_start_ms
+            .map(|start| start as i64);
+        let headphones = self
+            .database
+            .recording(&id)
+            .ok()
+            .flatten()
+            .is_some_and(|r| {
+                r.tracks
+                    .iter()
+                    .any(|t| t.track == Track::System && t.is_headphones == Some(true))
+            });
+        let result = cloud::transcribe_recording_cloud(
+            self.cloud.as_ref(),
+            &crate::ai::requests::RUNTIME,
+            CloudJobInput {
+                recording_id: &id,
+                title: &plan_cfg.title,
+                attendees: &plan_cfg.attendees,
+                audio_dir: &audio_dir,
+                provider: plan_cfg.provider,
+                model: &plan_cfg.model,
+                endpoint: plan_cfg.endpoint.as_deref(),
+                api_key: &plan_cfg.api_key,
+                language: plan_cfg.language.as_deref(),
+                custom_vocabulary: &plan_cfg.custom_vocabulary,
+                diarize: plan_cfg.diarize,
+                headphones,
+            },
+            Some(&*job.control),
+            |pct| {
+                let before = self.scheduler.current().and_then(|c| c.percent);
+                if before != Some(pct) {
+                    self.scheduler.set_percent(Some(pct));
+                    self.notifier.transcription_progress(&id, pct);
+                    self.refresh_tray_now();
+                }
+            },
+        );
+        match result {
+            Ok(rows) => {
+                let saved = self.database.save_transcript(
+                    &id,
+                    &rows,
+                    policy::CLOUD_TRANSCRIPTION_ENGINE,
+                    &plan_cfg.model,
+                    system_start,
+                );
+                self.scheduler.end_job();
+                match saved {
+                    Ok(()) => {
+                        if self.settings().keep_audio != KeepAudio::UntilTranscribed {
+                            if let Err(error) =
+                                super::transcode::transcode_recording_dir(&audio_dir)
+                            {
+                                log::warn!(
+                                    target: "recording",
+                                    "transcoding completed recording: {error}"
+                                );
+                            }
+                        }
+                        self.notifier.recordings_changed(&id);
+                        self.refresh_tray_now();
+                        self.sweep();
+                    }
+                    Err(error) => {
+                        log::warn!(target: "recording", "saving the transcript: {error}");
+                        self.fail_recording(&id, "The transcript couldn't be saved.");
+                        self.refresh_tray_now();
+                    }
+                }
+                true
+            }
+            Err(JobError::Interrupted) => {
+                if job.announced {
+                    self.unannounce(&mut job);
+                }
+                drop(job);
+                self.scheduler.end_job();
+                self.refresh_tray_now();
+                true
+            }
+            Err(error) => {
+                self.job_failed(job, false, error);
+                true
             }
         }
     }

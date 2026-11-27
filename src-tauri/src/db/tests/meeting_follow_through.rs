@@ -530,6 +530,7 @@ fn seed_transcribed_recording(
                 text: "Let's ship on Friday.".into(),
                 rms: None,
                 dropped_as_echo: false,
+                speaker_label: None,
             },
             TranscriptRow {
                 track: Track::Mic,
@@ -538,6 +539,7 @@ fn seed_transcribed_recording(
                 text: "I'll send the deck today.".into(),
                 rms: None,
                 dropped_as_echo: false,
+                speaker_label: None,
             },
         ],
         "speech_analyzer",

@@ -1888,6 +1888,19 @@ export type RecordingSettings = {
   includeMyNotes: boolean;
   attachTranscript: boolean;
   consentAcknowledged: boolean;
+  customVocabulary: string[];
+  cloudTranscriptionEnabled: boolean;
+  cloudTranscriptionDisclosureAcknowledged: boolean;
+  cloudTranscriptionDefault: boolean;
+  cloudTranscriptionProvider: import("./aiSettings").AiProvider | null;
+  cloudTranscriptionModel: string;
+  cloudTranscriptionEndpoint: string | null;
+  cloudTranscriptionDiarize: boolean;
+};
+
+export type VocabularySuggestion = {
+  term: string;
+  threadCount: number;
 };
 
 export type RecordingTrackName = "mic" | "system";
@@ -1967,7 +1980,7 @@ export type RecordingTranscript = {
   recordingId: string;
   /** False when only the microphone was recorded; every line's speaker is then null. */
   speakerLabels: boolean;
-  lines: { startMs: number; endMs: number; speaker: TranscriptSpeaker | null; text: string }[];
+  lines: { startMs: number; endMs: number; speaker: TranscriptSpeaker | null; speakerLabel?: string | null; text: string }[];
 };
 
 /** What this device can record, from `recording_capabilities`. `supported` is false off macOS, where all recording UI is hidden. */

@@ -271,6 +271,7 @@ fn transcribe_span(
                 end_ms: span_start_ms + to,
                 text,
                 rms: Some(rms),
+                speaker_label: None,
             }
         })
         .collect())

@@ -137,6 +137,7 @@ import type {
   RecordingReviewContext,
   TranscriptionModelName,
   TranscriptionModelStatus,
+  VocabularySuggestion,
 } from "../domain";
 import type { AiProvider, AiReasoning } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
@@ -491,6 +492,14 @@ export interface MailClient extends CorrespondenceClient {
   /** Queues a recorded, interrupted, or failed recording whose audio still exists. */
   transcribeRecording(id: string): Promise<void>;
   recordingTranscript(id: string): Promise<RecordingTranscript>;
+  suggestRecordingVocabulary(): Promise<VocabularySuggestion[]>;
+  cloudTranscribeRecording(
+    id: string,
+    provider: AiProvider,
+    model: string,
+    endpoint: string | null,
+    diarize: boolean,
+  ): Promise<RecordingTranscript>;
   latestTranscribedRecording(): Promise<MeetingRecording | null>;
   recordingReviewContext(id: string): Promise<RecordingReviewContext>;
   summarizeRecording(
@@ -877,6 +886,9 @@ const tauriClient: MailClient = {
   deleteTranscriptionModel: (model) => complete("delete_transcription_model", { model }),
   transcribeRecording: (id) => complete("transcribe_recording", { id }),
   recordingTranscript: (id) => read("recording_transcript", { id }),
+  suggestRecordingVocabulary: () => read("suggest_recording_vocabulary"),
+  cloudTranscribeRecording: (id, provider, model, endpoint, diarize) =>
+    complete("cloud_transcribe_recording", { id, provider, model, endpoint, diarize }),
   latestTranscribedRecording: () => read("latest_transcribed_recording"),
   recordingReviewContext: (id) => read("recording_review_context", { id }),
   summarizeRecording: (id, provider, model, endpoint, reasoning = "default", includeMyNotes = false, range = null) =>

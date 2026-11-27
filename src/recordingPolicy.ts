@@ -1,3 +1,4 @@
+import type { AiProvider } from "./aiSettings";
 import type { MeetingRecording, RecordingStatus, RecordingStopReason, RecordingTranscript, ScheduleEvent, TranscriptionModelStatus } from "./domain";
 import { formatClockTime, isDeclined } from "./agendaEvents";
 import { meetingEventReference } from "./meetingNoteEntry";
@@ -105,11 +106,27 @@ export const canRetryTranscription = (recording: MeetingRecording) => recording.
 /** `[12:34] You: text`, or `[1:02:03] text` without labels; one line per transcript line. */
 export function transcriptCopyText(transcript: RecordingTranscript): string {
   return transcript.lines
-    .map((line) => `[${formatElapsed(line.startMs)}] ${transcript.speakerLabels && line.speaker ? `${speakerLabel(line.speaker)}: ` : ""}${line.text}`)
+    .map((line) => `[${formatElapsed(line.startMs)}] ${transcript.speakerLabels && line.speaker ? `${speakerLabel(line.speaker, line.speakerLabel)}: ` : ""}${line.text}`)
     .join("\n");
 }
 
-export const speakerLabel = (speaker: "you" | "others") => (speaker === "you" ? "You" : "Others");
+export const speakerLabel = (speaker: "you" | "others", remoteLabel?: string | null) => {
+  if (speaker === "you") return "You";
+  const trimmed = remoteLabel?.trim();
+  return trimmed ? `Others (${trimmed})` : "Others";
+};
+
+export const isCloudTranscriptionProvider = (provider: AiProvider): boolean =>
+  provider === "openrouter" || provider === "openai" || provider === "fireworks" || provider === "custom";
+
+export function defaultCloudTranscriptionModel(provider: AiProvider): string {
+  switch (provider) {
+    case "openrouter": return "microsoft/mai-transcribe-2";
+    case "openai": return "gpt-4o-mini-transcribe";
+    case "fireworks": return "whisper-v3-turbo";
+    default: return "";
+  }
+}
 
 /** The notice for a recording the app ended on its own, or null for a normal stop. */
 export function stopReasonNotice(reason: RecordingStopReason | null): string | null {

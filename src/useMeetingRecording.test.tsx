@@ -26,7 +26,10 @@ const emit = <K extends keyof RecordingEvents>(name: K, payload: RecordingEvents
 
 const settings = (overrides: Partial<RecordingSettings> = {}): RecordingSettings => ({
   recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast", transcriptionLanguage: null, transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
-  summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true, ...overrides,
+  summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true,
+  customVocabulary: [], cloudTranscriptionEnabled: false, cloudTranscriptionDisclosureAcknowledged: false, cloudTranscriptionDefault: false,
+  cloudTranscriptionProvider: null, cloudTranscriptionModel: "microsoft/mai-transcribe-2", cloudTranscriptionEndpoint: null, cloudTranscriptionDiarize: true,
+  ...overrides,
 });
 const status = (overrides: Partial<RecordingStatus> = {}): RecordingStatus => ({
   state: "recording", recordingId: "r1", title: "Meeting at 3:04 PM", eventRef: null, elapsedMs: 0, tracks: [],

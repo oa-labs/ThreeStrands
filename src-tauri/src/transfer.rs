@@ -1528,6 +1528,14 @@ mod tests {
                 include_my_notes: true,
                 attach_transcript: true,
                 consent_acknowledged: true,
+                custom_vocabulary: vec!["ThreeStrands".into()],
+                cloud_transcription_enabled: true,
+                cloud_transcription_disclosure_acknowledged: true,
+                cloud_transcription_default: true,
+                cloud_transcription_provider: Some(crate::ai::AiProvider::OpenRouter),
+                cloud_transcription_model: "microsoft/mai-transcribe-2".into(),
+                cloud_transcription_endpoint: Some("https://custom.example/v1".into()),
+                cloud_transcription_diarize: true,
             })
             .unwrap();
         let after = export(&database);
@@ -1537,7 +1545,8 @@ mod tests {
         let keys: Vec<&String> = fields.as_object().unwrap().keys().collect();
         assert!(keys.iter().any(|key| *key == "transcribeDuringMeetings"));
         assert!(keys.iter().any(|key| *key == "transcriptionEngine"));
-        assert_eq!(keys.len(), 13);
+        assert!(keys.iter().any(|key| *key == "cloudTranscriptionEnabled"));
+        assert_eq!(keys.len(), 21);
         for key in keys {
             assert!(!after.contains(key.as_str()), "{key}");
         }

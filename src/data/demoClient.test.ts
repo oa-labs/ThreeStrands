@@ -40,6 +40,14 @@ describe("demoClient recording settings", () => {
       includeMyNotes: false,
       attachTranscript: false,
       consentAcknowledged: false,
+      customVocabulary: [],
+      cloudTranscriptionEnabled: false,
+      cloudTranscriptionDisclosureAcknowledged: false,
+      cloudTranscriptionDefault: false,
+      cloudTranscriptionProvider: null,
+      cloudTranscriptionModel: "microsoft/mai-transcribe-2",
+      cloudTranscriptionEndpoint: null,
+      cloudTranscriptionDiarize: true,
     });
     const settings = { ...(await client.recordingSettings()), recordMeetings: true, keepAudio: "untilDeleted" as const };
     await client.setRecordingSettings(settings);

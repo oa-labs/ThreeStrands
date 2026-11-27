@@ -21,6 +21,7 @@ pub enum Feature {
     FindTimes,
     MeetingPrep,
     MeetingRecap,
+    CloudTranscription,
     Connection,
     AgentStaleReads,
     AgentResolvedSweeper,
@@ -39,6 +40,7 @@ impl Feature {
             Self::FindTimes => "find_times",
             Self::MeetingPrep => "meeting_prep",
             Self::MeetingRecap => "meeting_recap",
+            Self::CloudTranscription => "cloud_transcription",
             Self::Connection => "connection",
             Self::AgentStaleReads => "agent_stale_reads",
             Self::AgentResolvedSweeper => "agent_resolved_sweeper",
@@ -58,6 +60,7 @@ impl Feature {
             Self::FindTimes => 1,
             Self::MeetingPrep => 1,
             Self::MeetingRecap => 1,
+            Self::CloudTranscription => 1,
             Self::Connection => 1,
             Self::AgentStaleReads | Self::AgentResolvedSweeper | Self::AgentAgingReplies => 1,
         }

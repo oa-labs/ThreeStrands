@@ -14,6 +14,7 @@
 //! - [`power`]: AC or battery; [`memory`]: memory pressure and what is
 //!   available.
 
+pub mod cloud;
 #[cfg(target_os = "macos")]
 pub mod engine;
 pub mod memory;

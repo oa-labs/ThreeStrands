@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { Sparkles } from "lucide-react";
+import { readAiEndpoint, readAiProvider } from "./aiSettings";
 import { Modal } from "./AppChrome";
 import { mailClient } from "./data/client";
-import type { MeetingRecording, RecordingTranscript } from "./domain";
+import type { MeetingRecording, RecordingSettings, RecordingTranscript } from "./domain";
 import { errorMessage } from "./errors";
+import { ICON_SIZE } from "./iconSizes";
 import { InlineConfirm } from "./InlineConfirm";
-import { formatElapsed, speakerLabel, transcriptCopyText } from "./recordingPolicy";
+import { defaultCloudTranscriptionModel, formatElapsed, isCloudTranscriptionProvider, speakerLabel, transcriptCopyText } from "./recordingPolicy";
 
 /**
  * A recording's transcript, read-only. Transcript text comes from other
@@ -13,14 +16,17 @@ import { formatElapsed, speakerLabel, transcriptCopyText } from "./recordingPoli
  */
 export function TranscriptDialog({ recording, onClose, onDeleted }: { recording: MeetingRecording; onClose(): void; onDeleted(): void }) {
   const [transcript, setTranscript] = useState<RecordingTranscript | null>(null);
+  const [settings, setSettings] = useState<RecordingSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [statusNote, setStatusNote] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [cloudBusy, setCloudBusy] = useState(false);
   const lines = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let active = true;
     mailClient.recordingTranscript(recording.id).then((found) => { if (active) setTranscript(found); }, (reason: unknown) => { if (active) setError(errorMessage(reason)); });
+    mailClient.recordingSettings().then((saved) => { if (active) setSettings(saved); }, () => {});
     return () => { active = false; };
   }, [recording.id]);
 
@@ -29,9 +35,9 @@ export function TranscriptDialog({ recording, onClose, onDeleted }: { recording:
     setError(null);
     try {
       await navigator.clipboard.writeText(transcriptCopyText(transcript));
-      setCopied(true);
+      setStatusNote("Copied to the clipboard.");
     } catch (reason) {
-      setCopied(false);
+      setStatusNote(null);
       setError(errorMessage(reason));
     }
   };
@@ -46,6 +52,49 @@ export function TranscriptDialog({ recording, onClose, onDeleted }: { recording:
       setBusy(false);
     }
   };
+  const cloudRetranscribe = async () => {
+    if (!settings) return;
+    setError(null);
+    setStatusNote(null);
+    const activeProvider = readAiProvider();
+    const provider = isCloudTranscriptionProvider(activeProvider)
+      ? activeProvider
+      : settings.cloudTranscriptionProvider;
+    if (!provider || !isCloudTranscriptionProvider(provider)) {
+      setError("Choose OpenRouter, OpenAI, Fireworks, or Custom Endpoint in AI settings first.");
+      return;
+    }
+    const model = settings.cloudTranscriptionModel.trim() || defaultCloudTranscriptionModel(provider);
+    if (!model) {
+      setError("Set a cloud transcription model in Settings → Meeting Recording first.");
+      return;
+    }
+    const endpoint = provider === "custom"
+      ? (readAiEndpoint().trim() || settings.cloudTranscriptionEndpoint || null)
+      : null;
+    setCloudBusy(true);
+    try {
+      const updated = await mailClient.cloudTranscribeRecording(
+        recording.id,
+        provider,
+        model,
+        endpoint,
+        settings.cloudTranscriptionDiarize,
+      );
+      setTranscript(updated);
+      setStatusNote("Re-transcribed with cloud.");
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+
+  const canCloudRetranscribe = Boolean(
+    settings?.cloudTranscriptionEnabled
+    && settings.cloudTranscriptionDisclosureAcknowledged
+    && !recording.audioDeleted,
+  );
 
   return <Modal title="Transcript" className="transcript-modal" initialFocusRef={lines} onClose={onClose}>
     <div className="modal-form">
@@ -56,13 +105,13 @@ export function TranscriptDialog({ recording, onClose, onDeleted }: { recording:
         {transcript?.lines.map((line, index) => (
           <p key={index} className="transcript-line">
             <span className="transcript-line-time">{formatElapsed(line.startMs)}</span>
-            {transcript.speakerLabels && line.speaker ? <span className="transcript-line-speaker">{speakerLabel(line.speaker)}</span> : null}
+            {transcript.speakerLabels && line.speaker ? <span className="transcript-line-speaker">{speakerLabel(line.speaker, line.speakerLabel)}</span> : null}
             <span className="transcript-line-text">{line.text}</span>
           </p>
         ))}
       </div>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
-      {copied ? <p className="modal-form-hint" role="status">Copied to the clipboard.</p> : null}
+      {statusNote ? <p className="modal-form-hint" role="status">{statusNote}</p> : null}
       {confirming ? <InlineConfirm
         ariaLabel="Confirm Delete Recording"
         title="Delete this recording?"
@@ -75,8 +124,13 @@ export function TranscriptDialog({ recording, onClose, onDeleted }: { recording:
         The recording, its audio, and its transcript are removed from this Mac. This can't be undone.
       </InlineConfirm> : null}
       <div className="modal-form-actions">
-        <button type="button" className="btn" disabled={busy || confirming} onClick={() => { setCopied(false); setConfirming(true); }}>Delete Recording</button>
-        <button type="button" className="btn" disabled={!transcript} onClick={() => void copy()}>Copy</button>
+        <button type="button" className="btn" disabled={busy || cloudBusy || confirming} onClick={() => { setStatusNote(null); setConfirming(true); }}>Delete Recording</button>
+        {canCloudRetranscribe ? (
+          <button type="button" className="btn" disabled={!transcript || busy || cloudBusy || confirming} onClick={() => void cloudRetranscribe()}>
+            <Sparkles size={ICON_SIZE.sm} aria-hidden="true" />{cloudBusy ? "Re-transcribing…" : "Re-transcribe with Cloud"}
+          </button>
+        ) : null}
+        <button type="button" className="btn" disabled={!transcript || cloudBusy} onClick={() => void copy()}>Copy</button>
         <button type="button" className="btn btn-primary" onClick={onClose}>Close</button>
       </div>
     </div>

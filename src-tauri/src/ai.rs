@@ -18,7 +18,7 @@ pub(crate) mod provider;
 pub mod requests;
 #[cfg(test)]
 mod test_support;
-mod usage;
+pub(crate) mod usage;
 
 pub use brief::{
     analyze, brief, brief_focus_start, summarize, user_names, AnalyzeRequest, GoalPromptInput,

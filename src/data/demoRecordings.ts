@@ -186,6 +186,36 @@ export function createDemoRecordings(options: {
       if (!found) throw new Error("This recording has no transcript.");
       return structuredClone(found);
     },
+    async suggestRecordingVocabulary() {
+      return [
+        { term: "ThreeStrands", threadCount: 5 },
+        { term: "QBR", threadCount: 4 },
+        { term: "SpeechAnalyzer", threadCount: 3 },
+      ];
+    },
+    async cloudTranscribeRecording(
+      id: string,
+      _provider: string,
+      _model: string,
+      _endpoint: string | null,
+      diarize: boolean,
+    ): Promise<RecordingTranscript> {
+      const recording = recordings.find((candidate) => candidate.id === id);
+      if (!recording || !audio.has(id)) throw new Error("This recording has no audio to transcribe.");
+      const labels = recording.tracks.some((entry) => entry.track === "system" && entry.state === "active");
+      const base = demoTranscript(id, recording.durationMs, labels);
+      if (labels && diarize) {
+        let remoteIdx = 0;
+        base.lines = base.lines.map((line) => (
+          line.speaker === "others"
+            ? { ...line, speakerLabel: `Speaker ${(remoteIdx++ % 2) + 1}` }
+            : line
+        ));
+      }
+      transcripts.set(id, base);
+      recording.state = "transcribed";
+      return structuredClone(base);
+    },
     async latestTranscribedRecording() {
       pickUp();
       const found = recordings.find((recording) => recording.state === "transcribed") ?? null;

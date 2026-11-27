@@ -1301,6 +1301,7 @@ fn start_recording_runtime(
             command: worker::WorkerCommand::current_exe()?,
             limits: worker::WorkerLimits::default(),
         }),
+        cloud: Arc::new(recording::transcribe::cloud::HttpCloudTranscriber::new()),
         power: Arc::new(power::SystemPower),
         memory: Arc::new(memory::SystemMemory),
         models: Arc::new(models::ModelStore::new(
@@ -1942,6 +1943,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::recordings::delete_transcription_model,
         commands::recordings::transcribe_recording,
         commands::recordings::recording_transcript,
+        commands::recordings::suggest_recording_vocabulary,
+        commands::recordings::cloud_transcribe_recording,
         commands::recordings::latest_transcribed_recording,
         commands::recordings::recording_review_context,
         commands::recordings::summarize_recording,
