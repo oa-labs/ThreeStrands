@@ -10,9 +10,9 @@ runner = "scripts/codesign-dev-runner.sh"
 # architecture. OFF builds for the architecture's baseline, so one build runs
 # on every Mac it targets.
 GGML_NATIVE = "OFF"
-# whisper.cpp uses std::filesystem, which macOS has from 10.15. Release
-# builds pass Tauri's default minimumSystemVersion (10.13) down as
-# MACOSX_DEPLOYMENT_TARGET, and whisper.cpp does not compile for 10.13. The
-# app already needs newer macOS than either to launch (QuickLookThumbnailing,
-# Core Audio process taps), so this raises nothing in practice.
+# whisper.cpp uses std::filesystem, which macOS has from 10.15, the app's
+# minimum (`bundle.macOS.minimumSystemVersion` in tauri.conf.json). Release
+# builds pass that minimum to CMake as MACOSX_DEPLOYMENT_TARGET; cargo builds
+# outside Tauri (tests, an x86_64 build, whose default target is older) don't,
+# so this sets it for them. Keep it equal to the app's minimum.
 CMAKE_OSX_DEPLOYMENT_TARGET = "10.15"

@@ -277,8 +277,10 @@ Processing:
 - **Builds.** `.cargo/config.toml` (at the root and in `src-tauri`) sets
   `GGML_NATIVE=OFF`, so whisper.cpp is compiled for the architecture's
   baseline, not the build machine's CPU, and `CMAKE_OSX_DEPLOYMENT_TARGET=10.15`,
-  because whisper.cpp uses `std::filesystem` and fails to compile for the
-  10.13 deployment target Tauri passes to release builds.
+  because whisper.cpp uses `std::filesystem`, which needs macOS 10.15. That is
+  also the app's minimum (`minimumSystemVersion` in `tauri.conf.json`, raised
+  from Tauri's default 10.13 on 2026-11-27); the setting covers cargo builds
+  that Tauri doesn't start.
 - **Voice activity detection** runs first, using Silero, so silence produces
   no "Thank you." hallucinations and long quiet stretches cost nothing. It runs
   as a separate step: `WhisperVadContext`, then whisper on each speech span.
