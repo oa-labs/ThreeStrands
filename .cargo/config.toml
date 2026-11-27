@@ -1,0 +1,7 @@
+# Cargo reads configuration from the directory it runs in, so cargo commands
+# run from the repository root (CI's `cargo test --manifest-path
+# src-tauri/Cargo.toml`) need the build settings src-tauri/.cargo/config.toml
+# gives whisper.cpp. See that file for why each is set.
+[env]
+GGML_NATIVE = "OFF"
+CMAKE_OSX_DEPLOYMENT_TARGET = "10.15"

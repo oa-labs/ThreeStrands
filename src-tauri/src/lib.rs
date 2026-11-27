@@ -1065,6 +1065,13 @@ pub fn run_pdf_worker_if_requested() {
     pdf_worker::run_worker_if_requested();
 }
 
+#[cfg(desktop)]
+/// Becomes the transcription worker and exits when the process was started
+/// as one. `main` calls this before anything else.
+pub fn run_transcription_worker_if_requested() {
+    recording::transcribe::worker::run_worker_if_requested();
+}
+
 pub fn run() {
     let builder = tauri::Builder::default();
     // Registered first so a second launch forwards its link or file and exits
@@ -1273,16 +1280,34 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 /// interrupted (before anything can start a new one), and starts the
 /// once-a-second tick that drives capture health, limits, the tray's
 /// elapsed time, and the daily retention sweep. The first tick also sweeps
-/// and shows the tray icon when Record Meetings is on.
+/// and shows the tray icon when Record Meetings is on. A second thread runs
+/// transcription jobs, one at a time.
 #[cfg(desktop)]
 fn start_recording_runtime(
     data_dir: &std::path::Path,
     database: &Arc<Database>,
     handle: &tauri::AppHandle,
 ) -> std::io::Result<Arc<recording::runtime::RecordingRuntime>> {
+    use recording::transcribe::{models, power, worker};
     let audio_root = data_dir.join("recordings");
     std::fs::create_dir_all(&audio_root)?;
     restrict_dir_to_owner(&audio_root);
+    let models_dir = data_dir.join("recording-models");
+    std::fs::create_dir_all(&models_dir)?;
+    restrict_dir_to_owner(&models_dir);
+    let transcription = recording::runtime::TranscriptionParts {
+        transcriber: Arc::new(worker::WorkerTranscriber {
+            command: worker::WorkerCommand::current_exe()?,
+            limits: worker::WorkerLimits::default(),
+        }),
+        power: Arc::new(power::SystemPower),
+        models: Arc::new(models::ModelStore::new(
+            models_dir.clone(),
+            models::Pins::pinned(),
+            Arc::new(recording::VolumeProbe(models_dir)),
+            models::UrlPolicy::hugging_face(),
+        )),
+    };
     let runtime = Arc::new(recording::runtime::RecordingRuntime::new(
         database.clone(),
         recording::capture::platform_backend(),
@@ -1290,6 +1315,7 @@ fn start_recording_runtime(
         Arc::new(recording::VolumeProbe(audio_root.clone())),
         audio_root,
         Arc::new(tray::AppNotifier::new(handle.clone())),
+        transcription,
     ));
     let recovered = runtime.recover();
     if recovered > 0 {
@@ -1301,6 +1327,14 @@ fn start_recording_runtime(
         .spawn(move || loop {
             ticking.tick();
             std::thread::sleep(std::time::Duration::from_secs(1));
+        })?;
+    let transcribing = runtime.clone();
+    std::thread::Builder::new()
+        .name("recording-transcription".into())
+        .spawn(move || loop {
+            while transcribing.transcription_step() {}
+            transcribing
+                .wait_for_transcription_work(recording::policy::TRANSCRIPTION_POLL_INTERVAL);
         })?;
     Ok(runtime)
 }
@@ -1898,6 +1932,12 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::recordings::delete_all_recordings,
         commands::recordings::request_recording_permissions,
         commands::recordings::recording_confirm_quit,
+        commands::recordings::transcription_models,
+        commands::recordings::download_transcription_model,
+        commands::recordings::cancel_transcription_model_download,
+        commands::recordings::delete_transcription_model,
+        commands::recordings::transcribe_recording,
+        commands::recordings::recording_transcript,
         commands::meetings::meeting_context,
         commands::meetings::meeting_source_preview,
         commands::meetings::prepare_meeting_brief,
@@ -2057,6 +2097,9 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
                 // Finalize the open segments rather than leave them for
                 // crash recovery.
                 state.recording.stop_if_active();
+                // Kill a running transcription worker; the recording is
+                // transcribed again at the next launch.
+                state.recording.cancel_transcription();
                 state.agent_runner.request_stop();
                 log_failure(
                     "checkpointing the WAL at exit",

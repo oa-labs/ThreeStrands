@@ -2,7 +2,8 @@
 
 **Status:** In progress. Stage 0 (the spike) ran in the VM on 2026-11-26; see
 [the findings](meeting-recording-spike-findings.md). Its host
-measurements are still open. Stage 1 started 2026-11-27.
+measurements are still open. Stage 1 started 2026-11-27. Stages 1 to 3 are
+built.
 **Baseline:** 0.211.0, reviewed 2026-11-26.
 **Builds on:** [Meeting preparation and follow-through](meeting-preparation-design.md)
 (stages 1–4 and 5a built) and [Meeting notes](notes-design.md#meeting-notes)
@@ -249,12 +250,35 @@ Processing:
 
 ## Transcription
 
-- **Engine.** whisper.cpp through `whisper-rs`, with Metal on Apple Silicon and
-  CPU elsewhere. It runs in a child process, re-executing the app binary with a
-  worker argument as `pdf_worker.rs` does. A C++ crash or runaway memory use
-  can't take down the mail client, and the worker runs at low priority. The
-  protocol: the parent passes segment paths, and the worker writes framed JSON
-  segments (`track`, `startMs`, `endMs`, `text`) and progress to stdout.
+- **Engine.** whisper.cpp through `whisper-rs` 0.16 with Metal. It is a
+  macOS-only dependency, like recording, so Windows, Linux, and Android
+  builds need no cmake or libclang; stages 6 and 7 add it there. It runs in a
+  child process, re-executing the app binary with a hidden argument and an
+  environment marker as `pdf_worker.rs` does, so a C++ crash or runaway memory
+  use can't take down the mail client. **One long-lived worker per job** (one
+  recording): the model loads once, and each track's held-back audio (below)
+  survives from one segment file to the next. The worker gets an empty
+  environment, `/` as its directory, no core dumps, and nice 10. The parent
+  enforces a load timeout, a per-request wall-clock timeout scaled to the
+  request's audio, a physical-footprint cap (polled, as macOS doesn't enforce
+  `RLIMIT_AS`), and a cancel flag, and kills and reaps the worker on any
+  breach, on malformed output, and on drop. **Protocol**: length-prefixed JSON
+  frames both ways. A `config` frame first (model paths, language, threads),
+  answered by `ready`; then one `segment` request at a time (track, WAV path,
+  `startMs`, whether it continues the previous file of the track's run, and
+  whether it ends the run), each answered by its `lines` (`track`, `startMs`,
+  `endMs`, `text`). The parent checks every path: the exact file name the
+  segment writer gives, resolved inside the recording's audio folder.
+- **Speech across segment files.** Speech that reaches the end of a segment
+  file is held back with the last half second of every file and transcribed
+  with the next contiguous file of the same run, so a sentence is never cut at
+  a minute boundary; the run's last file flushes it. What is held never
+  exceeds one 30-second span.
+- **Builds.** `.cargo/config.toml` (at the root and in `src-tauri`) sets
+  `GGML_NATIVE=OFF`, so whisper.cpp is compiled for the architecture's
+  baseline, not the build machine's CPU, and `CMAKE_OSX_DEPLOYMENT_TARGET=10.15`,
+  because whisper.cpp uses `std::filesystem` and fails to compile for the
+  10.13 deployment target Tauri passes to release builds.
 - **Voice activity detection** runs first, using Silero, so silence produces
   no "Thank you." hallucinations and long quiet stretches cost nothing. It runs
   as a separate step: `WhisperVadContext`, then whisper on each speech span.
@@ -267,23 +291,36 @@ Processing:
   - a minimum speech length, because whisper rejects 40 ms fragments;
   - a maximum segment length (about 30 s, set in the policy module), because
     continuous system audio otherwise held a segment open indefinitely.
+
+  whisper.cpp derives the continue threshold as the start threshold minus
+  0.15, and pads both sides equally, so the app sets the start threshold and
+  adds the asymmetric padding itself.
 - **Timestamp tokens stay on.** This departs from meetily. Each span is 30
   seconds or shorter, where the tokens drop nothing: the spike measured 1.9%
   WER with them on or off. They also split spans into sentences, which the
   echo merge needs. meetily's dropped segments happen on longer inputs: 44%
   WER without VAD and tokens off. Segment times are the span's start plus
   whisper's offsets. Flash attention is off on macOS, where it crashes
-  (anarlog). A
-  post-filter removes repeated lines and known hallucinations. Distribution
-  builds set `GGML_NATIVE=OFF`, so one build runs on every CPU of an
-  architecture.
+  (anarlog). A post-filter trims lines and removes empty ones, consecutive
+  repeats within a track, known hallucinations (a list in the policy module),
+  and bracketed non-speech such as "(music)".
 - **During the recording.** Finished minute-segments are transcribed in the
   background while recording continues, so the transcript is nearly ready when
-  the user presses Stop. On battery, this waits until Stop.
+  the user presses Stop. On battery, this waits until Stop (IOKit's providing
+  power source). One job runs at a time: waiting `recorded` and `interrupted`
+  recordings go first, oldest first, whenever the chosen model is ready.
+  Nothing of the work during a recording is visible until Stop; then the row
+  shows `transcribing` with a percentage that counts what was already done.
+  A job keeps the model it started with. A job that fails during the
+  recording starts over after Stop.
 - **Merging tracks.** Segments are ordered by start time. When every output is
-  headphones, the microphone hears only the user, so nothing is dropped.
+  headphones, the microphone hears only the user, so nothing need be dropped.
   anarlog uses the same headphones test to switch its echo canceller off.
-  Otherwise the microphone picks up the room's speakers. The merge works
+  **Deferred:** that exemption needs output-route detection, which can't be
+  tested in the VM, so stage 3 always applies the echo rule when the
+  recording has system audio. On headphones the rule rarely fires, because the
+  user's words seldom repeat the other side's. Otherwise the microphone picks
+  up the room's speakers. The merge works
   sentence by sentence. A microphone sentence is dropped when at least half of
   its words (0.5, in the policy module) also appear in system sentences that
   overlap it in time, ±1 second. In the spike's simulated echo (−16 dB,
@@ -297,10 +334,17 @@ Processing:
     this).
   - A neural echo canceller like anarlog's (ONNX models run through `ort`),
     which is the next step only if the spike measures too much duplication.
-- **The model** is stored under the app data directory. Downloads resume after
-  an interruption with HTTP Range requests. The model is checked against a
-  pinned SHA-256 after download and before every load. That is stricter than
-  either reference: meetily checks only the size, and anarlog a CRC32.
+- **The model** is stored under the app data directory, in
+  `recording-models/`. Downloads start from the pinned Hugging Face URL and
+  follow at most five redirects, each over https to Hugging Face's own hosts.
+  They resume after an interruption with HTTP Range requests (starting over
+  when the server ignores the range), stop past the pinned size, and refuse
+  to start when the disk would fall below the 2 GB recording floor. The voice
+  activity model downloads first, as part of either model's download. The
+  model is checked against a pinned SHA-256 after download and before every
+  load; a damaged file is deleted and the model shown as failed. That is
+  stricter than either reference: meetily checks only the size, and anarlog a
+  CRC32.
 
 ## AI recap
 
@@ -381,7 +425,9 @@ src-tauri/src/
     policy.rs                  all limits, thresholds, model hashes and sizes
     capture/{mod,macos,windows,linux,fake}.rs
     segments.rs                WAV segment writer, gap markers, crash recovery
-    transcribe/{mod,worker,merge}.rs
+    transcribe/                models, worker + protocol, stream + spans (in the
+                               worker), engine (whisper, macOS), plan, merge,
+                               scheduler, power
     retention.rs
   ai/meeting_recap.rs
   commands/recordings.rs
@@ -393,9 +439,13 @@ Commands: `recording_start(eventRef?, title?)`, `recording_pause`,
 `list_recordings(eventRef)`, `recording_transcript(id)`,
 `delete_recording(id)`, `delete_recording_audio(id)`,
 `recording_settings`, `set_recording_settings(settings)`,
-`transcription_model_status`, `download_transcription_model(model)`, and
-`summarize_recording(id, requestId, range?)`. The `recording-state` event goes
-to the webview, which shows the indicator, the Recording rows, and progress.
+`transcription_models`, `download_transcription_model(model)`,
+`cancel_transcription_model_download(model)`,
+`delete_transcription_model(model)`, `transcribe_recording(id)` (Retry), and
+`summarize_recording(id, requestId, range?)` (stage 4). Events: `recording-state`
+(the indicator), `recordings-changed` (the Recording rows, including every
+transcription state change), `transcription-progress` (whole-percent changes),
+and `transcription-models-changed` (at most four a second while downloading).
 The webview side adds domain types in `src/domain.ts`, the client in
 `src/data/client.ts`, and fixtures in `src/data/demoClient.ts`.
 
@@ -431,7 +481,10 @@ in the first stage users can see (stage 2), and extend it in later stages.
    section, palette commands, crash recovery, and retention.
 3. **Transcribe.** Model download and verification, the worker, transcription
    during the recording, the track merge with echo drop, and **Show
-   Transcript**.
+   Transcript**. *Built 2026-11-27*; the headphones exemption is deferred (see
+   Merging tracks). Smoke-tested in the VM with the Fast model on Metal: RTF
+   about 0.33 on the paravirtual GPU, model load 4.6 s cold and 0.15 s warm.
+   Real Apple Silicon speed and memory are still to measure on the host.
 4. **Recap and review.** `meeting_recap.rs`, validation, the Summary field and
    Suggested items in `MeetingFollowThroughDialog`, **Attach Transcript**, and
    ad-hoc destinations.
