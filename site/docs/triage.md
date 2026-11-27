@@ -2,7 +2,7 @@
 title: Reading and Triage
 nav: Reading and Triage
 summary: Work through your inbox from the keyboard — archive what's done, label and filter the rest, and split high-volume mail into its own tabs.
-reviewed: 0.190.0
+reviewed: next
 ---
 
 ## The Triage Loop {#the-triage-loop}
@@ -13,8 +13,9 @@ Single-letter shortcuts work whenever you're reading and no text field has focus
 2. Press <kbd>e</kbd> to archive a conversation once it's done.
 3. Reply with <kbd>r</kbd>, reply all with <kbd>a</kbd>, or forward with <kbd>f</kbd>.
 4. Turn anything that needs follow-up into a task with <kbd>d</kbd> (see [Tasks and Goals](tasks-and-goals.html)).
+5. Save a passage or message into your notes with <kbd>w</kbd> (**Add to Note…**).
 
-Archiving shows a *Conversation archived* notice with **Undo**. Press <kbd>Shift + e</kbd> (**Mark Not Done**) to bring a conversation back to the inbox.
+Archiving shows a *Conversation archived* notice with **Undo**. Press <kbd>Shift + e</kbd> (**Mark Not Done**) to bring a conversation back to the inbox. When [Inbox Assistants](inbox-assistants.html) are enabled, matched threads also show an assistant banner in the conversation side panel.
 
 Reopen a long email you were partway through, such as a newsletter, and it picks up where you left off. Your place is kept on this computer for two days, and the email opens at the top again once you've read to the end or a new reply arrives.
 
@@ -25,13 +26,14 @@ Reopen a long email you were partway through, such as a newsletter, and it picks
 | Archive | <kbd>e</kbd> |
 | Mark Not Done | <kbd>Shift + e</kbd> |
 | Trash | <kbd>#</kbd> |
-| Mark Spam | <kbd>!</kbd> |
+| Mark Spam / Not spam | <kbd>!</kbd> |
 | Toggle Read | <kbd>u</kbd> |
 | Toggle Star | <kbd>s</kbd> |
 | Manage Labels | <kbd>l</kbd> |
+| Add to Note… | <kbd>w</kbd> |
 | Undo Last Action | <kbd>z</kbd> |
 
-**Mark Spam** also blocks the sender, so their new mail goes straight to Spam. Undo unblocks them again. A blocked sender who sends nothing for six months is forgotten. Review or unblock senders in **Settings → Muted Senders**, under **Blocked Senders**.
+**Mark Spam** also blocks the sender, so their new mail goes straight to Spam. Undo or **Not spam** (<kbd>!</kbd> in **Spam**) unblocks them again. A blocked sender who sends nothing for six months is forgotten. Review or unblock senders in **Settings → Muted Senders**, under **Blocked Senders**.
 
 The [keyboard shortcut reference](keyboard-shortcuts.html) lists everything else.
 
@@ -39,7 +41,7 @@ The [keyboard shortcut reference](keyboard-shortcuts.html) lists everything else
 
 Press <kbd>h</kbd> or click **Snooze** to put a conversation aside. Choose **Later today**, **Tomorrow**, **Next week**, or a date and time in your computer's timezone. Late in the evening, **Later today** is omitted. Checked conversations can be snoozed together; the confirmation offers **Undo**.
 
-Snoozing removes mail from Inbox in your other mail apps too: Gmail archives it, and IMAP moves its inbox messages into the account's Archive folder. Mail remains available in All Mail or Archive and search. Read/unread status is preserved.
+Snoozing removes mail from Inbox in your other mail apps too: Gmail and label-based IMAP archive it (keeping it in All Mail), and other IMAP accounts move its inbox messages into the account's Archive folder. Mail remains available in All Mail or Archive and search. Read/unread status is preserved by default (see **Settings → Reading & Triage**).
 
 Open **Snoozed** from the folder menu, or press <kbd>g</kbd> then <kbd>z</kbd>. Return times appear beside each conversation, earliest first. Select one and choose **Reschedule Snooze** or **Return to Inbox**. Returning a batch also offers Undo. Archiving, trashing, or marking spam in ThreeStrands cancels its pending return; trash or spam observed at the provider also cancels it. A new incoming reply ends snooze when ThreeStrands receives it; your own sent mail does not.
 
@@ -49,7 +51,7 @@ IMAP keeps active snoozed conversations within reach even outside its usual arch
 
 ## Batch Actions {#batch-actions}
 
-Press <kbd>x</kbd> to select the current conversation, or use the checkboxes. A toolbar shows how many are selected and offers Archive, Trash, Mark Spam, Mark Read or Unread, Star, Labels, and Snooze for all of them at once.
+Press <kbd>x</kbd> to select the current conversation, or use the checkboxes. A toolbar shows how many are selected and offers Archive, Trash, Mark Spam, Mark Read or Unread, Star or Unstar, Labels, and Snooze for all of them at once, plus contextual actions like **Not Spam** in Spam, **Restore** in Trash, **Return to Inbox** in Snoozed, and **Unstar** in Starred.
 
 ## Filters {#filters}
 
@@ -66,7 +68,7 @@ Open **Filters** above the list to narrow the current mailbox. Each filter has a
 
 Split Inboxes move high-volume mail into its own tab, so the main inbox stays focused on people.
 
-1. Click the **Add Split** icon beside the conversation count, or open **Settings → Split Inboxes**.
+1. Click the **Add split inbox** icon beside the conversation count, or open **Settings → Split Inboxes**.
 2. Give it a name, choose the account, and pick **Match By**: **Sending Domain**, **Label**, or **Address Contains**.
 3. Click **Add Split Inbox**.
 
@@ -113,11 +115,11 @@ When a message supports it, press <kbd>⌘/Ctrl + u</kbd> or use the reader's un
 ThreeStrands checks each message for common email tricks, entirely on your computer, and shows what it finds beside the sender's name:
 
 - A small gray shield marks a **Known sender**: someone you write to or have saved as a contact, whose email is verified as coming from them. It is not a promise that every message is safe.
-- An amber **Be careful** warning names what looks wrong, such as a familiar name used by a new address, a lookalike domain, a subject line that disguises words with look-alike letters, a misleading link, or a risky attachment from someone you have not written to.
+- An amber **Be careful** warning names what looks wrong, such as a familiar name used by a new address (**Name doesn't match the sender**), a **New sender** writing unexpectedly, a lookalike domain, a subject line that disguises words with look-alike letters, a misleading link, or a risky attachment from someone you have not written to.
 
-Hover over the shield or warning to see every finding and the sender details, or click it to keep them open. Sender warnings appear above the message itself; familiar-name warnings list both the sending and previously seen addresses. The warning beside the sender’s name does not repeat those details. For newsletters and other bulk mail with nothing to warn about, the side panel shows a **Sender checks** section with the same details.
+Hover over the shield or warning to see every finding and the sender details, or click it to keep them open. Sender warnings appear above the message itself (along with **Mark Spam** or **Not spam** actions in the banner); familiar-name and name-sender mismatch warnings list both the sending and previously seen addresses. The warning beside the sender’s name does not repeat those details. For newsletters and other bulk mail with nothing to warn about, the side panel shows a **Sender checks** section with the same details.
 
-If a warning is about mail you expected, such as a colleague writing from a new address, review the stated scope and choose **Trust this address for this account** in the warning's details, or in the warning above the message when it's about a borrowed name. ThreeStrands remembers that sending address and its current link destinations for this mail account, including a Reply-To address when shown, so matching verified mail gets a quieter assessment. Changes in how the mail is delivered and other security concerns still warn. Confirmations sync to your other devices for the same mail account; choose **Forget confirmation** in the side panel's **Sender checks** section to undo one.
+If a warning is about mail you expected, such as a colleague writing from a new address, review the stated scope and choose **Trust this sender** in the warning banner above the message (or **Trust this address for this account** in the warning's details). ThreeStrands remembers that sending address and its verified link destinations across verified mail from that sender over up to a year for this mail account, including a Reply-To address when shown, so matching verified mail gets a quieter assessment. Specific link or security warnings and changes in how the mail is delivered still warn. Confirmations sync to your other devices for the same mail account; choose **Forget confirmation** in the side panel's **Sender checks** section to undo one.
 
 Choose **Show link** to find the link in the message. **Details** expands the mail server’s sender checks, the sites links open, and tracking images. Links in folded quoted history are left out of these warnings. Remote images remain blocked until you allow them, subject to your privacy settings.
 

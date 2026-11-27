@@ -37,7 +37,7 @@ export function MacContactsSettings({ onChanged }: { onChanged(): void }) {
   };
   const permitted = status?.permission === "authorized" || status?.permission === "limited";
   return <section aria-label="Mac Contacts connection">
-    <p id="mac-contacts-help">Read names, email addresses, companies, and job titles from selected address books on this Mac. Apple handles syncing with iCloud, Google, and other accounts. ThreeStrands never changes Apple Contacts.</p>
+    <p id="mac-contacts-help">Read names, email addresses, phone numbers, companies, and job titles from selected address books on this Mac. Apple handles syncing with iCloud, Google, and other accounts. ThreeStrands never changes Apple Contacts.</p>
     <p>Choose only the address books you want in Contacts and recipient suggestions. Changes you save here become independent ThreeStrands profiles. The connection and downloaded contacts stay on this Mac; saved profiles follow your existing export and encrypted sync settings.</p>
     {status?.permission === "denied" || status?.permission === "restricted" ? <p>Contacts access is off. Allow ThreeStrands in System Settings → Privacy &amp; Security → Contacts, then try again.</p> : null}
     {status?.permission === "limited" ? <p>macOS has granted access to only some contacts. ThreeStrands can read only those contacts.</p> : null}

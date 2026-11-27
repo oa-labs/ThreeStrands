@@ -2,7 +2,7 @@
 title: Contacts
 nav: Contacts
 summary: Keep profiles, groups, and Keep in Touch reminders for the people you write to, and bring your address book in or out with CSV or vCard.
-reviewed: 0.194.0
+reviewed: next
 ---
 
 ## The Address Book {#the-address-book}
@@ -11,7 +11,11 @@ Press <kbd>5</kbd> for Contacts. ThreeStrands builds a record of who you corresp
 
 <ts-shot scene="contacts" alt="A contact profile with addresses, notes, correspondence history, and shared files."></ts-shot>
 
-Click **New Contact** to add someone. A profile can hold several email addresses, a role and company, location, birthday, links, notes, and a photo. Click the heart to make someone a favorite; favorites appear first.
+Click **New Contact** to add someone. A profile can hold several email addresses, phone numbers, a role and company, location, birthday, links, notes (**About**), and a photo. Click the heart to make someone a favorite; favorites appear first. You can search contacts by name, email address, company, or phone digits, click a phone number card to copy or dial it, and convert between saved contacts and auto-discovered correspondence records cleanly.
+
+On a contact profile, **Enhance With AI** (when AI is enabled) can summarize recent mail with that person into contact details and notes. In a conversation's side panel, **Upcoming meetings** shows scheduled events with the people on the thread alongside recent emails and shared files.
+
+While composing or inviting, once someone is added, suggestions put people you email together first, marked **Often emailed with**, ahead of pinned contacts. Use **Select** to pick several contacts for bulk **Keep in Touch…**, **Add to Group…**, or **Merge…** actions. Contacts supports keyboard shortcuts including <kbd>j</kbd>/<kbd>k</kbd> or arrow keys to move through the list, <kbd>Tab</kbd>/<kbd>Shift + Tab</kbd> across tabs, <kbd>/</kbd> to search, <kbd>n</kbd> for a new contact, <kbd>e</kbd> to email, <kbd>f</kbd> to toggle favorite, <kbd>\\</kbd> to toggle the detail pane, and <kbd>Escape</kbd> to return to the previous item.
 
 The conversation side panel's recent emails and shared files follow the message you are reading or the recipients you are writing to.
 
@@ -21,7 +25,7 @@ A contact's details list, under **Notes**, the notes that mention them, such as 
 
 On macOS, open **Contacts → Manage Contacts… → Mac Contacts…**, choose **Allow Mac Contacts…**, grant access, then choose which address books to use. None are selected automatically. Sources may include iCloud, Google, and other accounts already configured in Apple Contacts; ThreeStrands does not ask for additional Google authorization.
 
-Selected contacts contribute names, email addresses, companies, and job titles to Contacts and recipient suggestions. Phone numbers, photos, birthdays, and Apple lists are not connected in this version. **Never suggest this address** still controls autocomplete.
+Selected contacts contribute names, email addresses, phone numbers, companies, and job titles to Contacts and recipient suggestions. Photos, birthdays, and Apple lists are not connected in this version. **Never suggest this address** still controls autocomplete.
 
 Apple Contacts stays read-only. Changes you save in ThreeStrands create independent local profiles; refreshing cannot overwrite their details, notes, groups, or reminders. Saved profiles follow your existing export and encrypted sync settings. Source-only contacts and the connection settings stay on this Mac.
 
@@ -47,11 +51,11 @@ Click a conversation to open it and see who else took part, then return to the g
 
 Set a **Keep in Touch** frequency on a profile, from weekly to yearly or a custom number of days. Email in either direction counts as being in touch. The Keep in Touch view groups people as Overdue, Due Today, This Week, and Later, and shows upcoming birthdays.
 
-Use **Mark Contacted** when you've talked another way, or **Snooze** a reminder for a while. The Contacts icon in the sidebar shows how many people are due. Due reminders also appear in **Today** (<kbd>0</kbd>) beside your tasks and agenda; click a person to open their profile.
+Use **Mark Contacted** when you've talked another way, or **Snooze** a reminder for a while. Sending an email to someone due for a check-in also marks their check-in complete. The Contacts icon in the sidebar shows how many people are due. Due reminders also appear in **Today** (<kbd>0</kbd>) beside your tasks and agenda; click a person to open their profile.
 
 ## Merge Duplicates {#merge-duplicates}
 
-Click **Select**, choose two or more contacts, and choose **Merge…**. Pick the profile to keep; addresses, notes, links, favorites, and groups are combined.
+Click **Select**, choose two or more contacts, and choose **Merge…**. Pick the profile to keep; addresses, phone numbers, notes, links, favorites, and groups are combined.
 
 ## Import and Export {#import-and-export}
 

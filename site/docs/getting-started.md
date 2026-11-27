@@ -2,7 +2,7 @@
 title: Getting Started
 nav: Getting Started
 summary: Install ThreeStrands, connect Gmail or an IMAP account, and set up the few things worth changing on day one.
-reviewed: 0.179.0
+reviewed: next
 ---
 
 ## Install the App {#install-the-app}
@@ -10,6 +10,7 @@ reviewed: 0.179.0
 Download the latest release from [GitHub Releases](https://github.com/oa-labs/ThreeStrands/releases/latest):
 
 - **macOS** — a signed and notarized `.dmg` for Apple Silicon and Intel Macs.
+- **Android** — an ARM64 `.apk` for Android 9+ phones (see [ThreeStrands for Android](android.html)).
 - **Windows (experimental)** — an x86-64 `.exe` installer, when included in the release.
 - **Linux (experimental)** — `.deb`, `.rpm`, and `.AppImage` packages for x86-64.
 
@@ -19,18 +20,18 @@ ThreeStrands stores your mail cache in a local database on your computer. Sign-i
 
 ## Connect Gmail {#connect-gmail}
 
-1. Open **Settings** with <kbd>⌘/Ctrl + ,</kbd>, or click **Add Account** in the empty inbox.
+1. Open **Settings** with <kbd>⌘/Ctrl + ,</kbd> (or **Settings…** from the macOS application menu), or click **Add Account** in the empty inbox.
 2. In **Mail Accounts**, click **Add Account**, then choose **Gmail**.
 3. Sign in to Google in your browser. The button reads **Waiting for Google…** until you finish.
 4. When the browser says *ThreeStrands is connected*, close the tab. Your mail starts syncing.
 
 ### Gmail with an app password {#gmail-with-an-app-password}
 
-Choose **Gmail with an app password** in **Add Account**. Enter your Gmail address and the app password from Google, click **Test and Save**, and review the mailbox mapping before you start syncing. ThreeStrands fills in the incoming and outgoing server settings for Gmail.
+Choose **Gmail with an app password** in **Add Account**. Enter your Gmail address and the app password from Google, click **Test and Save**, and review the mailbox mapping before you start syncing. ThreeStrands fills in the incoming and outgoing server settings for Gmail. If you previously added a Gmail address as a generic IMAP account, open **More actions (`⋯`) → Switch to Gmail via IMAP…** in **Settings → Mail Accounts**.
 
 Google requires 2-Step Verification to create an app password. Some Google accounts, including accounts with Advanced Protection or certain work or school policies, may lack that option. [Create or manage a Google app password](https://support.google.com/accounts/answer/185833).
 
-To replace a revoked app password, open **Settings → Mail Accounts → Reconnect** for the account and enter the new app password. Mail in Gmail stays on the server. Drafts sync through the mapped Drafts mailbox, and search can reach All Mail, including archived messages. [Search coverage](search.html#local-results-and-older-mail).
+To replace a revoked app password, click **Reconnect** when prompted or open **More actions (`⋯`) → Server → Edit server settings…** for the account to update the app password proactively. Mail in Gmail stays on the server. Drafts sync through the mapped Drafts mailbox, and search can reach All Mail, including archived messages. [Search coverage](search.html#local-results-and-older-mail).
 
 ## Connect an IMAP Account {#connect-an-imap-account}
 
@@ -40,7 +41,7 @@ Choose **IMAP** instead of Gmail to connect any IMAP/SMTP server.
 2. Otherwise, fill in **Incoming Mail (IMAP)** and **Outgoing Mail (SMTP)**: host, port, and security. **STARTTLS** defaults to ports 143 and 587, and **Implicit TLS** to 993 and 465.
 3. Enter the **Password**. Many providers want an app password here rather than your normal sign-in password.
 4. Click **Test and Save**. Both servers must connect before the account is added.
-5. In **Map Your Mailboxes**, confirm which folders are Sent, Archive, Drafts, Trash, and Junk. Mappings marked *name guess — please verify* are worth a second look.
+5. In **Map Your Mailboxes**, confirm **Sent**, **Archive**, **Drafts**, **Trash**, **Junk / Spam**, **All Mail (Aggregate)**, and **Label Storage** (or **Label Container Mailbox**) as applicable. Mappings marked *name guess — please verify* are worth a second look.
 
 ### Proton Mail Bridge {#proton-mail-bridge}
 
@@ -61,13 +62,14 @@ In **Settings → Mail Accounts**, each account has:
 - **Availability** — under **Profiles**, your available hours with gaps for breaks and default meeting length, plus your timezone and **Drive Time Buffer** (reserved around events with a location) under **Shared Settings**. Add profiles to keep different hours for each part of your life, then choose one for each mail account in **Account Defaults** and for lunch, breakfast, dinner, or coffee invitations in **Meeting Types**. See [Use Different Hours for Each Account](calendar.html#availability-profiles).
 - **Signatures** — formatted sign-offs with logos, Gmail import, and separate defaults for new messages and replies.
 - **Reading & Triage** — choose whether opening a conversation marks it read **Immediately**, **After a Delay**, or **Never**, whether archiving, moving to Trash, or snoozing also marks it read, and what opens after you archive. See [Mark as Read](triage.html#mark-as-read).
-- **Muted Senders** — review senders whose new mail is marked read and archived automatically.
+- **Muted Senders** — review senders whose new mail is marked read and archived automatically, as well as **Blocked Senders** blocked via **Mark Spam**.
 - **Privacy** — remote images are blocked by default; turn on **Load Remote Images Automatically** here, or click **Load images** on a single message. You can also choose how long to keep mail on this device.
+- **Meeting Recording** (macOS) — record system and microphone audio, transcribe on-device, and summarize into notes ([Meeting Recording](meeting-recording.html)).
 - **Default Apps** — open email links and `.ics` invitations in ThreeStrands.
 
 ## Updates {#updates}
 
-The app offers newer releases when available. Follow its **Install Update** or download action. macOS copies outside Applications may ask you to move the app there first. Updates can restart the app; resolve urgent unsent work first. If installation fails, keep the error and download the current installer from Releases instead of deleting local data. Package-based Linux installs may require downloading a replacement package.
+The app offers newer releases when available—choose **Install and restart** (or **Download**, and **What's new** to read release notes), or use **ThreeStrands → Check for Updates…** on macOS. macOS copies outside Applications may ask you to move the app there first. Updates can restart the app; resolve urgent unsent work first. If installation fails, keep the error and download the current installer from Releases instead of deleting local data. Package-based Linux installs may require downloading a replacement package.
 
 ## After Connecting {#after-connecting}
 

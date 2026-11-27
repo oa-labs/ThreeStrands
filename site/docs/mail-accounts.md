@@ -2,20 +2,20 @@
 title: Manage Mail Accounts
 nav: Mail Accounts
 summary: Connect, recognize, reconnect, and remove accounts without confusing local setup with other devices.
-reviewed: 0.192.2
+reviewed: next
 ---
 
 ## Connect an Account {#connect-an-account}
 
-Use [Getting Started](getting-started.html#connect-gmail) for Gmail sign-in or [IMAP setup](getting-started.html#connect-an-imap-account) for password and app-password accounts. Proton Mail needs [Bridge](proton-bridge.html). Calendar connects separately under **Settings → Calendar Accounts**.
+Use [Getting Started](getting-started.html#connect-gmail) for Google sign-in, **Gmail with an app password**, or [IMAP setup](getting-started.html#connect-an-imap-account). If you previously added a Gmail address as a generic IMAP account, use **More actions (`⋯`) → Switch to Gmail via IMAP…** (or reconnect it cleanly as Gmail). Proton Mail needs [Bridge](proton-bridge.html). Calendar connects separately under **Settings → Calendar Accounts**.
 
 For IMAP servers that support label-based archiving, archived mail stays in All Mail and keeps its other labels. Setup does not require a separate Archive mailbox for those accounts. Other IMAP accounts continue to use their chosen Archive mailbox.
 
-For IMAP servers with native label support, **Manage Labels** lets you create labels and apply or remove them without configuring a label folder container. Enter a full nested path to create a nested label. Rename or delete those labels in another mail client.
+For IMAP servers with native label support (including Gmail via IMAP), **Manage Labels** lets you create, rename, and delete labels and apply or remove them without configuring a label folder container. Enter a full nested path to create a nested label. For folder-based IMAP servers, **Manage Folders…** lets you create folders and map keyword labels.
 
 ## Gmail Sending Addresses {#gmail-sending-addresses}
 
-Add and verify aliases in Gmail's **Settings → Accounts → Send mail as**. ThreeStrands discovers them when it syncs; after changing them in Gmail, use **Settings → Mail Accounts → Sending Addresses → Refresh from Gmail** to update immediately. If your account only has its primary address, open **Aliases…** to find the instructions and refresh control. Accounts with aliases show the full list automatically, including the default address and any Reply-To destination. A custom Reply-To on the primary address stays visible even when the alias controls are collapsed. ThreeStrands reads these settings using your existing Gmail connection; it does not create or verify aliases for you.
+Add and verify aliases in Gmail's **Settings → Accounts → Send mail as**. ThreeStrands discovers them when it syncs; after changing them in Gmail, open **More actions (`⋯`) → Aliases…** (or **Sending Addresses…**) in **Settings → Mail Accounts** and click **Refresh from Gmail** to update immediately. If your account only has its primary address, open **More actions (`⋯`) → Aliases…** to find the instructions and refresh control. Accounts with aliases show the full list, including the default address and any Reply-To destination. A custom Reply-To on the primary address stays visible even when the alias controls are collapsed. ThreeStrands reads these settings using your existing Gmail connection; it does not create or verify aliases for you.
 
 Choose an address in the composer's **From** menu. New messages use Gmail's default address; replies choose the matching address in the original message's recipients or delivery headers. Each address can have its own defaults in **Settings → Signatures**. Primary-account sender names still use your ThreeStrands settings; alias names and Reply-To destinations come from Gmail.
 
@@ -25,24 +25,24 @@ Aliases are refreshed independently on each computer. The verified sending-addre
 
 ## IMAP Sending Addresses {#imap-sending-addresses}
 
-Under **Settings → Mail Accounts → Sending**, add any additional addresses your mail server lets you send from. Choose the **Default Sending Address** for new messages and optionally set a **Reply-To** for each address. A reply uses a matching sending address from the original message when one is available. The default applies when there is no match.
+Under **Settings → Mail Accounts**, open **More actions (`⋯`) → Sending Addresses…** to add any additional addresses your mail server lets you send from. Choose the **Default From address** for new messages and optionally set a **Reply-To** for each address. A reply uses a matching sending address from the original message when one is available. The default applies when there is no match. Inline controls on the account card also let you choose **Save sent messages** and open **Server → Edit server settings…** to update credentials or ports.
 
 If a connection drops during a send, **Check Sent Mail** can confirm submission when your mail server saves its own copy and ThreeStrands finds a unique match. A missing copy leaves delivery uncertain.
 
 ## Switch and Recognize Accounts {#switch-and-recognize-accounts}
 
-In **Settings → Mail Accounts**, set an **Account Nickname**, **Sender Name**, and avatar color. Move accounts up or down to change their order. Choosing an account in the sidebar opens its mail, from any view; the combined view shows all accounts. <kbd>⌘/Ctrl + 1</kbd> through <kbd>⌘/Ctrl + 9</kbd> follow this order, and <kbd>⌘/Ctrl + 0</kbd> shows all accounts.
+In **Settings → Mail Accounts**, set an **Account Nickname**, **Sender Name**, and avatar color, or open **More actions (`⋯`)** for **Edit…**, **Aliases…**, **Sending Addresses…**, **Reconnect**, **Repair Gmail Threading** (on Gmail accounts when threads appear split), **Switch to Gmail via IMAP…**, **IMAP Editing Device…**, and **Disconnect…**. Drag accounts to reorder them. Choosing an account in the sidebar switches to that account while keeping your current view open (click the selected account again to open Mail); the combined view shows all accounts. <kbd>⌘/Ctrl + 1</kbd> through <kbd>⌘/Ctrl + 9</kbd> follow this order, and <kbd>⌘/Ctrl + 0</kbd> shows all accounts.
 
 ## Reconnect an Account {#reconnect-an-account}
 
-If an account needs attention, open **Settings → Mail Accounts** and reconnect it. Complete Gmail sign-in in the system browser, or review IMAP credentials and certificate status. Check **Outbox** afterward: missed scheduled messages still wait for review, and an uncertain delivery should be checked in Sent before retrying.
+If an account needs attention, open **Settings → Mail Accounts** and click **Reconnect** (or **Server → Edit server settings…** to change an IMAP password proactively). Complete Gmail sign-in in the system browser, or review IMAP credentials and certificate status. Check **Outbox** afterward: missed scheduled messages still wait for review, and an uncertain delivery should be checked in Sent before retrying.
 
 ## Accounts on Other Devices {#accounts-on-other-devices}
 
-Accounts imported or learned through encrypted sync do not transfer credentials. Under **On Your Other Devices**, choose **Set Up Here** for the accounts you want on this computer and authenticate them. You do not have to connect every account on every computer.
+Accounts imported or learned through encrypted sync do not transfer credentials. Under **On Your Other Devices**, choose **Set Up Here** for the accounts you want on this computer and authenticate them. You do not have to connect every account on every computer. For IMAP accounts synced across devices, you can pick which device handles mailbox edits under **More actions (`⋯`) → IMAP Editing Device…** (or in [Sync](sync.html)).
 
 ## Remove an Account {#remove-an-account}
 
-Send or copy anything you still need from **Drafts** and **Outbox** before removing an account. Removing it deletes everything ThreeStrands kept for the account on this computer, including its mail, drafts, messages waiting in the **Outbox**, attachments you opened, and older backup copies of your mail; it does not delete the mailbox at your provider. With [Replicated Sync](sync.html), **Disconnect this device** keeps your drafts and Outbox here for when you set the account up again, and **Remove on all devices** clears the same from every synced computer. To remove all ThreeStrands data from a computer, see [Remove Everything From This Computer](privacy.html#remove-everything).
+Send or copy anything you still need from **Drafts** and **Outbox** before disconnecting an account. Opening **More actions (`⋯`) → Disconnect…** and removing it deletes everything ThreeStrands kept for the account on this computer, including its mail, drafts, messages waiting in the **Outbox**, attachments you opened, and older backup copies of your mail; it does not delete the mailbox at your provider. With [Replicated Sync](sync.html), **Disconnect this device** keeps your drafts and Outbox here for when you set the account up again, and **Remove on all devices** clears the same from every synced computer. To remove all ThreeStrands data from a computer, see [Remove Everything From This Computer](privacy.html#remove-everything).
 
 Removal is not a substitute for deleting mail at the provider or erasing exported files. For problems receiving mail, [start with Diagnostics](troubleshooting.html#mail-stopped-arriving) instead of removing the account first.

@@ -2,16 +2,16 @@
 title: Writing Mail
 nav: Writing Mail
 summary: Write with rich text and snippets, keep context beside your draft, catch mistakes before you send, and undo or schedule delivery.
-reviewed: 0.194.0
+reviewed: next
 ---
 
 ## Start a Message {#start-a-message}
 
-Press <kbd>c</kbd> for a new message, or <kbd>r</kbd>, <kbd>a</kbd>, or <kbd>f</kbd> to reply, reply all, or forward. Click the **To** label to show Cc and Bcc. Drag a recipient badge between **To**, **Cc**, and **Bcc**; dragging a selected badge moves every selected badge. To select badges, click them, press <kbd>←</kbd> from the start of a field (<kbd>Shift</kbd> extends the selection), or press <kbd>⌘/Ctrl + a</kbd> to select every badge in the field. Then cut or copy them and paste into another field, or press <kbd>Delete</kbd> to remove them. New messages start from the account whose mailbox you are viewing. Use **From** to switch accounts or choose an alias for the current account. Gmail uses its default address for new messages and the addressed alias for replies; see [Gmail sending addresses](mail-accounts.html#gmail-sending-addresses) for refresh and offline behavior.
+Press <kbd>c</kbd> for a new message, or <kbd>r</kbd>, <kbd>a</kbd>, or <kbd>f</kbd> to reply, reply all, or forward. Click the **To** label (or press <kbd>⌘/Ctrl + Shift + o</kbd>, <kbd>⌘/Ctrl + Shift + c</kbd>, or <kbd>⌘/Ctrl + Shift + b</kbd>) to jump between **To**, **Cc**, and **Bcc**. Drag a recipient badge between **To**, **Cc**, and **Bcc**; dragging a selected badge moves every selected badge. To select badges, click them, press <kbd>←</kbd> from the start of a field (<kbd>Shift</kbd> extends the selection), or press <kbd>⌘/Ctrl + a</kbd> to select every badge in the field. Then cut or copy them and paste into another field, or press <kbd>Delete</kbd> to remove them. New messages start from the account whose mailbox you are viewing (when viewing **All accounts**, ThreeStrands remembers the last account you used). Use **From** to switch accounts or choose an alias for the current account. Gmail uses its default address for new messages and the addressed alias for replies; IMAP accounts with multiple sending addresses follow their **Default From address** ([sending addresses](mail-accounts.html#gmail-sending-addresses)).
 
 In a reply, click **···** below your message to show the quoted text, which you can edit like the rest of your message. A forward shows the original message below a **Forwarded message** bar. Click **Edit** on that bar to trim the message or add notes inside it. Editing simplifies some formatting and removes images loaded from the web. **Restore Original** brings back the message as you received it.
 
-Drafts save automatically. On Gmail accounts they also save to your Gmail **Drafts**, and on IMAP accounts, including Proton Mail Bridge, to the account's Drafts mailbox, a few seconds after you stop typing. You can finish them in your mail provider's apps or in ThreeStrands on another computer, attachments included. Drafts you write in another app appear in **Drafts** here within a minute, and on Gmail a reply you started elsewhere shows at the end of its conversation with **Resume Draft**. If a draft changes both here and somewhere else before either is saved, the composer asks which version to keep. An IMAP account without a Drafts mailbox keeps its drafts on this computer. Press <kbd>Escape</kbd> to close the composer and keep the draft in **Drafts** (<kbd>g</kbd> then <kbd>d</kbd>).
+Drafts save automatically. On Gmail accounts they also save to your Gmail **Drafts**, and on IMAP accounts, including Proton Mail Bridge, to the account's Drafts mailbox, a few seconds after you stop typing. You can finish them in your mail provider's apps or in ThreeStrands on another computer, attachments included. Drafts you write in another app appear in **Drafts** here within a minute, and on Gmail a reply you started elsewhere shows at the end of its conversation with **Resume Draft**. If a draft changes both here and somewhere else before either is saved, the composer asks which version to keep. An IMAP account without a Drafts mailbox keeps its drafts on this computer. Press <kbd>Escape</kbd> to close the composer and keep the draft in **Drafts** (<kbd>g</kbd> then <kbd>d</kbd>); closing an empty or untouched reply or forward discards the draft.
 
 <ts-shot scene="reply" alt="Replying to a conversation, with recipient history and related tasks in the panel beside the draft."></ts-shot>
 
@@ -21,12 +21,13 @@ Press <kbd>⌘/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> while writing to show yo
 
 ## Recipient Suggestions {#suggestions-for-people-you-email-together}
 
-After you add someone, recipient suggestions prioritize people you often email
-alongside the To and Cc recipients. Focus an empty recipient field to see
-suggestions, or type to search. A suggestion adds a person only when you choose
-it. Bcc recipients do not influence these recommendations, and Bcc history is
-excluded. The ranking uses cached sent-mail headers on this device; suggestions
-can differ between devices with different cached history.
+After you add someone, recipient suggestions put people you often email
+alongside the To and Cc recipients first (marked **Often emailed with**, ahead
+of pinned contacts). Focus an empty recipient field to see suggestions, or type
+to search. A suggestion adds a person only when you choose it. Bcc recipients
+do not influence these recommendations, and Bcc history is excluded. The ranking
+uses cached sent-mail headers on this device; suggestions can differ between
+devices with different cached history.
 
 ## Formatting {#formatting}
 
@@ -42,6 +43,7 @@ Formatting uses keyboard shortcuts:
 | Numbered or bulleted list | <kbd>⌘/Ctrl + Shift + 7</kbd>, <kbd>⌘/Ctrl + Shift + 8</kbd> |
 | Quote | <kbd>⌘/Ctrl + Shift + 9</kbd> |
 | Code Block | <kbd>⌘/Ctrl + Shift + 0</kbd> |
+| Indent or outdent a list item | <kbd>Tab</kbd>, <kbd>Shift + Tab</kbd>, or <kbd>⌘/Ctrl + ]</kbd>, <kbd>⌘/Ctrl + [</kbd> |
 | Clear formatting | <kbd>⌘/Ctrl + \\</kbd> |
 | Normal text | <kbd>⌘/Ctrl + 0</kbd> |
 
@@ -57,9 +59,9 @@ Snippets are reusable passages of text. Press <kbd>⌘/Ctrl + ;</kbd> in the mes
 
 Open **Settings → Signatures** and choose **Add Signature**. Paste an existing signature or write one in the visual editor, then use the toolbar for formatting, fonts, and colors. Click a logo to edit its size and description. **More → Import…** imports pasted HTML or a file. Hosted HTTPS images keep their URLs by default; **Load Images** shows them while editing.
 
-**Import from Gmail…** brings in a signature from a connected Gmail account. Preview it, give it a name, and optionally make it the default for new messages. **Image Options → Embed Remote Images** embeds small hosted images when you prefer that to keeping their URLs.
+**Import from Gmail…** brings in a signature from an account signed in with Google (not available on app-password Gmail or generic IMAP). Preview it, give it a name, and optionally make it the default for new messages. **Image Options → Embed Remote Images** embeds small hosted images when you prefer that to keeping their URLs.
 
-Edit the **Plain Text** alternative separately, or choose **Regenerate from Signature** to rebuild it from the visual version. In **Default Signatures**, choose **Edit Defaults…** for an account and set separate defaults for **New Messages** and **Replies and Forwards**, including **No Signature**. Sending addresses can use the account defaults or their own choices.
+Edit the **Plain Text** alternative separately, or choose **Regenerate from Signature** to rebuild it from the visual version. In **Default Signatures**, choose **Edit…** for an account (or **More (`⋯`) → Signature Defaults…**) and set separate defaults for **New Messages** and **Replies and Forwards**, including **No Signature**. Sending addresses can use the account defaults or their own choices.
 
 <ts-shot scene="signatures" alt="The visual signature editor with formatted contact details, a formatting toolbar, and a separate plain-text alternative."></ts-shot>
 
@@ -67,11 +69,11 @@ While composing, use the compact signature picker below the message to switch or
 
 ## Attachments {#attachments}
 
-Click the paperclip (**Attach Files**) to add files. Attachments can total up to 18 MB per message.
+Click the paperclip (**Attach Files**) or press <kbd>⌘/Ctrl + Shift + a</kbd> to add files. Attachments can total up to 18 MB per message.
 
 ## Before You Send {#before-you-send}
 
-The panel beside your draft shows recipient history, shared files, related tasks, upcoming meetings, and free times. Press <kbd>⌘/Ctrl + Shift + P</kbd> (or <kbd>F6</kbd>) to move between the draft and the panel.
+The panel beside your draft shows recipient history, shared files, related tasks, upcoming meetings, and free times. Press <kbd>⌘/Ctrl + Shift + P</kbd> (or <kbd>F6</kbd>) to move between the draft and the panel, and <kbd>Tab</kbd> / <kbd>Shift + Tab</kbd> inside fields and controls.
 
 Its **Before you send** section checks your draft on this computer and suggests fixes. It never blocks sending:
 
@@ -82,7 +84,7 @@ Its **Before you send** section checks your draft on this computer and suggests 
 - You usually write to these people from a different account.
 - Members of a group are visible in To or Cc, with an option to move them to Bcc.
 
-With [AI assistance](ai.html) turned on, click **Review** below your message to get feedback from **Draft Review** right away, using the writing profile you set for that account. Add a goal and click **Review Again** if you want it to aim at something specific. **Draft Reply** sits beside it in a reply.
+With [AI assistance](ai.html) turned on, click **Review** below your message to get feedback from **Draft Review** right away (with individual **Apply Edit** actions and **Undo Last Edit**), using the writing profile you set for that account. Add a goal and click **Review Again** if you want it to aim at something specific. **Draft Reply** (<kbd>⌘/Ctrl + j</kbd>) sits beside it in a reply, with intent choices matched to your Writing Profile. When you start a draft via **Write Email** from a task or check-in, the header shows a **Completes:** chip and enables **Done by email**; sending finishes contact check-ins automatically or shows a **Mark Done** notice on tasks.
 
 ## Send, Undo, and Send Later {#send-undo-and-send-later}
 
@@ -100,4 +102,4 @@ On a message you sent, click **Edit as New** beside **Forward**, or press <kbd>S
 
 ## Outbox {#outbox}
 
-The **Outbox** (<kbd>g</kbd> then <kbd>o</kbd>) holds mail that has not finished sending: the undo window, scheduled sends, and messages that failed or need a delivery check. Finished sends move to **Sent**. Select an item to read it with its delivery status and actions above the message. From there you can reschedule, return a message to drafts, or send it now. If ThreeStrands can't confirm that a message was delivered, it offers **Check Sent Mail** rather than sending it again.
+The **Outbox** (<kbd>g</kbd> then <kbd>o</kbd>) holds mail that has not finished sending: the undo window (**Undo Send**), scheduled sends, and messages that failed or need a delivery check. Finished sends move to **Sent**. Select an item to read it with its delivery status and actions above the message. From there you can click **Reschedule**, **Return to draft**, **Restore Draft**, **Send now**, or **Edit as New**. If ThreeStrands can't confirm that a message was delivered, it offers **Check Sent Mail** rather than sending it again.

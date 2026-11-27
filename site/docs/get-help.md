@@ -2,20 +2,20 @@
 title: Get Help
 nav: Get Help
 summary: Find the right guide and report a problem without exposing private mail or credentials.
-reviewed: 0.194.0
+reviewed: next
 ---
 
 ## Find an Answer {#find-an-answer}
 
 Search these docs by feature, task, or symptom. Start with [Troubleshooting](troubleshooting.html) for missing mail, sending, drafts, calendar, and sync problems, or [Compatibility](compatibility.html) for provider and platform limits.
 
-In the app, open the command palette with <kbd>⌘/Ctrl + k</kbd> and choose **Help and Documentation**. Settings pages also link to their relevant guide. Keyboard shortcuts are available with <kbd>?</kbd>.
+In the app, open the command palette with <kbd>⌘/Ctrl + k</kbd> and choose **Help and Documentation** (or use **Help → Documentation** on macOS). Settings pages also link to their relevant guide. Keyboard shortcuts are available with <kbd>?</kbd>.
 
 ## Report a Problem {#report-a-problem}
 
 [Open an issue on GitHub](https://github.com/oa-labs/ThreeStrands/issues/new). GitHub requires an account to submit an issue. Include:
 
-- The app version and operating system, including whether the machine is Apple Silicon, Intel, or x86-64.
+- The app version and operating system (for example macOS on Apple Silicon or Intel, Windows/Linux x86-64, or Android 9+ ARM64).
 - The affected feature and provider type, such as Gmail, IMAP, or Google Calendar.
 - What you expected, what happened, and the shortest steps that reproduce it.
 - Whether the provider's own app shows the same problem.

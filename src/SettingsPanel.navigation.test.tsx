@@ -86,7 +86,7 @@ describe("settings section navigation", () => {
     expect(within(supported).getByRole("button", { name: "Meeting Recording" })).toHaveAttribute("aria-current", "true");
     expect(await within(supported).findByRole("region", { name: "Meeting Recording" })).toBeInTheDocument();
     fireEvent.click(within(supported).getByRole("button", { name: "Help with Meeting Recording" }));
-    expect(openUrl).toHaveBeenLastCalledWith("https://www.threestrands.app/docs/privacy.html");
+    expect(openUrl).toHaveBeenLastCalledWith("https://www.threestrands.app/docs/meeting-recording.html");
   });
 
   it("falls back to the first page when a saved Meeting Recording page is not available", async () => {

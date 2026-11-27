@@ -40,7 +40,7 @@ export function AiRequestControls() {
   }, [historyOpen]);
   return <section className="settings-section ai-request-controls" aria-label="AI request controls">
     <h3>Request Controls</h3>
-    <p id={hint} className="settings-hint">A daily estimated spending limit for this device. Enter model prices under Usage first. Each request reserves its full output allowance; failed or cancelled requests keep their reservation when billing is unknown. Your provider’s bill can differ. Web Research has separate limits.</p>
+    <p id={hint} className="settings-hint">A daily estimated spending limit for this device. Enter model prices under Usage first. Each request reserves its full output allowance; failed or cancelled requests keep their reservation when billing is unknown. Your provider’s bill can differ.</p>
     {error ? <p role="alert" className="form-error">{error}</p> : null}
     {!snapshot && error ? <details><summary>Recover AI Controls</summary><p>Recovery preserves the unreadable file and resets the budget and history. Today's unknown spending reservations will be lost.</p><button type="button" className="btn" onClick={() => void recoverAiRequests().then(() => aiRequestSnapshot(historyOpen)).then((next) => {setSnapshot(next);setError("");setBudget("");}).catch((reason: unknown) => setError(errorMessage(reason)))}>Reset Controls and Unknown Reservations</button></details> : null}
     <div className="ai-budget-row">

@@ -2,16 +2,16 @@
 title: Settings Transfer and Sync
 nav: Settings Transfer
 summary: Move selected settings safely, compare transfer with sync, and replace a computer.
-reviewed: 0.209.0
+reviewed: next
 ---
 
 ## Export and Import Settings {#export-and-import-settings}
 
-Use an encrypted export to move selected settings or keep a settings backup. **It is not a backup of mail, drafts, tasks, goals, or queued sends.** Notes aren't included either. Mail and drafts belong to the mail provider; use [encrypted sync](sync.html) for tasks, goals, and notes. To keep a copy of your notes as files, use [Export to Markdown Folder](notes.html#export-your-notes).
+Use an encrypted export to move selected settings or keep a settings backup. **It is not a backup of mail, drafts, tasks, goals, or queued sends.** Notes and meeting recordings aren't included either. Mail and drafts belong to the mail provider, and meeting recordings stay on the Mac where they were recorded; use [encrypted sync](sync.html) for tasks, goals, and notes. To keep a copy of your notes as files, use [Export to Markdown Folder](notes.html#export-your-notes).
 
-The file includes preferences, account list, Split Inboxes, retention setting, snippets, signatures and their defaults, each account's **Writing Profile**, muted senders, and saved contacts and groups. It never includes sign-in tokens, passwords, or API keys.
+The file includes preferences, account list, Split Inboxes, retention setting, snippets, signatures and their defaults, each account's **Writing Profile**, muted and blocked senders, and saved contacts and groups. It never includes sign-in tokens, passwords, or API keys.
 
-**Before importing:** import replaces the destination's preferences, Split Inboxes, signatures and defaults, snippets, saved contacts and groups, muted senders, and retention setting. Existing connected accounts stay connected. Export the destination's settings first if you may need to restore them.
+**Before importing:** import replaces the destination's preferences, Split Inboxes, signatures and defaults, snippets, saved contacts and groups, muted and blocked senders, and retention setting. Existing connected accounts stay connected. Export the destination's settings first if you may need to restore them.
 
 1. On the source computer, open **Settings → Data Transfer**.
 2. Enter and confirm an **Export Password** of at least eight characters, then click **Export Encrypted Settings**. Keep the file and password secure; you need both to import.
@@ -30,21 +30,23 @@ The file includes preferences, account list, Split Inboxes, retention setting, s
 | Mail and mailbox changes | Yes | No | No | Local cache |
 | Drafts and attached files | Provider Drafts, when mapped | No | No | Local fallback if no Drafts mailbox |
 | Calendar events | Google Calendar | No | No | Cached view |
-| Tasks and goals | No | Yes | No | Until sync is enabled |
-| Notes and their pictures and files | No | Yes | No | Until sync is enabled |
-| Saved contacts and groups | No ongoing address-book sync | Yes | Yes | Until transferred or synced |
-| Snippets, signatures, Writing Profile, muted senders, Split Inboxes | No | Yes | Yes | Until transferred or synced |
+| Tasks, goals, and board card order | No | Yes | No | Until sync is enabled |
+| Notes, attachments, and Exclude from AI | No | Yes (notes & tasks on Android via S3) | No | Until sync is enabled |
+| Saved contacts (with phone) and groups | No ongoing address-book sync | Yes | Yes | Until transferred or synced |
+| Snippets, signatures, Writing Profile, muted & blocked senders, Split Inboxes | No | Yes | Yes | Until transferred or synced |
 | Conversation snoozes | Inbox archive/restore | Yes; references and return times | No | Until sync is enabled |
-| Sender-trust confirmations | No | Yes, for the same account | No | Until synced |
+| Sender-trust confirmations (1-year link sites) | No | Yes, for the same account | No | Until synced |
 | Appearance | No | No | Yes | Ongoing choices stay local |
 | Account details and portable preferences | No | Yes | Yes | Credentials excluded |
 | Credentials and AI API keys | Used to sign in | No | No | OS credential store |
+| Meeting recordings and settings (macOS) | No | No | No | Yes |
+| Inbox Assistants and Mac Contacts cache | No | No | No | Yes (saved profiles sync/export) |
 | File stars, saved searches, and recent searches | No | No | No | Yes |
 | Scheduled messages | Sent by original computer | Read-only summaries | No | Body, recipients, attachments and sending ownership |
 
 ## Replicated Sync {#replicated-sync}
 
-Replicated Sync keeps application data in step across computers using end-to-end encryption and storage you choose. Drafts reach your other computers through your mail account's Drafts instead. See [Sync Across Computers](sync.html) for the full setup, join-code verification, recovery, and device-removal procedures.
+Replicated Sync keeps application data in step across computers—and syncs Notes and Tasks with [ThreeStrands for Android](android.html) over an HTTPS S3 connector—using end-to-end encryption and storage you choose. Drafts reach your other computers through your mail account's Drafts instead. Switching Gmail to IMAP works one device at a time while keeping shared tasks, goals, snoozes, and Split Inboxes; IMAP folder and label edits run on the account's designated **IMAP Editing Device** (**Settings → Mail Accounts → ⋯**). See [Sync Across Computers](sync.html) for the full setup, join-code verification, recovery, and device-removal procedures.
 
 > Scheduled mail is still sent only by the computer where it was scheduled. Other computers in the group see a read-only summary.
 

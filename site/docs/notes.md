@@ -2,14 +2,14 @@
 title: Write Notes
 nav: Notes
 summary: Keep a note for each day and notes of your own, written in Markdown, linked to your mail, meetings, and contacts, and synced between your devices.
-reviewed: 0.210.0
+reviewed: next
 ---
 
 ## Open Notes {#open-notes}
 
 Click **Notes** in the sidebar or press <kbd>4</kbd>. The list on the left starts with **Today**, then the notes you opened or changed most recently on this device. Notes reopens the note you had open last. Pull down on the list to refresh it.
 
-Star a note from the list or from the open note to keep it in the **Starred** tab above the list. Press <kbd>Tab</kbd> and <kbd>Shift + Tab</kbd> to switch between **All Notes** and **Starred**.
+Star a note from the list, from the open note, or by pressing <kbd>s</kbd> when a note is focused to keep it in the **Starred** tab above the list. Press <kbd>Tab</kbd> and <kbd>Shift + Tab</kbd> to switch between **All Notes**, **Starred**, and **Agenda** (notes linked to calendar events). In **Today**, press <kbd>Tab</kbd> to toggle the inline Daily Note beside your Planning Inbox, or click **Open in Notes** to edit it here.
 
 Press <kbd>j</kbd> and <kbd>k</kbd>, or <kbd>↓</kbd> and <kbd>↑</kbd>, to switch notes, even when the list doesn't have focus. While you're writing, the arrow keys move the cursor instead. Drag the right edge of the list to make it wider or narrower. The side panel on the right resizes from its left edge; drag it past that edge or press <kbd>\\</kbd> to hide it, and press <kbd>\\</kbd> again to bring it back.
 
@@ -17,7 +17,7 @@ Press <kbd>j</kbd> and <kbd>k</kbd>, or <kbd>↓</kbd> and <kbd>↑</kbd>, to sw
 
 Every day has its own note. The calendar at the top of the side panel opens any day's note, and a dot marks each day you've written in. Its arrows page through the months without opening anything, and **Jump to Today** returns to today.
 
-On a daily note, use the arrows beside the date, or press <kbd>-</kbd> and <kbd>=</kbd> as in **Calendar**, to step to the previous or next day. Press <kbd>t</kbd> to open today's note. The side panel also lists that day's events from your calendars; **Add Note** on one adds the meeting to the note you're reading (see [Meeting Notes](#meeting-notes)).
+On a daily note, use the arrows beside the date, or press <kbd>-</kbd> and <kbd>=</kbd> as in **Calendar**, to step to the previous or next day. Press <kbd>t</kbd> to open today's note. The side panel's **Agenda** section also lists that day's events from your calendars; **Add Note** on one adds the meeting to the note you're reading, and **Prepare** opens meeting preparation beside your note (see [Meeting Notes](#meeting-notes)).
 
 A day's note is created when you first write in it, so looking at a day leaves nothing behind.
 
@@ -64,15 +64,15 @@ When you rename a note, ThreeStrands changes the links to it in your other notes
 
 Type `@` at the start of a word to find a contact, an email conversation, or a task by name, address, subject, or participant, and link it. A contact link opens the contact's record, a conversation link opens the email, and a task link opens the task. An email address you type stays plain text. After opening a contact from a note, press <kbd>Escape</kbd> to return to the note with your search kept.
 
-To start a note about a task, click **Add Note** in the task's details. To link a calendar event too, click the **+** beside **Links** in the side panel, or **Link contact or conversation** when the note has no links yet. **Link to…** lets you choose a contact, conversation, task, or event and search for it.
+To start a note about a task, click **Add Note** in the task's details. To link a calendar event too, click the **+** beside **Links** in the side panel, or **Add link** when the note has no links yet. **Link to…** lets you choose a contact, conversation, task, or event and scroll or search through the list.
 
-While reading a conversation in **Mail**, press <kbd>W</kbd> or choose **Add to Note…** from the conversation's **⋯** menu to add part of an email to a note. Select a passage first to quote it; otherwise the note gets a link to the conversation, and you can include the message's text. Choose the note (an upcoming meeting's note, today's note, a recent note, or a new one), tick any attachments or images to copy in, and press **Add to Note**. The notice offers **Open Note** and **Undo**. Images that an email loads from the web are not copied. A conversation, task, event, or contact that a note links to lists that note under **Notes** in its side panel, and a contact's details list the notes that mention them.
+While reading a conversation in **Mail**, press <kbd>w</kbd> or choose **Add to Note…** from the conversation's **⋯** menu to add part of an email to a note. Select a passage first to quote it; otherwise the note gets a link to the conversation, and you can include the message's text. Choose the note (an upcoming meeting's note, today's note, a recent note, or a new one), tick any attachments or images to copy in, and press **Add to Note**. The notice offers **Open Note** and **Undo**. Images that an email loads from the web are not copied. A conversation, task, event, or contact that a note links to lists that note under **Notes** in its side panel, and a contact's details list the notes that mention them.
 
 ## Meeting Notes {#meeting-notes}
 
 Click **Add Note** on a calendar event in **Calendar**, or on the day's events beside a daily note, to write a line about the meeting under **Meetings** in that day's note, such as "3:00 pm met with Dana for Monthly Review". The line links the event and each attendee's contact. Before adding it, you can change the **Meeting name** and the **Attendees**; your own addresses are left out.
 
-On **Today**, each meeting’s note icon opens its existing note directly. If it has none, it adds the entry to the meeting’s daily note and opens that note at the meeting’s link. In **Links**, use **Prepare Meeting** to show previous notes, related conversations, and commitments beside the editor. **Close Preparation** or <kbd>Escape</kbd> returns to note details.
+On **Today**, each meeting’s note icon opens its existing note directly. If it has none, it adds the entry to the meeting’s daily note and opens that note at the meeting’s link. In **Agenda**, click **Prepare** beside a meeting (or use **Prepare Meeting** on the event link in **Links**) to show previous notes, related notes, conversations, open promises, files, and commitments beside the editor. **Close Preparation** or <kbd>Escape</kbd> returns to note details.
 
 Lines are kept in time order, with any notes nested under a meeting staying with it.
 
@@ -91,6 +91,8 @@ The side panel beside a note shows what it's connected to:
 - **Backlinks** lists the notes that link to this one, each with the line the link is on, written as you'd read it.
 - **Unlinked** lists links in this note to notes that don't exist yet; choose one to create it.
 - **People** lists the contacts the note links to, and links whose title is the name of a saved contact; choose one to open them in Contacts.
+- **Exclude from AI** stops the note's text from being used by AI features on this device or synced devices.
+- **Created** and **Updated** timestamps appear at the bottom of note details.
 
 ## Markdown Syntax {#markdown-syntax}
 
@@ -106,13 +108,13 @@ To add one Markdown file, click **Import Note** beside **New Note**. Choose a `.
 
 Linked pictures and files inside the Markdown file's folder come with it. Links outside that folder and pictures on the internet stay as links. If the note is too large or cannot be read, ThreeStrands shows the reason and leaves the current note open.
 
-**Settings → Notes → Import Markdown Folder** adds the notes in a folder you choose, such as your Reflect folder or an earlier export from ThreeStrands. First ThreeStrands reads the folder and tells you how many notes, daily notes, and files it found, and lists anything it can't import and why. Nothing changes until you click **Import Notes**.
+**Settings → Notes → Import Markdown Folder…** adds the notes in a folder you choose, such as your Reflect folder or an earlier export from ThreeStrands. First ThreeStrands reads the folder and tells you how many notes, daily notes, and files it found, and lists anything it can't import and why. Nothing changes until you click **Import Notes**.
 
 Files named by date in a `daily` folder become daily notes, and every other Markdown file becomes a note, titled by its first heading. Links between your notes keep working, and pictures and files the notes link to come along. Notes you already have are skipped, so importing the same folder again adds nothing and never replaces your notes. A note too long to sync is listed rather than cut short.
 
 ## Export Your Notes {#export-your-notes}
 
-**Settings → Notes → Export to Markdown Folder** writes every note outside Trash to a folder you choose, as Markdown files that other apps such as Obsidian and Reflect can open. Daily notes go in a `daily` folder, named by date, the rest in `notes`, named by title, and their pictures and files in `attachments`, linked from the notes so they still open. Each file starts with a few lines naming the note, so a future version of ThreeStrands can match the files back to your notes.
+**Settings → Notes → Export to Markdown Folder…** writes every note outside Trash to a folder you choose, as Markdown files that other apps such as Obsidian and Reflect can open. Daily notes go in a `daily` folder, named by date, the rest in `notes`, named by title, and their pictures and files in `attachments`, linked from the notes so they still open. Each file starts with a few lines naming the note, so a future version of ThreeStrands can match the files back to your notes.
 
 Choose an empty folder. To update an export, choose the same folder again: ThreeStrands asks first, then replaces the files the last export wrote and leaves anything else in the folder alone. A folder that holds other files is refused.
 
@@ -120,7 +122,7 @@ Settings → Notes also shows how much of the space set aside for notes in cross
 
 ## Find a Note {#find-a-note}
 
-Press <kbd>/</kbd> and type to search titles and note text. Search leaves out notes in Trash unless you check **Include Trash**; while you're in **Trash**, it searches only trashed notes. Press <kbd>Enter</kbd> to go to the results and keep your search, or <kbd>Esc</kbd> to clear it and go back to the list. Notes keeps your search and the open note when you switch to another view.
+Press <kbd>/</kbd> and type to search titles and note text. Search follows the active tab (**All Notes** or **Starred**) and leaves out notes in Trash unless you click the trash-can **Include Trash** toggle; while you're in **Trash**, it searches only trashed notes. Press <kbd>Enter</kbd> to go to the results and keep your search, or <kbd>Esc</kbd> to clear it and go back to the list. Notes keeps your search and the open note when you switch to another view.
 
 The command palette (<kbd>⌘/Ctrl + k</kbd>) finds notes too: matching notes are listed below the commands, and choosing one opens it in **Notes**.
 

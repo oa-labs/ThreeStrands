@@ -868,7 +868,7 @@ test.describe("docs", () => {
     await expect(writing).not.toContainText("Send & Mark Done");
     await page.goto("./docs/calendar.html");
     const calendar = page.locator(".docs-body");
-    for (const claim of ["Drive Time Buffer", "Draft Reply With These Times", "works without AI", "All day"]) {
+    for (const claim of ["Drive Time Buffer", "Draft Reply With N Times", "works without AI", "All day"]) {
       await expect(calendar).toContainText(claim);
     }
     await page.goto("./docs/triage.html");

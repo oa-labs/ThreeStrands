@@ -2,7 +2,7 @@
 title: Troubleshooting
 nav: Troubleshooting
 summary: Check mail, sending, drafts, calendar, and sync problems before removing data.
-reviewed: 0.194.0
+reviewed: next
 ---
 
 ## Mail Stopped Arriving {#mail-stopped-arriving}
@@ -16,7 +16,7 @@ Expect last-successful-sync status to update after a successful connection. If t
 
 ## A Message Is Missing {#a-message-is-missing}
 
-Check the account selection and **Clear Filters**, then search all mail rather than only Inbox. Archived mail is still searchable. Include `in:trash`, `in:spam`, or `in:anywhere` when appropriate. Older mail may have left the local cache, so stay online for server search results. See [Search](search.html).
+Check the account selection and **Clear Filters**, review **Settings → Muted Senders → Blocked Senders** (in case a sender was blocked via **Mark Spam**), then search all mail rather than only Inbox. Archived mail is still searchable. Include `in:trash`, `in:spam`, or `in:anywhere` when appropriate. Older mail may have left the local cache, so stay online for server search results. See [Search](search.html).
 
 If an attachment is missing from Files, find its source email first. File stars do not keep a separate offline copy. Mail-retention cleanup leaves server mail alone.
 
@@ -45,7 +45,7 @@ In **Settings → Calendar Accounts**, distinguish **Calendars shown in the side
 
 ## Sync Is Not Reaching Another Computer {#sync-is-not-reaching-another-computer}
 
-Both computers need encrypted sync enabled, a reachable connector for the same group, and completed device approval. Check each computer's connector and device status in **Settings → Replicated Sync**. Join the existing group rather than creating a separate one.
+Both computers (or an [Android device](android.html) syncing over HTTPS with S3-compatible storage) need encrypted sync enabled, a reachable connector for the same group, and completed device approval. Check each device's connector and approval status in **Settings → Replicated Sync**. Join the existing group rather than creating a separate one. If a device missed a **Protocol 4** sync upgrade, check whether Replicated Sync asks to reset and rejoin the group.
 
 Mail accounts still require separate sign-in, and drafts use provider Drafts instead of replicated sync. Appearance and file stars stay local. Use [Where Your Data Goes](settings-and-sync.html#where-your-data-goes) to check whether the item should synchronize at all. Preserve local data and the recovery phrase while investigating; never publish the phrase or storage credentials.
 
@@ -55,7 +55,7 @@ Try **Email Zoom**, **Minimum Email Font Size**, and **Email Text Colors** in **
 
 ## AI Is Unavailable or Failing {#ai-is-unavailable-or-failing}
 
-Open **Settings → AI Provider**. Confirm the provider, saved key, model name, and **Show AI In** choices, then use **Test Connection**. Usage or account limits at the provider can stop requests. A provider subscription and an API billing account may be different products; check the account associated with your API key.
+Open **Settings → AI Provider**. Confirm the provider, saved key, model name, **Show AI In** choices, and your daily spending limit and configured model prices before clicking **Test Connection**. Usage or account limits at the provider can stop requests. A provider subscription and an API billing account may be different products; check the account associated with your API key.
 
 For a custom endpoint, verify its URL and compatible model. Keep keys out of reports. See [AI Assistance](ai.html).
 
@@ -66,6 +66,10 @@ For failed requests or hidden suggestions from **Brief**, **Suggestions**, or **
 The latest 100 entries stay on this device for seven days. They are not synced or included in settings exports. If you need more detail to reproduce a scheduling problem, enable **Capture Detailed AI Diagnostics**, then repeat the action. For 15 minutes, it also keeps rejected date, time, duration, and timezone values. These values may contain private information; message bodies and evidence excerpts are never captured. Capture stops on restart, but captured entries remain until cleared or seven days pass.
 
 Under **Application Logs**, choose **Open Logs Folder** to find logs from this computer. Review and redact logs and diagnostic values before sharing them. When [reporting a problem](get-help.html#report-a-problem), include the relevant rejection reason, provider, model, and request reference after checking them for private information.
+
+## Meeting Recording Is Unavailable or Missing Audio {#meeting-recording}
+
+Meeting recording requires macOS, and system audio capture requires macOS 14.4 or later. If system audio or voice is missing, open **System Settings → Privacy & Security** and grant ThreeStrands both **Microphone** and **Screen & System Audio Recording** permissions. On-device transcription also requires downloading the local speech model in **Settings → Meeting Recording**. Recording stops automatically at 4 hours or 2 GB. See [Meeting Recording](meeting-recording.html).
 
 ## The App Reports a Problem {#the-app-reports-a-problem}
 

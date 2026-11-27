@@ -2,12 +2,12 @@
 title: Search Your Mail
 nav: Search
 summary: Find messages locally and on the server with examples, operators, and search suggestions.
-reviewed: 0.194.0
+reviewed: next
 ---
 
 ## Start a Search {#start-a-search}
 
-Press <kbd>/</kbd> to search. Search looks through all your mail, including archived conversations, and shows results from this computer right away. When you stop typing, it also asks the server for older mail. Results still in your inbox are marked **Inbox**. Click **Inbox Only** to search just your inbox. Trash and Spam are left out unless you add `in:trash`, `in:spam`, or `in:anywhere`.
+Press <kbd>/</kbd> to search. Search looks through all your mail, including archived conversations, and ranks local results by relevance with a bias toward recent messages. When you stop typing, it also asks the server for older mail. Results still in your inbox are marked **Inbox**. Click the **Search Only the Inbox** icon toggle beside the search box to search just your inbox. Trash and Spam are left out unless you add `in:trash`, `in:spam`, or `in:anywhere` (and you can scope directly with `in:inbox`, `in:sent`, or `in:archive`).
 
 You can narrow a search with `from:`, `to:`, `subject:`, `before:` and `after:` (YYYY/MM/DD), `is:unread`, `is:starred`, `label:`, `in:`, and `has:attachment`. `to:` also finds mail where the person was on Cc or Bcc. Put a minus in front of a term to leave it out (`invoice -from:billing@example.com`), and use `OR` or braces for either-or (`from:ana OR from:bo`, or `{from:ana from:bo}`). As you type, suggestions appear below the search box: operator names, people from your contacts after `from:` or `to:` (choosing someone with more than one address searches all of them), your labels after `label:` or `in:`, and dates like **Past month** after `after:` or `before:`. Use the arrow keys and <kbd>Enter</kbd>, or click, to choose one. <kbd>Escape</kbd> closes the suggestions, and a second <kbd>Escape</kbd> clears the search. Click the empty search box to see up to five **Recent searches**, which stay on this computer. Searches enter history when you submit them with Enter, choose a recent search, save a named search, or open a search result; moving focus away from the box does not add unfinished typing.
 
@@ -16,11 +16,11 @@ Your active mail search stays in place when you visit Contacts or another view. 
 
 ## Save a Search {#save-a-search}
 
-With a mail search entered, choose **Save Search** beside the search box. Give it a name and choose **All accounts** or one connected account. The saved search also remembers **Inbox Only** and your active quick filters (**Unread**, **Starred**, **Important**, and **No Reply**). Saving does not change your current search or move mail.
+With a mail search entered, choose **Save Search** beside the search box. Give it a name and choose **All accounts** or one connected account. Check **Inbox Only** if you want the view limited to Inbox, along with any active quick filters (**Unread**, **Starred**, **Important**, and **No Reply**). Saving does not change your current search or move mail.
 
 Saved searches appear automatically as tabs alongside your Split Inboxes. Select the saved account, or **All accounts** for a merged view, then choose its tab to run the search against current mail. Returning to **Main** clears the saved view’s search and quick filters. **All accounts** includes accounts you connect later. A search for a disconnected account stays listed in Settings; reconnect the account or edit the view’s scope to use it again.
 
-Choose **Saved searches** beside the search box, or open **Settings → Split Inboxes**, to create, rename, edit, reorder, or delete saved-search views. Editing includes the query, account scope, Inbox Only, and quick filters. Typing in an open view changes the current search without rewriting its saved definition; select its tab again to restore the saved criteria. Existing saved searches appear in the shared tab catalog automatically.
+Choose the **Saved Searches** bookmark icon beside the search box, or open **Settings → Split Inboxes**, to create, rename, edit, reorder, or delete saved-search views. Editing includes the query, account scope, Inbox Only, and quick filters. Typing in an open view changes the current search without rewriting its saved definition; select its tab again to restore the saved criteria. Existing saved searches appear in the shared tab catalog automatically.
 
 Saved searches show matching mail without routing it out of **Main**. Saved searches and their positions among routing splits stay on this computer; saved searches are not included in settings exports or cross-device sync. Local results and server coverage follow the same rules as an ordinary search.
 
@@ -45,7 +45,7 @@ Saved searches show matching mail without routing it out of **Main**. Saved sear
 | `subject:` | Words in the subject |
 | `before:` / `after:` | Date in YYYY/MM/DD form |
 | `is:unread` / `is:starred` | Unread or starred mail |
-| `label:` / `in:` | Label or mailbox |
+| `label:` / `in:` | Label or mailbox (such as `in:inbox`, `in:sent`, `in:archive`, `in:trash`) |
 | `has:attachment` | Mail with an attachment |
 | `-term` | Leave out a term or operator |
 | `OR` / `{ ... }` | Either alternative |
@@ -54,6 +54,6 @@ Saved searches show matching mail without routing it out of **Main**. Saved sear
 
 Local results are available offline for cached mail. Server results need a connection and valid account sign-in; a local search is not proof that older mail is absent from the server. [Retention](privacy.html#keep-mail-on-this-device) limits the cache, not the mail kept by your provider.
 
-IMAP server searches include All Mail and user folders, so mail stored outside your Inbox can be found too. Searches that reach a time, folder, or result limit show partial coverage; narrow the query or name a folder to search more precisely. Supported label-based servers can also evaluate their native search syntax.
+IMAP server searches include All Mail and user folders, so mail stored outside your Inbox can be found too. Searches that reach a time, folder, or result limit show partial coverage (and note any unsynced folders); narrow the query or name a folder to search more precisely. If an IMAP server does not support exclusions (`-`) or `OR` queries directly, ThreeStrands falls back to local evaluation on cached mail. Supported label-based servers can also evaluate their native search syntax.
 
 Search follows the current workspace: in **Files** it searches filenames and senders, in **Contacts** it searches contacts, and in **Notes** it searches [your notes](notes.html#find-a-note). Return to **Mail** to use mail operators. If you still cannot find something, use [missing-message troubleshooting](troubleshooting.html#a-message-is-missing).

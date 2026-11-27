@@ -2,7 +2,7 @@
 title: Find an Attachment
 nav: Files
 summary: Browse attachments from synced mail and files in your notes, filter by source, and return to the original conversation or note.
-reviewed: 0.179.0
+reviewed: next
 ---
 
 ## Open Files {#open-files}
@@ -13,14 +13,16 @@ Click **Files** in the sidebar or press <kbd>6</kbd>. Files lists attachments fr
 
 ## Find a File {#find-a-file}
 
-1. Search by filename or sender.
-2. Narrow the list by sender, file type, direction, account, or date.
-3. Select a result to see its details and source conversation.
+1. Press <kbd>/</kbd> and search by filename, sender, or note title.
+2. Narrow the list with **All** / **Starred**, or by sender, file type, direction, account, or date. Use **Include Invitations** (under **All**, **Calendar**, or **Starred**) when you want `.ics` calendar invitations shown alongside regular attachments.
+3. Select a result to see its details, clickable sender, and source conversation or note.
 4. Open or save the file, or follow the source conversation to read its context.
 
-A file from a note shows the note's name where a mail attachment shows its sender, and **Source note** opens the note. Notes' files stay visible when you filter by account; choosing a sender, a direction, or the Calendar type shows mail only. Search finds a note's files by the note's title too. A file another device added to a note shows that it's still on its way until sync brings it.
+A file from a note shows the note's name where a mail attachment shows its sender, and **Source note** opens the note. Notes' files stay visible even when you filter by a single mail account; choosing a sender, a direction, or the Calendar type shows mail only. A file another device added to a note shows its offline or pending status until sync brings it.
 
-If a file is missing, [search for the email](search.html) first. Older mail may need an online server search before its attachments appear locally. **Mark Spam** removes that email's files from Files, and **Undo** restores them.
+If a file is missing, [search for the email](search.html) first. Older mail may need an online server search before its attachments appear locally. **Mark Spam** removes that email's files from Files and blocks the sender; **Undo** restores the files and unblocks the sender.
+
+Shortcuts in Files: <kbd>/</kbd> searches, <kbd>j</kbd>/<kbd>k</kbd> or <kbd>↑</kbd>/<kbd>↓</kbd> moves through files, <kbd>Enter</kbd> or <kbd>o</kbd> opens the file, <kbd>⌘/Ctrl + Shift + s</kbd> saves a copy, <kbd>s</kbd> stars or unstars, and <kbd>\\</kbd> toggles the detail pane.
 
 ## Preview and Open Safely {#preview-and-open-safely}
 
