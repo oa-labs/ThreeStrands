@@ -102,6 +102,31 @@ describe("native account requests", () => {
     expect(invoke).toHaveBeenLastCalledWith("set_recording_settings", { settings });
   });
 
+  it("calls each meeting recording command with the native contract's names and arguments", async () => {
+    const eventRef = { version: 1 as const, kind: "event" as const, id: "evt", account: "me@example.com", calendar: "work" };
+    const calls: [() => Promise<unknown>, string, Record<string, unknown> | undefined][] = [
+      [() => client.recordingCapabilities(), "recording_capabilities", undefined],
+      [() => client.recordingStatus(), "recording_status", undefined],
+      [() => client.startRecording({ eventRef, title: "Weekly Sync" }), "recording_start", { eventRef, title: "Weekly Sync" }],
+      [() => client.startRecording({ eventRef: null, title: "Meeting at 3:04 PM" }), "recording_start", { eventRef: null, title: "Meeting at 3:04 PM" }],
+      [() => client.pauseRecording(), "recording_pause", undefined],
+      [() => client.resumeRecording(), "recording_resume", undefined],
+      [() => client.stopRecording(), "recording_stop", undefined],
+      [() => client.listRecordings(eventRef), "list_recordings", { eventRef }],
+      [() => client.deleteRecording("r1"), "delete_recording", { id: "r1" }],
+      [() => client.deleteRecordingAudio("r1"), "delete_recording_audio", { id: "r1" }],
+      [() => client.recordingsUsage(), "recordings_usage", undefined],
+      [() => client.deleteAllRecordingAudio(), "delete_all_recording_audio", undefined],
+      [() => client.deleteAllRecordings(), "delete_all_recordings", undefined],
+      [() => client.requestRecordingPermissions(), "request_recording_permissions", undefined],
+      [() => client.confirmRecordingQuit(), "recording_confirm_quit", undefined],
+    ];
+    for (const [call, command, args] of calls) {
+      await call();
+      expect(invoke).toHaveBeenLastCalledWith(command, args);
+    }
+  });
+
   it("reads meeting preparation context with an optional mail scope", async () => {
     const reference = { version: 1 as const, kind: "event" as const, id: "evt", account: "me@example.com", calendar: "work" };
     await client.meetingContext(reference);

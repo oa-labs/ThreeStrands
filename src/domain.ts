@@ -1893,3 +1893,11 @@ export type MeetingRecording = {
   error: string | null;
   tracks: { track: RecordingTrackName; state: "active" | "failed" | "unavailable"; deviceName: string | null; firstFrameOffsetMs: number | null; error: string | null }[];
 };
+
+/** What this device can record, from `recording_capabilities`. `supported` is false off macOS, where all recording UI is hidden. */
+export type RecordingCapabilities = { supported: boolean; systemAudio: SystemAudioSupport };
+export type MicrophonePermission = "granted" | "denied" | "restricted";
+export type RecordingPermissions = { microphone: MicrophonePermission };
+/** Recordings kept on this Mac. */
+export type RecordingsUsage = { recordings: number; audioBytes: number };
+export type RecordingStartRequest = { eventRef: import("./noteEntities").NoteReference | null; title: string };

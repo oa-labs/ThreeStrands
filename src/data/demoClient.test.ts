@@ -44,6 +44,62 @@ describe("demoClient recording settings", () => {
   });
 });
 
+describe("demoClient meeting recording", () => {
+  const eventRef = { version: 1 as const, kind: "event" as const, id: "evt", account: "me@example.com", calendar: "work" };
+
+  it("records, pauses, resumes and stops in memory, then lists the recording under its event", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-11-27T15:00:00Z"));
+      const client = createDemoClient(defaultDemoDataset());
+      expect(await client.recordingCapabilities()).toEqual({ supported: true, systemAudio: { kind: "available" } });
+      expect(await client.recordingStatus()).toMatchObject({ state: "idle", recordingId: null });
+      const started = await client.startRecording({ eventRef, title: "Weekly Sync" });
+      expect(started).toMatchObject({ state: "recording", title: "Weekly Sync", eventRef });
+      await expect(client.startRecording({ eventRef: null, title: "Again" })).rejects.toThrow("already in progress");
+      vi.setSystemTime(new Date("2026-11-27T15:10:00Z"));
+      expect((await client.pauseRecording())).toMatchObject({ state: "paused", elapsedMs: 600_000 });
+      vi.setSystemTime(new Date("2026-11-27T15:20:00Z"));
+      expect((await client.recordingStatus()).elapsedMs).toBe(600_000);
+      expect((await client.resumeRecording()).state).toBe("recording");
+      vi.setSystemTime(new Date("2026-11-27T15:25:00Z"));
+      expect(await client.stopRecording()).toMatchObject({ state: "idle" });
+      const [recording] = await client.listRecordings(eventRef);
+      expect(recording).toMatchObject({ title: "Weekly Sync", state: "recorded", durationMs: 900_000 });
+      expect(await client.listRecordings({ ...eventRef, id: "other" })).toEqual([]);
+      expect(await client.recordingsUsage()).toMatchObject({ recordings: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("deletes one recording's audio, one recording, then everything", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    for (const title of ["One", "Two"]) {
+      await client.startRecording({ eventRef, title });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await client.stopRecording();
+    }
+    const [newer] = await client.listRecordings(eventRef);
+    await client.deleteRecordingAudio(newer!.id);
+    expect(await client.listRecordings(eventRef)).toHaveLength(2);
+    await client.deleteRecording(newer!.id);
+    expect(await client.listRecordings(eventRef)).toHaveLength(1);
+    await client.deleteAllRecordingAudio();
+    expect(await client.recordingsUsage()).toEqual({ recordings: 1, audioBytes: 0 });
+    await client.deleteAllRecordings();
+    expect(await client.recordingsUsage()).toEqual({ recordings: 0, audioBytes: 0 });
+  });
+
+  it("grants the microphone and stops on quit", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    expect(await client.requestRecordingPermissions()).toEqual({ microphone: "granted" });
+    await client.startRecording({ eventRef: null, title: "Meeting at 3:04 PM" });
+    await client.confirmRecordingQuit();
+    expect((await client.recordingStatus()).state).toBe("idle");
+  });
+});
+
 describe("demoClient split inbox exclusion", () => {
   afterEach(async () => {
     const splits = await demoClient.listSplitInboxes();

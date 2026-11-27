@@ -1,4 +1,6 @@
 import { EventNoteAction, EventNoteBacklinks } from "./NoteEntityContext";
+import { RecordMeetingButton } from "./RecordMeetingButton";
+import { EventRecordings } from "./EventRecordings";
 import { readLocalStorage, writeLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { calendarAccountVisibility, showHiddenCalendarAccounts } from "./calendarVisibility";
 import { useWorkspaceCommands } from "./workspaceCommands";
@@ -541,6 +543,7 @@ export function CalendarWeekView({
                 onClick={() => preparation.onChange(preparingSelected ? null : preparationKey(selectedEvent))}><ClipboardList size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
               {sourceThreadId ? <button type="button" className="btn-icon btn-icon-sm" aria-label="Open Source Email" title="Open Source Email" onClick={() => onOpenThread(sourceThreadId)}><Mail size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
               {onAddNote && isPreparable(selectedEvent) ? <EventNoteAction key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} occurrence={meetingEventReference(selectedEvent)!} onActivate={() => onAddNote(selectedEvent)} /> : null}
+              {isPreparable(selectedEvent) ? <RecordMeetingButton key={`record:${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} event={selectedEvent} /> : null}
             </>} />
           <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} calendarLabel={eventCalendarLabel(selectedEvent, calendars)} onDismiss={() => {
             setSelectedEvent(null);
@@ -549,6 +552,7 @@ export function CalendarWeekView({
           {bookedTask ? <BookedTask task={bookedTask} onChanged={tasksChanged} onEditTask={onEditTask} /> : null}
           {preparingSelected ? preparation!.render(selectedEvent, closePreparation) : <>
             {meetingEventReference(selectedEvent) ? <EventNoteBacklinks occurrence={meetingEventReference(selectedEvent)!} onOpenNote={onOpenNote} /> : null}
+            {meetingEventReference(selectedEvent) ? <EventRecordings occurrence={meetingEventReference(selectedEvent)!} /> : null}
             <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />
           </>}
         </> : <>

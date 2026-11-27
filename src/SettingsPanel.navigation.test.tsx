@@ -1,6 +1,8 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RecordingContext } from "./recordingContext";
+import { recordingController } from "./test/recordingController";
 import { SettingsHarness } from "./test/settingsHarness";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
@@ -73,6 +75,25 @@ describe("settings section navigation", () => {
         expect(first?.textContent, section).not.toBe(section);
       });
     }
+  });
+
+  it("lists Meeting Recording only on a device that can record, and opens its help", async () => {
+    const dialog = await openSettings();
+    expect(within(dialog).queryByRole("button", { name: "Meeting Recording" })).not.toBeInTheDocument();
+    cleanup();
+    render(<RecordingContext.Provider value={recordingController()}><SettingsHarness initialSection="meetingRecording" /></RecordingContext.Provider>);
+    const supported = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(supported).getByRole("button", { name: "Meeting Recording" })).toHaveAttribute("aria-current", "true");
+    expect(await within(supported).findByRole("region", { name: "Meeting Recording" })).toBeInTheDocument();
+    fireEvent.click(within(supported).getByRole("button", { name: "Help with Meeting Recording" }));
+    expect(openUrl).toHaveBeenLastCalledWith("https://www.threestrands.app/docs/privacy.html");
+  });
+
+  it("falls back to the first page when a saved Meeting Recording page is not available", async () => {
+    render(<SettingsHarness initialSection="meetingRecording" />);
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(dialog).queryByRole("region", { name: "Meeting Recording" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "Appearance", level: 2 })).toBeInTheDocument();
   });
 
   it("searches for IMAP setup in Mail Accounts", async () => {

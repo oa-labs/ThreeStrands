@@ -1,3 +1,5 @@
+import { RecordingContext } from "./recordingContext";
+import { recordingController } from "./test/recordingController";
 import { useShortcutHandler } from "./useShortcutHandler";
 import { commandContext } from "./test/commandContext";
 import { readNoteDraft } from "./noteDrafts";
@@ -1412,6 +1414,23 @@ describe("TodayWorkspace", () => {
   describe("day view", () => {
     beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(2026, 9, 28, 10, 0)); });
     afterEach(() => { vi.useRealTimers(); });
+
+    it("offers Record only on a meeting that is under way or starts within ten minutes", async () => {
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [
+        event("soon", 8, { title: "Design sync" }),
+        event("later", 120, { title: "Planning" }),
+      ], errors: [] });
+      const controller = recordingController();
+      const onAddNote = vi.fn();
+      render(<RecordingContext.Provider value={controller}><TodayWorkspace accountId="you@example.com" refreshKey="" taskRefreshKey={0} calendarConnected calendars={calendars}
+        onOpenThread={vi.fn()} onOpenEvent={vi.fn()} onEditTask={vi.fn()} onTasksChanged={vi.fn()} onOpenCalendar={vi.fn()} onOpenContact={vi.fn()} onAddNote={onAddNote} /></RecordingContext.Provider>);
+      const day = within(await screen.findByRole("group", { name: "Day view" }));
+      fireEvent.click(await day.findByRole("button", { name: "Record: Design sync" }));
+      expect(controller.start).toHaveBeenCalledWith({ eventRef: expect.objectContaining({ kind: "event", id: "soon", calendar: "primary" }), title: "Design sync" });
+      expect(day.getByRole("button", { name: "Add Note: Design sync" })).toBeInTheDocument();
+      expect(day.getByRole("button", { name: "Add Note: Planning" })).toBeInTheDocument();
+      expect(day.queryByRole("button", { name: "Record: Planning" })).not.toBeInTheDocument();
+    });
 
     it("opens events in Calendar and meeting notes from separate controls while keeping the planning inbox", async () => {
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [

@@ -14,6 +14,9 @@ import { expectContextRows } from "./test/contextRows";
 import { NOTES_CHANGED } from "./noteMutations";
 import type { NoteTaskRecord } from "./noteEntities";
 import type { Note } from "./domain";
+import { RecordingContext } from "./recordingContext";
+import { recordingController } from "./test/recordingController";
+import { meetingEventReference } from "./meetingNoteEntry";
 import type { CalendarAccount, CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
 
 const accounts: CalendarAccount[] = [
@@ -163,6 +166,40 @@ describe("CalendarWeekView", () => {
     expect(onAddNote).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole("button", { name: "Close Event Details" }));
     await waitFor(() => expect(onSelectedEventChange).toHaveBeenLastCalledWith(null));
+  });
+
+  it("offers Record beside Add Note for a meeting under way, and lists its recordings after the notes", async () => {
+    const underWay = { ...event("standup", "2026-09-22T14:00:00", "2026-09-22T15:00:00", "Standup"), calendarId: "primary" };
+    const later = { ...event("retro", "2026-09-22T17:00:00", "2026-09-22T18:00:00", "Retro"), calendarId: "primary" };
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [underWay, later], errors: [] });
+    const reference = meetingEventReference(underWay)!;
+    vi.spyOn(mailClient, "listRecordings").mockResolvedValue([{
+      id: "r1", eventRef: reference, title: "Standup", startedAt: "2026-09-22T14:00:00Z", endedAt: null, durationMs: 0, state: "recording", error: null, tracks: [],
+    }]);
+    const controller = recordingController();
+    render(<RecordingContext.Provider value={controller}><StatefulWeekView accounts={accounts} calendars={calendars} onToggleCalendar={vi.fn()} onAddCalendarAccount={vi.fn()} onOpenSettings={vi.fn()} onAddNote={vi.fn()} /></RecordingContext.Provider>);
+    const agenda = screen.getByRole("region", { name: "Today's agenda" });
+    fireEvent.click(await within(agenda).findByRole("button", { name: /^Standup/ }));
+    const details = await screen.findByRole("region", { name: "Standup details" });
+    expect(details).toBeInTheDocument();
+    const context = screen.getByRole("complementary", { name: "Meeting context" });
+    fireEvent.click(await within(context).findByRole("button", { name: "Record" }));
+    expect(controller.start).toHaveBeenCalledWith({ eventRef: reference, title: "Standup" });
+    expect(await within(context).findByRole("region", { name: "Recording" })).toHaveTextContent("Recording…");
+  });
+
+  it("offers no Record for a meeting that is not close, and no Recording section without recordings", async () => {
+    const later = { ...event("retro", "2026-09-22T17:00:00", "2026-09-22T18:00:00", "Retro"), calendarId: "primary" };
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [later], errors: [] });
+    const list = vi.spyOn(mailClient, "listRecordings").mockResolvedValue([]);
+    render(<RecordingContext.Provider value={recordingController()}><StatefulWeekView accounts={accounts} calendars={calendars} onToggleCalendar={vi.fn()} onAddCalendarAccount={vi.fn()} onOpenSettings={vi.fn()} onAddNote={vi.fn()} /></RecordingContext.Provider>);
+    fireEvent.click(await within(screen.getByRole("region", { name: "Today's agenda" })).findByRole("button", { name: /^Retro/ }));
+    await screen.findByRole("region", { name: "Retro details" });
+    await waitFor(() => expect(list).toHaveBeenCalled());
+    const context = screen.getByRole("complementary", { name: "Meeting context" });
+    expect(within(context).getByRole("button", { name: "Add Note" })).toBeInTheDocument();
+    expect(within(context).queryByRole("button", { name: "Record" })).not.toBeInTheDocument();
+    expect(within(context).queryByRole("region", { name: "Recording" })).not.toBeInTheDocument();
   });
 
   it("offers Open Note in event details when that occurrence already has a note", async () => {
