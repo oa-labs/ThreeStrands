@@ -56,8 +56,13 @@ export function formatElapsed(ms: number): string {
 
 const minutesLabel = (ms: number) => `${Math.max(1, Math.round(ms / 60_000))} min`;
 
-/** True when a failed recording never captured audio, as opposed to one whose transcription failed. */
-const failedWithoutAudio = (recording: MeetingRecording) => recording.tracks.every((track) => track.state !== "active");
+/**
+ * A failed recording with no audio on disk: either nothing was captured, or
+ * the audio is gone, so there is nothing to transcribe again. With audio, the
+ * failure was its transcription's. Track states can't tell these apart: every
+ * track can fail after audio was saved.
+ */
+const failedWithoutAudio = (recording: MeetingRecording) => recording.audioDeleted;
 
 /**
  * The detail line under a Recording row. `model` is the chosen transcription
@@ -88,7 +93,7 @@ export function recordingDetail(recording: MeetingRecording, model: Transcriptio
 export const canShowTranscript = (recording: MeetingRecording) => recording.state === "transcribed";
 
 /** Retry Transcription is offered for a failed recording whose audio still exists. */
-export const canRetryTranscription = (recording: MeetingRecording) => recording.state === "failed" && !recording.audioDeleted;
+export const canRetryTranscription = (recording: MeetingRecording) => recording.state === "failed" && !failedWithoutAudio(recording);
 
 /** `[12:34] You: text`, or `[1:02:03] text` without labels; one line per transcript line. */
 export function transcriptCopyText(transcript: RecordingTranscript): string {

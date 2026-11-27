@@ -114,9 +114,13 @@ describe("recordingDetail with transcription", () => {
     expect(recordingDetail(recording({ state: "transcribed" }))).toBe("42 min · Transcribed");
   });
 
-  it("calls a failed recording with no audio captured Failed", () => {
-    const none = recording({ state: "failed", tracks: [{ track: "mic", state: "failed", deviceName: null, firstFrameOffsetMs: null, error: "x" }] });
-    expect(recordingDetail(none)).toBe("Failed");
+  it("calls a failed recording without audio Failed, and one with audio a failed transcription", () => {
+    // The native side reports a capture that saved nothing as audioDeleted.
+    expect(recordingDetail(recording({ state: "failed", audioDeleted: true }))).toBe("Failed");
+    // Every track can fail after audio was saved; that audio's transcription is what failed.
+    const failedTracks = [{ track: "mic" as const, state: "failed" as const, deviceName: null, firstFrameOffsetMs: null, error: "x" }];
+    expect(recordingDetail(recording({ state: "failed", tracks: failedTracks }))).toBe("Transcription failed");
+    expect(canRetryTranscription(recording({ state: "failed", tracks: failedTracks }))).toBe(true);
   });
 });
 
