@@ -45,7 +45,7 @@ transcript, mobile, and syncing audio or raw transcripts between devices.
 | Separate app or the existing one? | The tray icon belongs to the ThreeStrands process (Tauri's `tray-icon` feature). There is no second executable. | Notes, the calendar cache, contacts, AI keys, the request journal, and guarded note writes all live in this process and its SQLite database. A second writer would bypass version checks and receipts. |
 | What if the window is closed? | While **Meeting Recording** is on, closing the window hides it and the tray icon stays. **Quit ThreeStrands** in the tray menu (or ⌘Q) quits, and asks first while a recording is in progress. | A recording must not stop because a window closed. With the feature off, today's close behavior is unchanged. |
 | Who decides when to record? | Only the user. The app can offer ("Record “Weekly Sync”") but never starts recording on its own. | It matches DESIGN.md's "proactive work only prepares proposals" and recording-consent law. |
-| Transcription engine | On-device whisper.cpp (through `whisper-rs`) in a killable worker process. Uploading audio to a cloud provider is a later, opt-in stage. | ThreeStrands is local-first. Audio of other people is the most sensitive data the app would hold. |
+| Transcription engine | On-device `SpeechAnalyzer` through a small Swift shim on macOS 26+ (default); on-device whisper.cpp (`whisper-rs`) in a killable worker process on macOS 14.4–15, Windows/Linux (stages 6–7), and selectable on macOS 26+. Uploading audio to a cloud provider is a later, opt-in stage. | ThreeStrands is local-first. Audio of other people is the most sensitive data the app would hold. `SpeechAnalyzer` gives Neural Engine efficiency with zero model download on macOS 26+, while whisper.cpp covers earlier OSes and cross-platform builds. |
 | Speakers | Two tracks: the microphone is **You** and system audio is **Others**. No diarization in v1. | This gives real speaker attribution for the most important split, "what I committed to" versus "what they did", at no cost. |
 | Where results go | The recap goes into the existing `MeetingFollowThroughDialog`, then into a dated, occurrence-linked follow-through section in the meeting note. | That boundary already exists, with receipts, Undo, and conflict handling. AI output stays a proposal. |
 | The transcript in notes | Not as note text. A note has a 96 KB limit, and all notes share 3.5 MiB. The transcript can be attached to the meeting note as a Markdown file (attachment path, 20 MiB limit, encrypted sync). This is an option in the review, off by default. | One long meeting would use a large share of the shared notes budget. |
@@ -69,6 +69,16 @@ Settled by the developer on 2026-11-26:
    switch off removes the icon, unless a recording or transcription is still
    running. In that case the icon goes once that work ends.
 
+Settled by the developer on 2026-11-27:
+
+5. **System sleep stops an active recording cleanly** and immediately queues
+   transcription, so waking a laptop never silently resumes microphone capture.
+6. **Apple `SpeechAnalyzer` is the default engine on macOS 26+**, with Whisper
+   Fast and Accurate selectable alongside it.
+7. **Stage 5 offers cover both scheduled calendar meetings and unscheduled
+   calls** from known conferencing apps (Zoom, Slack, Teams, FaceTime, etc.),
+   while still never starting or stopping automatically.
+
 ## User experience
 
 ### Settings → Meeting Recording
@@ -78,11 +88,22 @@ A new settings page, off by default:
 - **Record Meetings**: the main switch. Turning it on asks for microphone
   permission and system audio permission (on macOS) at that moment, not at
   first launch.
-- **Transcription Model**: **Fast** (`small.en` q5_1, 190 MB, English only)
-  or **Accurate** (`large-v3-turbo` q5_0, 574 MB, multilingual), with
-  **Download** and progress. The model is downloaded only when the user
-  presses **Download**, and its SHA-256 is checked against a hash pinned in
-  the policy module. The spike recorded the hashes.
+- **Microphone**: defaults to **System Default**, with an optional explicit
+  input-device override and the currently active mic shown. This prevents
+  macOS from jumping to Continuity Camera or virtual devices, and avoids forcing
+  Bluetooth headsets into low-quality HFP mode when the call app uses another
+  mic.
+- **Transcription Engine / Model**: on macOS 26+, **Apple On-Device**
+  (`SpeechAnalyzer`, default, zero download) alongside Whisper **Fast**
+  (`small.en` q5_1, 190 MB, English only) and **Accurate** (`large-v3-turbo`
+  q5_0, 574 MB, multilingual). On macOS 14.4–15 (and Windows/Linux), Whisper
+  **Fast** and **Accurate**. Downloaded Whisper models fetch only when the
+  user presses **Download**, with progress, and are checked against a SHA-256
+  hash pinned in the policy module. The spike recorded the hashes.
+- **Transcription Language**: **Auto** (default; detects the language once over
+  the first ~30 s of speech per recording and pins it for the rest of the job)
+  or an explicit language choice. Whisper **Fast** (`small.en`) is
+  English-only.
 - **Transcribe During Meetings**: on by default. Transcribes finished minutes
   in batches while the meeting is recorded, so the transcript is ready soon
   after Stop. Off, nothing is transcribed until Stop, which keeps the Mac's
@@ -90,8 +111,9 @@ A new settings page, off by default:
   [Memory](#memory-during-long-meetings).
 - **Keep Audio**: 7 days (default), 30 days, Until Deleted, or Until Transcribed.
 - **Offer to Record Meetings**: on by default. Shows the upcoming meeting in the
-  tray menu, and adds a tray badge when another app starts using the microphone
-  during a calendar meeting.
+  tray menu, and adds a tray badge when a known conferencing app (or a browser
+  during a scheduled calendar meeting) starts using the microphone, covering
+  both scheduled meetings and unscheduled calls.
 - **Remind Me to Tell Participants**: on by default. Shows a notice at every
   start.
 - **Summarize with AI**: off by default. It uses the user's AI provider and adds
@@ -134,9 +156,12 @@ consent dialog described below. After that, starting takes one step.
   reads **Stop Recording**. Like other one-step actions on read-only surfaces,
   these are buttons. Space and Enter activate them natively.
 - **A recording indicator** in the app chrome (the sidebar, above the account
-  switcher) shows a dot, the elapsed time, and **Stop** while a recording is in
-  progress. It never takes focus. It uses `--text-meta`, `--control-h-sm`, and
-  the shared tokens.
+  switcher) shows a dot, lightweight dual-track activity feedback (mic and
+  system audio signal indicators so the user can confirm both tracks are live),
+  the elapsed time, and **Stop** while a recording is in progress. If system
+  audio delivers only sustained digital zeros while the microphone hears
+  speech, it surfaces an in-meeting notice pointing to System Settings. It never
+  takes focus. It uses `--text-meta`, `--control-h-sm`, and the shared tokens.
 - **The Meeting Preparation view** (shown in Calendar Event Details and Notes'
   context rail) gets a Recording section, in the conversation group after Notes. It has one `ContextRow` per recording of the occurrence.
   The glyph is the audio `AttachmentIcon`. The title is **Recording**, the date
@@ -165,13 +190,18 @@ When transcription finishes, the tray offers **Review “…”**, and the Recor
 row shows **Review**. Review opens the existing **Review Follow-through** dialog
 for the occurrence with:
 
-- **Summary**: a textarea filled from the AI recap. With AI off, it starts
-  empty. It is saved as a nested `Summary:` item under the follow-through line,
-  as ordinary Markdown that earlier versions read as plain text.
+- **Summary**: a textarea filled from the AI recap, with length scaled to
+  meeting duration up to the 400-word cap. With AI off, it starts empty.
+  **Include My Notes** can be toggled directly in the dialog (off by default)
+  with one-click re-summarizing without re-transcribing. It is saved as a
+  nested `Summary:` item under the follow-through line, as ordinary Markdown
+  that earlier versions read as plain text.
 - **Suggested items**: decisions, tasks, and open questions from the recap. Each
   is marked **Suggested** and shows its evidence: the timestamp, the speaker
-  (You or Others), and the quoted transcript text. The user can edit, accept,
-  or remove each item. The existing rules still apply: actions spoken by
+  (You or Others — mapped deterministically to the other attendee in a 1:1
+  meeting), and the quoted transcript text pulled directly from local SQLite
+  segments by `segmentIds` (never trusting LLM-echoed text). The user can edit,
+  accept, or remove each item. The existing rules still apply: actions spoken by
   **You** default to round Tasks, actions spoken by Others stay information
   unless the user chooses to track them, and owners and deadlines are never
   invented.
@@ -202,7 +232,7 @@ synthetic PCM.
 
 | Platform | Microphone | System audio |
 | --- | --- | --- |
-| macOS 14.4 and later | Core Audio directly: an IOProc on the default input device, following device changes, the same code path as the tap. ThreeStrands' own tap device is left out of the device list. | A Core Audio process tap: a mono `CATapDescription` global tap that excludes ThreeStrands' own process, `AudioHardwareCreateProcessTap`, and a private aggregate device whose tap list holds the tap. Bindings come from `objc2-core-audio` 0.3, in the objc2 family already in the tree. The spike confirmed it exposes everything the tap needs, so `cidre` (used by both references) isn't needed. It needs `NSAudioCaptureUsageDescription` and no Screen Recording permission. |
+| macOS 14.4 and later | Core Audio directly: an IOProc on the selected input device (or following default input changes when set to System Default), using the same code path as the tap. ThreeStrands' own tap device is left out of the device list. | A Core Audio process tap: a mono `CATapDescription` global tap that excludes ThreeStrands' own process, `AudioHardwareCreateProcessTap`, and a private aggregate device whose tap list holds the tap. Bindings come from `objc2-core-audio` 0.3, in the objc2 family already in the tree. The spike confirmed it exposes everything the tap needs, so `cidre` (used by both references) isn't needed. It needs `NSAudioCaptureUsageDescription` and no Screen Recording permission. |
 | macOS before 14.4 | Core Audio, as above | None. The recording has only the microphone track. It also picks up other people's voices from the speakers, so the transcript has no speaker labels, and the recap treats every action's owner as unclear rather than as the user's. |
 | Windows | `cpal` (WASAPI) | WASAPI loopback (`cpal` input streams on output devices, as meetily does, or the `wasapi` crate, as anarlog does). The source follows the endpoint another process is actually playing through. It switches only after two polls agree, and skips ThreeStrands' own process. |
 | Linux | `cpal` | The PulseAudio monitor source of the default sink through `libpulse-binding`. PipeWire answers it through its Pulse compatibility layer. ALSA is avoided: meetily crashed after about 30 minutes of concurrent ALSA calls. |
@@ -236,15 +266,37 @@ Processing:
   (`AudioTimeStamp.mHostTime`), and the merge places it on the recording's
   clock from that time. Counting frames from Start is not enough.
 - **The IOProc** writes into a preallocated ring buffer and never allocates.
-- **Segment files.** Each track is written in 60-second files whose headers are
-  finalized when the file closes. A crash or power loss costs at most the open
-  minute. On the next launch, an unfinished recording is marked **Interrupted**,
-  and its saved minutes can still be transcribed. That is about 2 MB per minute
-  per track, so a one-hour, two-track recording takes about 230 MB until
-  retention removes it.
-- **Gaps.** Sleep, a pause, or a device change ends the current segment and
+- **Segment files and post-transcription transcoding.** During capture, each
+  track is written in 60-second 16 kHz mono 16-bit PCM WAV files whose headers
+  are finalized when the file closes. A crash or power loss costs at most the
+  open minute. On the next launch, an unfinished recording is marked
+  **Interrupted**, and its saved minutes can still be transcribed. Live WAV
+  segments take about 2 MB per minute per track (~230 MB for a one-hour,
+  two-track call). Once transcription completes — when **Keep Audio** is not
+  `Until Transcribed` — retained tracks are transcoded to AAC/M4A through
+  macOS's native `AudioToolbox` (`ExtAudioFile`, zero new crates; ~7–8× smaller,
+  ~25–35 MB/hr) and the raw WAV segments are removed. Retrying transcription
+  decodes the M4A back to 16 kHz PCM via `ExtAudioFile`.
+- **Pause stops hardware.** Pausing ends the current segment, records a gap, and
+  stops the Core Audio IOProc streams (`AudioDeviceStop`) rather than merely
+  dropping frames, so macOS turns off the orange microphone indicator and
+  releases Bluetooth HFP until Resume.
+- **Gaps and sleep.** A pause or device change ends the current segment and
   records a gap, so timestamps stay true to the wall clock. A change of the
-  default input device moves to the new one.
+  default input device moves to the new one when set to System Default.
+  **System sleep** (`NSWorkspaceWillSleepNotification` on macOS) stops the
+  active recording cleanly and immediately queues transcription, rather than
+  resuming microphone capture on wake.
+- **Silent-tap permission detection.** On macOS 15+, denied or revoked system
+  audio permission causes the tap to stream exact digital zeros. If the tap
+  delivers sustained exact zeros for ~15–20 seconds while the microphone hears
+  speech, the app shows an in-meeting warning deep-linking to
+  `x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture`.
+- **File permissions and backup exclusion.** On Unix/macOS, recording audio
+  directories are created `0700` and audio files `0600`. Both the audio
+  directory and `recording-models/` are marked with
+  `NSURLIsExcludedFromBackupKey` so Time Machine and backup tools do not
+  archive sensitive audio off-device.
 - **Limits** (all in `src-tauri/src/recording/policy.rs`): at most 4 hours per recording,
   recording stops with a notice when free disk space falls below 2 GB, and only
   one recording runs at a time.
@@ -255,32 +307,46 @@ Processing:
 
 ## Transcription
 
-- **Engine.** whisper.cpp through `whisper-rs` 0.16 with Metal. It is a
-  macOS-only dependency, like recording, so Windows, Linux, and Android
-  builds need no cmake or libclang; stages 6 and 7 add it there. It runs in a
-  child process, re-executing the app binary with a hidden argument and an
-  environment marker as `pdf_worker.rs` does, so a C++ crash or runaway memory
-  use can't take down the mail client. **A worker per batch**: a worker
-  loads the model, transcribes the segment files waiting, and exits, so the
-  model is in memory only while there is work for it (see
-  [Memory](#memory-during-long-meetings)). After Stop one worker does the
-  rest of the recording. The worker gets an empty
-  environment, `/` as its directory, no core dumps, and nice 10. The parent
-  enforces a load timeout, a per-request wall-clock timeout scaled to the
-  request's audio, the model's memory budget (its physical footprint,
-  polled, as macOS doesn't enforce `RLIMIT_AS`), and a stop check (cancel,
-  memory pressure), and kills and reaps the worker on any breach, on
-  malformed output, and on drop. **Protocol**: length-prefixed JSON
-  frames both ways. A `config` frame first (model paths, language, threads),
-  answered by `ready`; then one `segment` request at a time (track, WAV path,
-  `startMs`, whether it continues the previous file of the track's run,
-  whether it ends the run, and, on a worker's first file of a track, the
-  `carryIn` an earlier worker held back), each answered by its `lines`
-  (`track`, `startMs`, `endMs`, `text`) and `held`: where the audio the
-  worker still holds for that track starts, as files and sample offsets on
-  the recording's clock. The parent checks every path: the exact file name
-  the segment writer gives, resolved inside the recording's audio folder,
-  including every path a worker reports holding.
+- **Engines.** Two first-class on-device backends sit behind `SpeechEngine`,
+  feeding the same timestamped-line, merge, and storage pipeline:
+  - **Apple `SpeechAnalyzer` (macOS 26+, default on macOS 26+):** runs
+    on-device through a small Swift shim with Neural Engine acceleration and
+    zero model download.
+  - **whisper.cpp through `whisper-rs` 0.16 with Metal:** default on macOS
+    14.4–15, selectable (**Fast** or **Accurate**) on macOS 26+, and planned
+    for Windows/Linux in stages 6 and 7 (leaving non-macOS builds free of cmake
+    and libclang until then). It runs in a child process, re-executing the app
+    binary with a hidden argument and an environment marker as `pdf_worker.rs`
+    does, so a C++ crash or runaway memory use can't take down the mail client.
+    **A worker per batch**: a worker loads the model, transcribes the segment
+    files waiting, and exits, so the model is in memory only while there is
+    work for it (see [Memory](#memory-during-long-meetings)). After Stop one
+    worker does the rest of the recording. The worker gets an empty environment,
+    `/` as its directory, no core dumps, and nice 10. The parent enforces a
+    load timeout, a per-request wall-clock timeout scaled to the request's
+    audio, the model's memory budget (its physical footprint, polled, as macOS
+    doesn't enforce `RLIMIT_AS`), and a stop check (cancel, memory pressure),
+    and kills and reaps the worker on any breach, on malformed output, and on
+    drop. **Protocol**: length-prefixed JSON frames both ways. A `config` frame
+    first (model paths, language, initial prompt, threads), answered by
+    `ready`; then one `segment` request at a time (track, WAV path, `startMs`,
+    whether it continues the previous file of the track's run, whether it ends
+    the run, and, on a worker's first file of a track, the `carryIn` an earlier
+    worker held back), each answered by its `lines` (`track`, `startMs`,
+    `endMs`, `text`, and per-segment RMS energy) and `held`: where the audio the
+    worker still holds for that track starts, as files and sample offsets on
+    the recording's clock. The parent checks every path: the exact file name
+    the segment writer gives, resolved inside the recording's audio folder,
+    including every path a worker reports holding.
+- **Vocabulary seeding and language pinning (Whisper).** `initial_prompt` is
+  seeded with a short, sanitized vocabulary hint (~50–80 tokens max) built from
+  the calendar event title and attendee display names, applied only to spans
+  ≥ ~1 s (with exact prompt-echo filtering) to improve proper-noun spelling
+  without hallucinations. Transcription follows the **Transcription Language**
+  setting: under **Auto**, language is detected once over the first ~30 s of
+  speech per recording and pinned for the remainder of the job (avoiding
+  per-span language drift under `set_no_context(true)`). Whisper **Fast**
+  (`small.en`) always passes `"en"`.
 - **Speech across segment files.** Speech that reaches the end of a segment
   file is held back with the last half second of every file and transcribed
   with the next contiguous file of the same run, so a sentence is never cut at
@@ -340,25 +406,30 @@ Processing:
   the recording starts over after Stop.
 - **Merging tracks.** Segments are ordered by start time. When every output is
   headphones, the microphone hears only the user, so nothing need be dropped.
-  anarlog uses the same headphones test to switch its echo canceller off.
-  **Deferred:** that exemption needs output-route detection, which can't be
-  tested in the VM, so stage 3 always applies the echo rule when the
-  recording has system audio. On headphones the rule rarely fires, because the
-  user's words seldom repeat the other side's. Otherwise the microphone picks
-  up the room's speakers. The merge works
-  sentence by sentence. A microphone sentence is dropped when at least half of
-  its words (0.5, in the policy module) also appear in system sentences that
-  overlap it in time, ±1 second. In the spike's simulated echo (−16 dB,
-  60 ms), this dropped all 13 echo sentences (scores 0.70–1.00). It kept the
-  user's line spoken over the remote speaker (0.25) and the user's line alone
-  (0.00). Comparing whole 30-second spans instead lost the line spoken over
-  the remote speaker. This is pure, testable code. Two kinds of
-  echo cancellation are ruled out for v1:
+  anarlog uses the same headphones test to switch its echo canceller off. On
+  macOS, output-route detection checks `kAudioDevicePropertyTransportType`
+  (Bluetooth/USB) and headphone-jack data source (`'hdpn'`) to bypass or tighten
+  echo dropping when no speaker-to-mic path exists (initially deferred in stage 3
+  until host verification). Otherwise the microphone picks up the room's
+  speakers. The merge works sentence by sentence, using a **causal
+  (asymmetric) time window** `[system.start - 250 ms, system.end + 1000 ms]`
+  rather than symmetric `±1 s` so a remote speaker repeating what the user just
+  said does not falsely drop the user's line. A microphone sentence is dropped
+  when at least half of its non-stop-words (0.5, in the policy module, above a
+  minimum content-word count so short user confirmations like "Yeah, on Friday"
+  are protected) also appear in overlapping system sentences, paired with a
+  per-segment RMS-energy ratio check (computed directly in Rust, no ML runtime).
+  In the spike's simulated echo (−16 dB, 60 ms), word overlap dropped all 13
+  echo sentences (scores 0.70–1.00) while keeping the user's line spoken over
+  the remote speaker (0.25) and the user's line alone (0.00). Comparing whole
+  30-second spans instead lost the line spoken over the remote speaker. This is
+  pure, testable code. Two kinds of echo cancellation are ruled out for v1:
   - Apple's voice-processing I/O, because it lowers all other audio by about
     8 dB, the call included, with no public way to stop it (anarlog measured
     this).
   - A neural echo canceller like anarlog's (ONNX models run through `ort`),
-    which is the next step only if the spike measures too much duplication.
+    which is the next step only if real speaker calls still measure too much
+    duplication.
 - **The model** is stored under the app data directory, in
   `recording-models/`. Downloads start from the pinned Hugging Face URL and
   follow at most five redirects, each over https to Hugging Face's own hosts.
@@ -451,16 +522,25 @@ stays well under the budget.
   `with_purpose` usage logging, request controls, and the daily spending limit.
 - **Input**: the merged transcript as numbered segments
   (`{id, speaker: "you"|"others", start, text}`), plus the reviewed event title,
-  time, and attendee display names. **Include My Notes**, off by default, adds
-  what the user typed in this occurrence's note excerpt during the meeting, as
-  anarlog's summary does. A note marked **Exclude from AI** is never offered.
-  Nothing else is sent: no mail and no contact notes. The summary's length
-  guidance scales with the transcript's length (anarlog).
-- **Output schema**: `summary` (120 words at most), `decisions[]`, `actions[]`
+  time, and attendee display names. In a **1:1 meeting** (exactly one other
+  attendee), `others` maps deterministically to that attendee; in multi-attendee
+  meetings, the prompt instructs the model never to guess which remote attendee
+  spoke an `others` line unless their name is spoken in the transcript.
+  **Include My Notes**, off by default and toggled directly in the review dialog
+  (with one-click re-summarizing without re-transcribing), adds what the user
+  typed in this occurrence's note excerpt during the meeting and instructs the
+  model to treat those jotted notes as priority focus/structure anchors while
+  grounding all items in `segmentIds`. A note marked **Exclude from AI** is
+  never offered. Nothing else is sent: no mail and no contact notes. The
+  summary's length guidance scales with the meeting's duration (~60–100 words
+  for a 15-min standup, ~200–350 for a 60-min meeting).
+- **Output schema**: `summary` (400 words at most), `decisions[]`, `actions[]`
   (`owner: you|attendee|unclear`), and `openQuestions[]`, each with non-empty
-  `segmentIds`. Validation checks that every cited ID exists. An item that
-  fails is withheld and counted ("2 suggestions withheld"), never shown as an
-  empty result.
+  `segmentIds`. Validation checks that every cited ID exists, and displayed
+  evidence quotes are pulled directly from local SQLite segments by
+  `segmentIds` rather than trusting LLM-echoed quote text. An item that fails
+  validation is withheld and counted ("2 suggestions withheld"), never shown as
+  an empty result.
 - **Limits.** A transcript-bytes limit for one request lives in the policy
   module. Choose it in stage 1 from current provider context sizes; about
   400 KB, a long three-hour meeting, is a starting point. Above the limit, the
@@ -480,14 +560,18 @@ stays well under the budget.
   `audio_dir`, `audio_deleted_at`, `recap_json` NULL, `reviewed_operation_id`
   NULL, `error`), where `recorded` means stopped and waiting for
   transcription, and `meeting_recording_segments` (`recording_id`, `seq`,
-  `track`, `start_ms`, `end_ms`, `text`, `dropped_as_echo`).
+  `track`, `start_ms`, `end_ms`, `text`, `rms`, `dropped_as_echo`).
 - **Settings** live natively in a single-row `meeting_recording_settings`
   table, because the tray, retention, and transcription read them while the
   window may be hidden. The webview reads and writes them through
-  `recording_settings` and `set_recording_settings`. Fields added later get
-  serde defaults.
+  `recording_settings` and `set_recording_settings`. Fields added later
+  (`microphone_device_uid`, `transcription_engine`, `transcription_language`)
+  get serde defaults.
 - **Device-local.** These tables are not replicated entities and not part of
-  settings transfer. The only things that leave the device are what the user
+  settings transfer. Audio files are owner-only (`0700`/`0600`) and excluded from
+  backups (`NSURLIsExcludedFromBackupKey`), and completed recordings are
+  transcoded post-transcription to AAC/M4A unless **Keep Audio** is
+  `Until Transcribed`. The only things that leave the device are what the user
   saves into a note and the optional transcript attachment, both through
   existing sync paths. No sync format change.
 - **Retention sweep** at launch and daily: delete audio past **Keep Audio**.
@@ -501,11 +585,18 @@ stays well under the budget.
 
 - Only the user starts a recording, and recording is always visible in the tray
   icon, the in-app indicator, and the OS microphone indicator.
-- Audio and transcripts stay on the device. Nothing reaches an AI provider
-  until the user turns on **Summarize with AI**, and then only the transcript
-  text and the reviewed event fields are sent.
-- Transcript text is untrusted. It is rendered as text, and instructions spoken
-  in a meeting cannot authorize writes or tools.
+- System sleep stops an active recording cleanly and queues transcription, so
+  waking a laptop never silently resumes microphone capture.
+- Pausing stops the audio hardware streams so the OS microphone indicator turns
+  off during off-the-record sidebars.
+- Audio and transcripts stay on the device. Audio directories and files are
+  created with owner-only permissions (`0700`/`0600`) and excluded from backups
+  (`NSURLIsExcludedFromBackupKey`), along with `recording-models/`. Nothing
+  reaches an AI provider until the user turns on **Summarize with AI**, and then
+  only the transcript text and the reviewed event fields are sent.
+- Transcript text is untrusted. It is rendered as text, displayed evidence
+  quotes are pulled directly from local SQLite by validated `segmentIds`, and
+  instructions spoken in a meeting cannot authorize writes or tools.
 - Model downloads use the app's HTTP client, pinned hashes, and a fixed host.
   Nothing is executed from the download.
 - The worker gets an empty environment, resource limits, a wall-clock timeout
@@ -522,8 +613,9 @@ src-tauri/src/
     capture/{mod,macos,windows,linux,fake}.rs
     segments.rs                WAV segment writer, gap markers, crash recovery
     transcribe/                models, worker + protocol, stream + spans (in the
-                               worker), engine (whisper, macOS), plan, merge,
-                               scheduler, power
+                               worker), engine (SpeechAnalyzer Swift shim +
+                               whisper on macOS), plan, merge, scheduler, power,
+                               transcode (AudioToolbox M4A/AAC)
     retention.rs
   ai/meeting_recap.rs
   commands/recordings.rs
@@ -577,31 +669,58 @@ in the first stage users can see (stage 2), and extend it in later stages.
    section, palette commands, crash recovery, and retention.
 3. **Transcribe.** Model download and verification, the worker, transcription
    during the recording, the track merge with echo drop, and **Show
-   Transcript**. *Built 2026-11-27*; the headphones exemption is deferred (see
-   Merging tracks). Smoke-tested in the VM with the Fast model on Metal: RTF
-   about 0.33 on the paravirtual GPU, model load 4.6 s cold and 0.15 s warm.
-   Real Apple Silicon speed and memory are still to measure on the host.
-4. **Recap and review.** `meeting_recap.rs`, validation, the Summary field and
-   Suggested items in `MeetingFollowThroughDialog`, **Attach Transcript**, and
-   ad-hoc destinations.
-5. **Offers.** "Record “…”" for the meeting under way, and the badge when
-   another app starts using the microphone during a calendar meeting. On macOS
-   this works as in anarlog:
+   Transcript**. *Built 2026-11-27*; the headphones exemption was initially
+   deferred (see Merging tracks). Smoke-tested in the VM with the Fast model on
+   Metal: RTF about 0.33 on the paravirtual GPU, model load 4.6 s cold and 0.15 s
+   warm. Real Apple Silicon speed and memory are still to measure on the host.
+3b. **Hardening & macOS polish.** Refinements to built Stages 2–3:
+   - sleep-to-stop (`NSWorkspaceWillSleepNotification`) and hardware-stop on Pause;
+   - `0700`/`0600` audio permissions and `NSURLIsExcludedFromBackupKey` on audio
+     and `recording-models/`;
+   - **Microphone** selector (System Default vs explicit device) and dual-track
+     activity feedback in the indicator;
+   - faster 15–20 s digital-zero silent-tap warning with System Settings deep
+     link (`Privacy_AudioCapture`);
+   - causal echo window (`-250 ms` to `+1000 ms`), stop-word / short-confirmation
+     protection, headphones output-route detection, and per-segment RMS check;
+   - Whisper `initial_prompt` vocabulary seeding and **Transcription Language**
+     setting (detect-once Auto);
+   - Apple `SpeechAnalyzer` Swift shim as the first-class default engine on
+     macOS 26+;
+   - post-transcription `AudioToolbox` (`ExtAudioFile`) AAC/M4A transcoding for
+     retained audio (with decode-on-retry).
+4. **Recap and review.** `meeting_recap.rs`, validation, duration-scaled
+   400-word Summary field, 1:1 deterministic naming and group non-guessing,
+   SQLite-sourced evidence quotes, Granola-style `Include My Notes` anchoring
+   with one-click re-summarize in `MeetingFollowThroughDialog`, **Attach
+   Transcript**, and ad-hoc destinations.
+5. **Offers.** "Record “…”" for the meeting under way, and the badge when a
+   known conferencing app (Zoom, Slack, Teams, FaceTime, Webex, Discord, etc.)
+   — or a browser during a scheduled calendar meeting — starts using the
+   microphone, covering both scheduled meetings and unscheduled calls. On macOS
+   this works with:
    - a listener on the default input's `kAudioDevicePropertyDeviceIsRunningSomewhere`;
-   - Core Audio's process list, to name the app using the microphone;
+   - Core Audio's process list, matched against a curated conferencing bundle-ID
+     allowlist and a dictation/system-tool denylist (Siri, Dictation, Wispr
+     Flow, Voice Memos, etc.), always excluding ThreeStrands' own PID;
    - a short delay before the offer, so a brief microphone check doesn't
      trigger it.
 
    On Windows the offer comes from WASAPI session enumeration. When the call
    app releases the microphone, the tray offers **Stop Recording** and never
-   stops on its own. anarlog's documentation warns that automatic stop can
-   fire early.
+   stops on its own (anarlog's documentation warns that automatic stop can fire
+   early). If the call app released the microphone *and* both tracks stay
+   silent for ~3–5 minutes (or past the event's end time), show a tray/app
+   "Still recording — Stop?" nudge.
 6. **Windows.** WASAPI loopback, tray, and installer permissions.
 7. **Linux.** The monitor source and the tray (AppIndicator), with
    `docs/linux-builds.md` updated.
 8. **Optional: cloud transcription.** OpenAI-compatible
    `/audio/transcriptions` for providers that offer it, with per-minute prices
-   in the spending limit, behind its own switch and disclosure.
+   in the spending limit, behind its own switch and disclosure. Handle the
+   ~25 MB upload limit by compressing to M4A/Opus or VAD-chunking **per track**
+   (never mixing tracks before upload), with optional remote-track diarization
+   for providers that support it.
 
 ## Reference implementations
 
@@ -637,13 +756,19 @@ Where this plan differs on purpose:
 Following AGENTS.md, at the lowest level that owns each behavior:
 
 - **Native**: the state machine with the fake backend (start, pause, resume,
-  stop, double start, stop while transcribing, quit while recording); segment
-  writer recovery from a truncated final file; gap timestamps; policy limits
-  below, at, and above each one (length, disk floor, transcript bytes); model
-  hash rejection; the worker protocol with malformed frames, timeout, and kill;
-  merge ordering and echo drop at the similarity threshold; recap schema
-  validation, withheld counts, and unknown segment IDs; prompt-injection text in
-  a transcript; retention sweep; migration; heap use that doesn't grow over two
+  stop, double start, stop while transcribing, quit while recording, sleep-to-stop);
+  hardware-stop on pause; `0700`/`0600` permissions and backup exclusion;
+  segment writer recovery from a truncated final file; gap timestamps; policy
+  limits below, at, and above each one (length, disk floor, transcript bytes,
+  400-word summary cap); model hash rejection; the worker protocol with
+  malformed frames, timeout, and kill; `initial_prompt` cap/sanitization and
+  detect-once language pinning; M4A/AAC transcode and decode-on-retry
+  round-trip; merge ordering, causal echo window, short-confirmation retention,
+  and RMS-assisted echo drop at the similarity threshold; recap schema
+  validation, withheld counts, unknown segment IDs, 1:1 deterministic naming vs
+  group non-guessing, and SQLite-sourced evidence quotes; prompt-injection text
+  in a transcript; conferencing allowlist/denylist filtering and post-call
+  silence nudge; retention sweep; migration; heap use that doesn't grow over two
   hours of capture or of a transcription job (counted by a test allocator);
   batches matching one worker's transcript; memory pressure and available
   memory through a fake `MemoryProbe`.
@@ -663,20 +788,27 @@ Following AGENTS.md, at the lowest level that owns each behavior:
 - **Consent law.** Two-party-consent places. Mitigated by user-only starts,
   visible state, the consent dialog, and the per-start reminder; the
   responsibility stays with the user.
-- **Build and supply chain.** whisper.cpp brings a C/C++ build (cmake), Metal
-  shaders, and a larger binary. If vetting or CI cost is unacceptable, the
-  fallback is the stage 8 cloud path, or macOS 26's on-device `SpeechAnalyzer`
-  through a small Swift shim (macOS only).
-- **Echo and quality** without headphones. Measured in the spike; the merge
-  rule is the first defense.
+- **Build and supply chain.** Apple `SpeechAnalyzer` is now the first-class
+  default on macOS 26+ (zero download, Neural Engine), while whisper.cpp remains
+  required for macOS 14.4–15, Windows, and Linux and brings a C/C++ build
+  (cmake), Metal shaders, and a larger binary. If vetting or CI cost for
+  `whisper-rs` is unacceptable on non-26 targets, the fallback is the stage 8
+  cloud path.
+- **Echo and quality** without headphones. Measured in the spike; the causal
+  merge rule, short-confirmation guard, RMS check, and headphones route
+  detection are the first defense.
 - **Bluetooth headsets.** Recording from a headset's microphone forces it
   into its low-quality call mode for the whole stream. Some headsets also cut
-  the microphone between words. Settings notes this when the input is a
-  Bluetooth device. Both references learned this the hard way.
+  the microphone between words. The explicit **Microphone** selector lets users
+  pin their Mac/USB mic while listening on AirPods, and Settings notes this
+  when the active input is a Bluetooth device. Both references learned this the
+  hard way.
 - **System audio permission has no public check.** anarlog asks a private TCC
-  framework, which this plan avoids. If the tap delivers only silence for the
-  first minute while the microphone hears speech, the app shows a notice
-  pointing to the permission in System Settings.
+  framework, which this plan avoids. On macOS 15+, recurring TCC consent or
+  denied/revoked permission streams exact digital zeros. If the tap delivers
+  only digital zeros for ~15–20 seconds while the microphone hears speech, the
+  app shows a warning deep-linking to
+  `x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture`.
 - **Resource use** during long calls. Memory doesn't grow with a meeting's
   length (measured, see [Memory](#memory-during-long-meetings)); the model
   is in memory only for each 5-minute batch; no worker starts under memory
