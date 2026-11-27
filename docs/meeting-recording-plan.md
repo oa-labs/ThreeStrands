@@ -1,11 +1,11 @@
 # Meeting recording and transcription
 
 **Status:** In progress. Stage 0 (the spike) ran in the VM on 2026-11-26; see
-[the findings](archive/meeting-recording-spike-findings.md). Its host
+[the findings](meeting-recording-spike-findings.md). Its host
 measurements are still open. Stage 1 started 2026-11-27.
 **Baseline:** 0.211.0, reviewed 2026-11-26.
 **Builds on:** [Meeting preparation and follow-through](meeting-preparation-design.md)
-(stages 1–3 built) and [Meeting notes](notes-design.md#meeting-notes-proposal)
+(stages 1–4 and 5a built) and [Meeting notes](notes-design.md#meeting-notes)
 (built). That design put recording and transcription out of its own scope. This
 plan adds them as a separate feature that ends in the same follow-through review.
 **References:** [anarlog](https://github.com/fastrepl/anarlog) and
@@ -122,17 +122,17 @@ consent dialog described below. After that, starting takes one step.
 
 ### Inside the app
 
-- **Event Details and Today's next-meeting card** show **Record** next to
-  **Add Note** for a timed meeting that is under way or starts within 10
-  minutes. While that meeting is being recorded, the button reads **Stop
-  Recording**. Like other one-step actions on read-only surfaces, these are
-  buttons. Space and Enter activate them natively.
+- **Calendar Event Details and Today's Agenda / day-view meeting actions**
+  show **Record** next to **Add Note** for a timed meeting that is under way or
+  starts within 10 minutes. While that meeting is being recorded, the button
+  reads **Stop Recording**. Like other one-step actions on read-only surfaces,
+  these are buttons. Space and Enter activate them natively.
 - **A recording indicator** in the app chrome (the sidebar, above the account
   switcher) shows a dot, the elapsed time, and **Stop** while a recording is in
   progress. It never takes focus. It uses `--text-meta`, `--control-h-sm`, and
   the shared tokens.
-- **The event's Meeting context gets a Recording section**, in the conversation
-  group after Notes. It has one `ContextRow` per recording of the occurrence.
+- **The Meeting Preparation view** (shown in Calendar Event Details and Notes'
+  context rail) gets a Recording section, in the conversation group after Notes. It has one `ContextRow` per recording of the occurrence.
   The glyph is the audio `AttachmentIcon`. The title is **Recording**, the date
   sits in the row's date slot, and the detail line reads "42 min · Transcribed",
   "Transcribing… 40%", or "Interrupted · 18 min saved". Trailing actions are
@@ -233,7 +233,7 @@ Processing:
 - **Gaps.** Sleep, a pause, or a device change ends the current segment and
   records a gap, so timestamps stay true to the wall clock. A change of the
   default input device moves to the new one.
-- **Limits** (all in `recording_policy.rs`): at most 4 hours per recording,
+- **Limits** (all in `src-tauri/src/recording/policy.rs`): at most 4 hours per recording,
   recording stops with a notice when free disk space falls below 2 GB, and only
   one recording runs at a time.
 - **macOS packaging.** Add `NSMicrophoneUsageDescription` and
@@ -399,7 +399,7 @@ Each stage works without the ones after it. Add a user-facing changelog entry
 in the first stage users can see (stage 2), and extend it in later stages.
 
 0. **Spike.** *Ran 2026-11-26 in the VM.* See the
-   [findings](archive/meeting-recording-spike-findings.md) and the throwaway
+   [findings](meeting-recording-spike-findings.md) and the throwaway
    crate in `spikes/meeting-recording/`. Still open: the host run (a real call
    on speakers and on headphones, Metal speed, the permission prompt) and
    confirming the tap records on macOS 14.4, the floor. Parakeet is deferred. The original scope: record a call
@@ -411,7 +411,7 @@ in the first stage users can see (stage 2), and extend it in later stages.
    - whether Parakeet TDT (ONNX through `ort`, meetily's default engine) beats
      whisper's speed and accuracy enough to justify a second runtime.
 
-   Write the findings to `docs/archive/`. Gate:
+   Write the findings to `docs/meeting-recording-spike-findings.md`. Gate:
    the crate choices are confirmed, and `pnpm supply-chain` results for
    `tray-icon`, `cpal`, `whisper-rs` and its build dependencies, `rubato`, and
    `objc2-core-audio` are reported to the developer. They are not certified by

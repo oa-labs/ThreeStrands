@@ -63,12 +63,16 @@ for compile, package, and installation testing, but its Gmail connection is
 disabled.
 
 To produce a configured release build, provide the Google Desktop OAuth client
-values only to the build process:
+values and the Tauri updater signing key only to the build process (release
+builds pass `--config src-tauri/tauri.updater.conf.json` and fail without
+`TAURI_SIGNING_PRIVATE_KEY`):
 
 ```sh
 THREESTRANDS_RELEASE_BUILD=1 \
 THREESTRANDS_GOOGLE_CLIENT_ID="1234.apps.googleusercontent.com" \
 THREESTRANDS_GOOGLE_CLIENT_SECRET="value-from-desktop-client-json" \
+TAURI_SIGNING_PRIVATE_KEY="<contents-of-minisign-private-key>" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="<key-password-if-encrypted>" \
 pnpm build:linux
 ```
 
@@ -78,7 +82,8 @@ secret, but installed desktop applications are public clients and cannot keep
 it confidential.
 
 The script runs the JavaScript and Rust test suites before packaging. Successful
-artifacts and their SHA-256 checksums are copied to:
+artifacts, signed `.AppImage.sig` update signatures (in release mode), and
+their SHA-256 checksums are copied to:
 
 ```text
 artifacts/linux-amd64/
@@ -91,19 +96,22 @@ dependencies beside the packages.
 
 `.github/workflows/linux-build.yml` runs an unconfigured build for pull
 requests and supports manual builds. `.github/workflows/release.yml` builds
-the Linux packages in release mode for version tags matching `v*` and attaches
-them to a draft GitHub Release after all platforms succeed. Release-mode builds
-require these GitHub Actions secrets:
+the Linux packages in release mode for version tags matching `v*`. Release
+creation requires `validate` and `macos` to succeed; Linux and Windows packages
+are attached to the draft GitHub Release when present, or omitted with a note
+in the run summary if those platform jobs fail. Release-mode builds require
+these GitHub Actions secrets:
 
 - `THREESTRANDS_GOOGLE_CLIENT_ID`
 - `THREESTRANDS_GOOGLE_CLIENT_SECRET`
+- `TAURI_SIGNING_PRIVATE_KEY` (plus optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)
 
 For a manual Linux build, select the `release` input only when the repository
 secrets are configured. Release-mode builds fail before compilation rather than
 silently producing a Gmail-disabled application.
 
-Both workflows select a Buildx builder with the `docker-container` driver before
-running `devcontainers/ci`. Specifying `platform: linux/amd64` makes the action
+Both workflows run `./scripts/free-ci-disk.sh` and select a Buildx builder with
+the `docker-container` driver before running `devcontainers/ci`. Specifying `platform: linux/amd64` makes the action
 export an OCI archive, which the runner's default `docker` driver cannot export
 without the containerd image store. The explicit builder avoids depending on
 that runner setting. See [Docker's OCI exporter documentation](https://docs.docker.com/build/exporters/oci-docker/).

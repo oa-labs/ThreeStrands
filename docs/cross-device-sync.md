@@ -8,9 +8,10 @@ a **sync group**.
 
 ## Turning it on
 
-Sync is off by default. It becomes active when the user turns on beta
-features in Settings (or, in development, when `THREESTRANDS_REPLICATED_SYNC`
-is set). Until then, local mutations record nothing for replication.
+Sync is off by default. It becomes active when the user turns on **Enable
+replicated sync** in **Settings → Integrations → Replicated Sync** (or, in
+development, when `THREESTRANDS_REPLICATED_SYNC` is set). Until then, local
+mutations record nothing for replication.
 
 ## Connectors
 
@@ -180,7 +181,9 @@ Replicated entities are tasks (including the goal each one supports), goals,
 saved contacts, contact groups, snippets, signatures and their defaults,
 Split Inboxes, muted and blocked senders, mail-account display metadata, calendar-account
 metadata and selections, scheduled-send summaries, sender delivery-pattern
-confirmations, retention, the portable preference allowlist, and notes.
+confirmations, conversation snooze schedules, retention, the portable preference
+allowlist, notes, and note attachments (`Draft` records are retired/ignored from
+0.149.0).
 
 A device reads only the entity types its version knows. Goals arrived in
 0.62.0: a device on an earlier version can't open a snapshot that holds a goal,
@@ -250,21 +253,25 @@ their objects from the connectors.
 
 ## Account removal
 
-- **Disconnect** removes an account from this device only. While this device
-  is in a sync group, the account stays in the synchronized catalog (marked
-  as needing reauthorization) so other devices keep it.
-- **Remove from every device** records a synchronized deletion, pushes it,
-  then removes the account locally. It requires a device in a sync group.
+Open **Disconnect…** on an account to choose:
+
+- **Disconnect this device** removes the account's local data and credentials from
+  this device only. While this device is in a sync group, the account stays in
+  the synchronized catalog (`on_this_device = false`, shown on this device as
+  available from another device) so other devices keep it.
+- **Remove on all devices** (confirmed with **Yes, remove everywhere**) records
+  a synchronized deletion, pushes it, then removes the account locally. It
+  requires a device in a sync group.
 
 ## Leaving and turning it off
 
-**Leave this sync group** (under Advanced) stops syncing on this device and
+**Leave this sync group…** (under Advanced) stops syncing on this device and
 forgets its keys for the group. Local data and connectors stay, so the device
 can rejoin later. Other devices keep listing it until it is revoked from one
 of them.
 
-Turning the beta off stops replication without deleting local data, keys, or
-group membership.
+Turning **Enable replicated sync** off stops replication without deleting local
+data, keys, or group membership.
 
 ## Contact management boundaries
 
@@ -273,6 +280,12 @@ profile, remove the other profiles, and combine group membership. Those changes
 participate in encrypted sync when it is enabled. Profile and replica writes
 commit together, and a peer releases deleted profiles' email ownership before
 applying a merged profile. Mail and attachment history remain device-local.
+
+Co-recipient ranking evidence, scores, and backfill progress stay on each device.
+They are rebuilt from local cached sent-mail headers and follow mail retention;
+they are excluded from settings exports and replicated sync. Saved contacts,
+favorites, and deliberately created groups keep their existing sync behavior.
+Suggestions can differ between devices with different cached mail.
 
 “Never suggest this address” preferences apply across accounts on one installation.
 They survive deleting a profile but are excluded from cross-device sync and
@@ -288,9 +301,3 @@ connected, running installation that received a schedule can return due mail
 after checking current provider state. Update all devices before sharing this
 entity; older versions cannot open snapshots containing it. See
 [snooze design](snooze-design.md) for persistence and recovery behavior.
-
-Co-recipient ranking evidence, scores, and backfill progress stay on each device.
-They are rebuilt from local cached sent-mail headers and follow mail retention;
-they are excluded from settings exports and replicated sync. Saved contacts,
-favorites, and deliberately created groups keep their existing sync behavior.
-Suggestions can differ between devices with different cached mail.

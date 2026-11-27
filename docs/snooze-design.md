@@ -10,9 +10,12 @@ provider folder and this does not control Gmail's native Snoozed state.
 The keyboard bindings follow Superhuman: **h** snoozes (Remind Me), and **b**
 creates a calendar event from Mail or Calendar. Calendar also retains Shift+N.
 
-Snooze applies to a whole conversation or checked batch, preserves read state,
-and supports undo, rescheduling, a Snoozed view, and Return to Inbox. A new
-incoming message ends snooze; sent mail does not. Baseline message IDs distinguish
+Snooze applies to a whole conversation or checked batch, preserves read state
+by default (configurable via **Mark Read When Snoozing** / `markReadOnSnooze`,
+restored unread on Undo, and **Return Snoozed Conversations as Unread** /
+`snoozeReturnsUnread`, mirrored in SQLite `compose_settings` so due returns act
+even without an open window), and supports undo, rescheduling, a Snoozed view,
+and Return to Inbox. A new incoming message ends snooze; sent mail does not. Baseline message IDs distinguish
 new arrivals even with skewed Date headers. Explicit archive/restore, trash, and
 spam actions in ThreeStrands cancel the schedule. Provider trash/spam evidence
 also cancels it. Another client's Archive action on already archived mail is

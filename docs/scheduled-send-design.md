@@ -1,7 +1,8 @@
 # Scheduled send with synchronized visibility
 
-Status: implemented in 0.98.1 (2026-10-10), with the Send Later shortcut added in 0.98.2.
-Live Gmail and native sleep/wake verification remain developer release checks.
+**Status:** Implemented in 0.98.1 (2026-10-10; shortcut in 0.98.2) for Gmail,
+and extended to IMAP/SMTP once SMTP submission shipped (`send_supported: true`).
+Live-account and native sleep/wake verification remain developer release checks.
 
 ## Product contract
 
@@ -15,13 +16,9 @@ connected, and authorized to send. The scheduled time means an attempt to
 submit the message, not a guarantee of recipient arrival. Another computer
 never takes over automatically.
 
-The first release supports scheduling with or without replicated sync.
-Visibility on other computers requires an enrolled sync group and eventually
-working connectors. Gmail can ship first; IMAP accounts become eligible only
-when their SMTP submission implementation is complete. Do not accept a
-schedule for a provider that cannot send. Add a provider-neutral send-support
-capability rather than probing `prepare_delivery` when creating a schedule;
-scheduling an otherwise supported account can work offline.
+Scheduling works with or without replicated sync, for both Gmail and IMAP/SMTP
+(`ProviderCapabilities.send_supported`). Visibility on other computers requires
+an enrolled sync group and working connectors.
 
 On the sending computer, users can cancel, reschedule, or return the message
 to an editable draft until delivery starts. On other computers, entries are
@@ -29,22 +26,22 @@ read-only and say which computer owns them. Remote cancellation requests,
 ownership transfer, automatic failover, background helpers, and server-side
 scheduling are separate features.
 
-## Existing foundations and required changes
+## Implementation modules
 
-- `src-tauri/src/correspondence.rs` already freezes MIME into a durable outbox,
-  protects duplicate queue submissions with `(draft_id, revision)`, and claims
-  delivery with a conditional SQL update. Its worker runs independently of
-  mailbox polling and distinguishes definite rejection from uncertain delivery.
-- `src-tauri/src/schema.rs` currently resets every `undo_pending` deadline on
-  startup. Scheduled timestamps must survive recovery unchanged.
-- `finish_exit` in `src-tauri/src/commands/mail.rs` waits for pending undo windows.
-  A scheduled message must not keep the app open until its scheduled time.
-- Replicated sync carries selected entities through `sync-protocol`,
-  `db/sync_state.rs`, and `sync_projection.rs`. It currently excludes queued mail.
-  Add a summary entity, rather than replicating the outbox table.
-- `src/correspondence.ts`, `src/useCorrespondence.tsx`, `src/Composer.tsx`, and
-  `src/data/demoCorrespondence.ts` own the existing compose/outbox contracts.
-  Keep summaries separate from `OutboxItem`, which contains a complete draft.
+- `src-tauri/src/correspondence/{mime,model,service}.rs`,
+  `src-tauri/src/scheduled_send.rs`, and `src-tauri/src/db/scheduled_send.rs`
+  own scheduling policy (`DISPATCH_GRACE_MS = 60_000`), MIME freezing, outbox
+  claims, and startup recovery (future schedules and elapsed `overdue` states
+  survive restart unchanged).
+- `finish_exit` in `src-tauri/src/commands/mail.rs` waits for pending undo
+  windows and active sends, while leaving future/overdue schedules saved and
+  exiting.
+- `crates/sync-protocol`, `db/sync_state.rs`, and `sync_projection.rs` carry
+  `EntityType::ScheduledSendSummary` (`ScheduledSendReport` with 12 fields),
+  keeping raw outbox payloads local.
+- `src/correspondence.ts`, `src/useCorrespondence.tsx`,
+  `src/ScheduleSendPicker.tsx`, `src/ComposeSendActions.tsx`, and
+  `src/data/demoCorrespondence.ts` own the frontend compose/outbox contracts.
 
 ## Scheduling and missed times
 
@@ -93,8 +90,9 @@ missing keychain identity, or an ownership mismatch pauses the schedule for
 review; it never grants sending authority. Document that copying both a
 profile and its keychain identity is outside this device-isolation guarantee.
 
-Schema migration 64 extends `outbox_messages` with nullable `schedule_json`.
-Ordinary sends keep this field null. Scheduled metadata holds the UTC target,
+`outbox_messages.schedule_json` and `scheduled_send_summaries` live in the
+baseline schema (`INITIAL_SCHEMA` v74 in `src-tauri/src/schema.rs`). Ordinary
+sends keep `schedule_json` null. Scheduled metadata holds the UTC target,
 original IANA timezone, immutable installation owner, original visibility
 group, and owner-generated report revision and change timestamp as one value.
 Remote reports live separately in `scheduled_send_summaries`; they contain
@@ -210,9 +208,10 @@ delivery result.
 - Outbox shows local schedules and remote summaries. Local pre-delivery rows
   offer reschedule, cancel/restore, and overdue Send now. Remote rows show
   **Manage on MacBook** without mutation controls or a content preview.
-- Separate schedule status from visibility status: **Scheduled on this
-  computer; waiting to sync** is a valid combination. Ordinary immediate sends
-  remain local and do not acquire summary records.
+- Separate schedule status (`Scheduled` / `Scheduled time missed`) from
+  visibility status (`Saved on this computer`, `Published to sync storage`,
+  `Visibility sync paused`, or `Waiting to sync visibility`). Ordinary
+  immediate sends remain local and do not acquire summary records.
 - Show explicit uncertain/unverifiable outcomes. Remote summaries do not
   trigger local sent-mail refreshes, queued-reply previews, follow-up completion,
   archive actions, or provider reconciliation.
@@ -220,55 +219,12 @@ delivery result.
   Escape behavior, focus restoration, save-on-close, and accessible announcements.
   Extend the demo client to simulate remote summaries and controlled time.
 
-## Compatibility and delivery sequence
+## Compatibility and verification
 
-1. **Persistence and contracts.** Add the installation identity, additive
-   migration, scheduling policy, native/client models, and demo support. Old
-   drafts and outbox rows retain their existing behavior. Ownership and status
-   reports are excluded from settings exports; keep the export format unchanged.
-2. **Native scheduler.** Implement queue/reschedule/cancel, conditional claims,
-   recovery/resume/exit behavior, and atomic owner report recording. Complete
-   deterministic delivery and crash coverage before exposing real scheduled send.
-3. **Visibility replication.** Add the summary entity, strict validation,
-   projection, group binding, backlog repair, and combined read API. Verify
-   two-device isolation and failed/reordered publication behavior.
-4. **Composer and Outbox.** Add the picker, local management, peer visibility,
-   timing and freshness wording, palette actions, and demo fixtures. Preserve
-   ordinary sending and existing correspondence side effects.
-5. **Release.** Cross-device sync's data boundary and correspondence guidance
-   describe the feature. The application version is kept identical across
-   `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the
-   `threestrands` entry in `src-tauri/Cargo.lock`. The feature shipped in
-   0.98.1; the shortcut addition bumps the patch version to 0.98.2.
-
-New sync entity variants currently make snapshots unreadable to older builds.
-Use the existing documented update-all-devices behavior, preserve old snapshot
-reading in new builds, and provide an actionable compatibility message. Test
-the old reader's rejection before any partial merge. Do not reset groups or
-silently discard unknown entities to ship this feature. All devices sharing
-scheduled-send summaries must run **0.98.1 or later**.
-
-## Automated acceptance coverage
-
-Extend the existing correspondence, migration/recovery, sync, composer, and
-Outbox test suites rather than replacing their contracts.
-
-| Area | Required cases |
-| --- | --- |
-| Timing | Before/exactly at/after target; exact grace boundary and beyond; authorization crossing the boundary; clock jumps; future and elapsed restart/resume; overdue confirmation |
-| Timezones | DST gap and repeated time; selected offset; travel/system zone change; peer display in a different zone |
-| Ownership | Two running computers produce exactly one provider call; remote summary never creates local payload; forged command owner rejected; missing/mismatched identity; restored SQLite on another installation |
-| Races | Repeated schedule submits once; reschedule/cancel versus claim; stale revisions; stop before dispatch, after acceptance, and before local acknowledgement |
-| Uncertainty | No automatic resend; provider-specific reconciliation and unverifiable outcomes preserved; a reported success never implies recipient delivery |
-| Persistence | Previous-schema exports/drafts/outbox fixtures unchanged; future timestamp preserved; ordinary undo grace preserved; scheduled work does not block exit; referenced attachments retained |
-| Sync | Two-device create/reschedule/cancel/send reports; peer without credentials/account metadata; delayed, repeated, reordered, relayed snapshots; conflicts cannot grant sending permission; later owner update supersedes stale history |
-| Sync lifecycle | Connector failure during delivery; atomic local/report failure; disable/re-enable; leave/rejoin with new roster ID; different-group privacy; revoked/removed peer with stale status |
-| Data boundary | Reject extra fields and invalid values; no body/HTML/recipients/Bcc/attachment locators/raw errors/credentials in summary, snapshot, logs, or settings transfer |
-| UI | Save before schedule; picker and palette keyboard flows; local versus peer controls; deduplication/counts; stale-status wording; ordinary Send/undo/reply previews/follow-up/archive behavior unchanged |
-| Compatibility | New build imports preceding snapshot and schema; preceding reader rejects new entity without partial merge; update guidance; retained terminal reports |
-
-Run `pnpm test`, `pnpm test:e2e`, `pnpm build`, `cargo test` in `src-tauri`,
-and the affected sync workspace crate tests. Use fake providers, temporary
-databases/connectors, controlled clocks, and failure injection; do not send
-real email as part of agent validation. The developer owns running-app and
-look-and-feel checks, per `AGENTS.md`.
+- All devices sharing `EntityType::ScheduledSendSummary` must run **0.98.1 or
+  later**; older snapshots import cleanly, while older readers reject newer
+  entity types without partial merges.
+- Follow `AGENTS.md` for testing (`pnpm test`, `pnpm test:e2e`, `cargo test` in
+  `src-tauri`, and `sync-protocol` tests) and changelog updates (`changes/` +
+  `pnpm release`; never bump versions manually). Live-account and sleep/wake
+  checks stay with the developer.

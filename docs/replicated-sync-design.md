@@ -4,17 +4,21 @@
 anchors key rotations so a recovery-phrase join can trust them (see
 [Recovery-phrase joins](#recovery-phrase-joins)).
 **Date:** 2026-09-23
-**Scope:** `crates/sync-core`, `crates/sync-envelope`, `src-tauri/src/db/sync_state.rs`,
-`src-tauri/src/replicated_sync.rs`, `src-tauri/src/enrollment/`
+**Scope:** `crates/sync-core`, `crates/sync-envelope`, `crates/sync-protocol`,
+`crates/sync-transport`, `src-tauri/src/db/sync_state.rs`,
+`src-tauri/src/replicated_sync.rs`, `src-tauri/src/sync_projection.rs`,
+`src-tauri/src/sync_connectors.rs`, `src-tauri/src/sync_key_store.rs`,
+`src-tauri/src/sync_policy.rs`, `src-tauri/src/sync_sim.rs`,
+`src-tauri/src/enrollment/`
 
 This replaces the event-log design, protocol versions 1 and 2, and the
 compaction plan that went with it. In that design each device published an
 append-only event log. Readers walked it, and it would have needed
 snapshots, acks, a 30-day offline horizon, pruning and tombstone expiry to
-stay bounded. The synchronized data is small (tasks, snippets, Split Inboxes,
-preferences, account metadata), so a log was more machinery than the data
-needed. Enrollment, keys, connectors and the envelope format carry over
-unchanged.
+stay bounded. The synchronized data is structured state (tasks, notes, contacts,
+snippets, Split Inboxes, preferences, account metadata, snoozes, and later
+additions), so a log was more machinery than the data needed. Enrollment, keys,
+connectors and the envelope format carry over unchanged.
 
 ## Model
 
@@ -238,7 +242,7 @@ use the merge rules above.
   effect. A merge winner alone provides neither guarantee.
 
 IMAP structural edits use account-scoped ownership with explicit
-desktop-to-desktop handoff. [IMAP cross-device edits](imap-native-labels.md#cross-device-edits)
+desktop-to-desktop handoff. [IMAP cross-device edits](imap-gmail-extensions.md#cross-device-edits)
 
 Send Later keeps each message on the scheduling installation. Its keychain
 identity works independently of sync enrollment, and peers see status reports
@@ -354,11 +358,6 @@ A connector holds about one snapshot per device, plus control objects.
   further than one epoch past the tip looks like a key change that hasn't
   arrived, so the join waits. Anyone who can write to the storage can
   equally delete the group's files, so this adds no new denial of service.
-
-- **Concurrent rotations** by two devices both claim the next epoch number,
-  and each device keeps one key per epoch. The harness avoids this case. It
-  needs its own fix, for example a deterministic tie-break plus a follow-up
-  rotation.
 - **Whole-state republishing:** every change reseals and re-uploads the whole
   snapshot. That is fine for kilobytes to a few megabytes, which is why
   compose drafts moved to the mail server in 0.149.0 instead of riding in
@@ -379,6 +378,8 @@ A connector holds about one snapshot per device, plus control objects.
 - **Deleted data at the provider:** deleted data leaves the snapshots, but
   provider version history (S3 versioning, cloud-drive trash, other IPFS
   pins) keeps old copies until it expires.
-- **Separate groups on one connector:** each group's devices refetch the
-  other group's rotations every sweep. This is harmless but wasteful, and the
-  setup is discouraged.
+
+*(Resolved since initial design: concurrent rotation collisions are settled via
+`must_rotate_after_collision` / `ControlObject::RotateToResolve` and tested in
+`sync_sim.rs`; unverifiable objects from another group on a shared connector are
+backed off and ignored after 7 days by `enrollment/deferred.rs`.)*

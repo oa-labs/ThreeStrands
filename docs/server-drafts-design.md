@@ -40,6 +40,8 @@ email can't hold.
     for the network or the account is offline.
   - **Draft saved · Couldn't sync** after a permanent error,
     with the reason available, and the draft kept locally.
+  - **Draft saved · Also changed in another app** when a push detects a
+    conflicting server edit (`src/useDraftAutosave.ts`).
 - Drafts created or edited in another app appear in **Drafts** and can be
   opened, edited, sent, and discarded from ThreeStrands.
 - Sending or discarding a draft removes it from the server. A message waiting
@@ -67,15 +69,17 @@ that could leave the device:
 
 | Column | Meaning |
 | --- | --- |
-| `server_id` | Gmail draft ID, or `NULL` before the first push. IMAP will store the mailbox UID of the current copy. |
+| `server_id` | Gmail draft ID, `UIDVALIDITY:UID` for IMAP, or `NULL` before the first push. |
+| `sender` | Recorded sender address (`to_v122`) so alias-domain `Message-ID`s reconstruct across pushes and deletions (fallback `@threestrands.local`). |
 | `pushed_revision` | Latest local revision the server has confirmed. |
 | `pending_since`, `due_at` | When the oldest unpushed edit was saved, and when the next push or retry runs. |
 | `state`, `error`, `attempts` | `pending`, `retrying`, `failed`, or `saved`, with the reason and the backoff count. |
 | `server_version` | The server copy's version this device last wrote or read (Gmail's message ID, which changes on every edit). A different version means an edit made elsewhere. |
 | `conflict` | The server's version, held as a draft, when both sides changed. Pushes stop until the user picks one. |
 
-The `Message-ID` isn't stored: it is `draft-<draft id>@<domain>`, the same on
-every device, so a pulled copy carrying it maps back to the same local draft.
+The deterministic `Message-ID` (`draft-<draft id>@<domain>`) and `sender`
+(`draft_server_links` / `draft_server_deletions`, migration `to_v122`) let a
+pulled copy map back to the same local draft across devices.
 Server copies waiting to be deleted are rows in `draft_server_deletions`.
 
 A draft is "synced" when `pushed_revision == revision`.
@@ -83,11 +87,12 @@ A draft is "synced" when `pushed_revision == revision`.
 ### Push queue
 
 A native queue, modelled on the Outbox and the label mutation queue, pushes
-local revisions to the provider:
+local revisions to the provider (`src-tauri/src/draft_push.rs`):
 
-- **Triggers:** 5 seconds after the last save with no further edits, composer
-  close, app quit (best effort, bounded wait), and reconnect. Repeated saves
-  coalesce; only the newest revision is pushed.
+- **Triggers:** 5 seconds (`DRAFT_PUSH_DELAY_MS`) after the last save with no
+  further edits—capped at 60 seconds (`DRAFT_PUSH_MAX_WAIT_MS`) during
+  continuous typing—plus composer close, app quit (`EXIT_PUSH_TIMEOUT` 5s),
+  and reconnect. Repeated saves coalesce; only the newest revision is pushed.
 - **One push per draft at a time.** A push carries the revision it was built
   from. Its result never overwrites newer local edits, matching the autosave
   rule.
@@ -104,10 +109,10 @@ local revisions to the provider:
 
 ### Server message
 
-Pushes need a variant of `build_mime` ([correspondence/mime.rs](../src-tauri/src/correspondence/mime.rs))
-that builds a draft rather than a send:
+Pushes use `build_draft_mime` ([correspondence/mime.rs](../src-tauri/src/correspondence/mime.rs))
+to build a draft rather than a send:
 
-- No recipients is valid. `build_mime` currently refuses that.
+- No recipients is valid (`build_draft_mime` permits empty recipients, unlike `build_mime`).
 - No Bcc stripping: the draft keeps Bcc so it survives a round trip. Sending
   still strips it as it does today.
 - `Message-ID` is `serverMessageId`, stable across pushes. The send path keeps
@@ -130,10 +135,13 @@ that builds a draft rather than a send:
 - **Delete:** `drafts.delete`. Sending keeps the current send path and then
   deletes the server draft. Using `drafts.send` would change send undo,
   scheduling, and Outbox behavior, so it stays out of scope.
-- **Pull:** `drafts.list` every minute per account, and right away when the
-  window comes to the front. Only drafts whose version changed are fetched,
-  with `format=raw`. Before each push, a `format=minimal` read checks the
-  version, so an edit made since the last pull is never overwritten.
+- **Pull:** `drafts.list` every minute per account (`DRAFT_PULL_INTERVAL_MS`),
+  and on window focus (bounded by `FOCUS_PULL_MIN_INTERVAL_MS` = 15s, with
+  backoff up to `MAX_DRAFT_PULL_BACKOFF_MS` = 5 min and
+  `MAX_IMPORTED_BODY_BYTES` = 2 MiB in `src-tauri/src/draft_pull.rs`). Only
+  drafts whose version changed are fetched, with `format=raw`. Before each
+  push, a `format=minimal` read checks the version, so an edit made since the
+  last pull is never overwritten.
 
 ### IMAP
 
@@ -194,7 +202,7 @@ When a server draft changes and the change didn't come from our own push
 | `from` | `From` header | Matched against the account's sending identities, otherwise the account address. |
 | `signature` | Rendered into the body | Treated as body text with no structured signature, so it is never added twice. ThreeStrands does not try to detect and strip signatures. |
 | `forwardedContent` | Rendered into the body | Treated as body text. |
-| `followUpTaskId` | Not carried | Local only. |
+| `followUpTaskId`, `completesTaskId` | Not carried | Local only. |
 | `attachments` | Full MIME parts | Imported as attachments of the local draft. |
 
 Edits made only in ThreeStrands keep every field locally. The loss happens only
@@ -223,8 +231,8 @@ full fidelity. Without it, they get the "imported" column above.
 
 Every pushed revision reaches the mail provider, including drafts that are
 later abandoned. That is how drafts work in every mail app, and the sent
-message reaches the provider anyway. [features.md](features.md) and the site
-docs must say so in place of the current "not synchronized with Gmail Drafts".
+message reaches the provider anyway. The published user docs in
+[compose](../site/docs/compose.md) document this behavior.
 No ThreeStrands-specific data goes into server headers.
 
 ## Phasing
@@ -239,7 +247,7 @@ No ThreeStrands-specific data goes into server headers.
    expunge behavior against the primary account.
 5. **Optional:** draft metadata entity.
 
-Each phase bumps the minor version and gets a changelog entry.
+Each shipped user-visible change adds a `changes/` entry per `AGENTS.md`.
 
 ## Testing
 
@@ -283,7 +291,9 @@ Decided 2026-10-20.
   confirmation says how many unsent draft edits will be lost and lets the user
   cancel. **Remove on all devices** follows the same rule: removing an account
   from ThreeStrands never deletes mail or drafts on the server.
-- **The push delay is a fixed 5 seconds,** not a setting. It is a named
-  constant next to `AUTOSAVE_DEBOUNCE_MS`, with tests below, at, and above the
-  delay. It is in the range common mail apps use. Composer close and app quit
-  push right away, so the delay only matters while typing.
+- **The push delay is a fixed 5 seconds,** not a setting. `DRAFT_PUSH_DELAY_MS`
+  lives in `src-tauri/src/draft_push.rs` (alongside `DRAFT_PUSH_MAX_WAIT_MS` =
+  60s; frontend autosave uses `AUTOSAVE_DEBOUNCE_MS` = 300ms in
+  `src/useDraftAutosave.ts`), with tests below, at, and above the delay. It is
+  in the range common mail apps use. Composer close and app quit push right away,
+  so the delay only matters while typing.

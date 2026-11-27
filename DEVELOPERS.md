@@ -11,10 +11,9 @@ The detailed product definition, architecture, and delivery roadmap are in
 ## Implementation status
 
 The browser development build runs against deterministic fixtures. The native
-Tauri build uses local SQLite through the same typed client interface. See
-[`docs/features.md`](docs/features.md) for current capabilities, known
-limitations, and the live-account release checks. Design notes are in
-[`docs/`](docs/); completed plans are in [`docs/archive/`](docs/archive/).
+Tauri build uses local SQLite through the same typed client interface. User
+documentation lives in [`site/docs/`](site/docs/) and live-account release
+checks are listed below; architecture and design notes live in [`docs/`](docs/).
 
 ## Getting started
 

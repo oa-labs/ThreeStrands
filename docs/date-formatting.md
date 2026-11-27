@@ -21,8 +21,10 @@ Intentional specialized formats:
 - Today/Calendar headings, daily note titles, and picker accessibility labels
   use longer dates and weekdays for orientation. Calendar grids may omit a
   repeated month/year when their heading supplies it.
-- Task and upcoming-event lists use Today/Tomorrow/Yesterday or a nearby
-  weekday where useful, then fall back to the shared compact date.
+- Task, upcoming-event, and note lists use Today/Tomorrow/Yesterday or a nearby
+  weekday where useful (`formatRelativeDateTime` formats today as
+  **Today at \<time\>** and yesterday as **Yesterday at \<time\>**, falling back
+  to `formatDateTime`), then fall back to the shared compact date.
 - Event times, proposed slots, and scheduled sending use the event or selected
   timezone. All-day/date-only values remain calendar dates, without an invented
   time. Birthdays may omit an unknown birth year.

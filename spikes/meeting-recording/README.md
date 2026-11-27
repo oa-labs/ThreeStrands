@@ -2,7 +2,7 @@
 
 Stage 0 of [the meeting recording plan](../../docs/meeting-recording-plan.md).
 The findings are in
-[docs/archive/meeting-recording-spike-findings.md](../../docs/archive/meeting-recording-spike-findings.md).
+[docs/meeting-recording-spike-findings.md](../../docs/meeting-recording-spike-findings.md).
 
 This crate is its own Cargo workspace with its own lockfile, so none of its
 dependencies enter the app's dependency graph, `cargo vet`, or CI. Nothing
