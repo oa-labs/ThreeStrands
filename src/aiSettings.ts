@@ -134,7 +134,7 @@ export type AiRequestConfig = {
 export type AiReasoning = "default" | "off";
 
 /** The AI work the app sends to a provider, each served by one model tier. */
-export type AiModelUse = "summary" | "replyDraft" | "draftReview" | "contactEnrichment" | "actionExtraction" | "brief" | "threadChat" | "findTimes" | "meetingPrep";
+export type AiModelUse = "summary" | "replyDraft" | "draftReview" | "contactEnrichment" | "actionExtraction" | "brief" | "threadChat" | "findTimes" | "meetingPrep" | "meetingRecap";
 
 /**
  * Which model serves each use. Reading and copying (summaries, reply drafts,
@@ -153,6 +153,7 @@ export const AI_MODEL_TIERS: Record<AiModelUse, "fast" | "reasoning"> = {
   threadChat: "reasoning",
   findTimes: "reasoning",
   meetingPrep: "reasoning",
+  meetingRecap: "reasoning",
 };
 
 /**

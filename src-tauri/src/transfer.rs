@@ -1500,6 +1500,46 @@ mod tests {
     }
 
     #[test]
+    fn recording_settings_and_recordings_stay_on_the_device() {
+        use crate::recording::settings::{KeepAudio, RecordingSettings, TranscriptionModelChoice};
+        let database = Database::open_memory();
+        let export = |database: &Database| {
+            let mut json = serde_json::to_value(
+                build_export_payload(database, payload().preferences).unwrap(),
+            )
+            .unwrap();
+            json.as_object_mut().unwrap().remove("exportedAt");
+            json.to_string()
+        };
+        let before = export(&database);
+        database
+            .set_recording_settings(&RecordingSettings {
+                record_meetings: true,
+                transcription_model: TranscriptionModelChoice::Accurate,
+                keep_audio: KeepAudio::UntilDeleted,
+                summarize_with_ai: true,
+                consent_acknowledged: true,
+                ..Default::default()
+            })
+            .unwrap();
+        let after = export(&database);
+        assert_eq!(before, after, "recording settings changed the export");
+        for key in [
+            "recordMeetings",
+            "transcriptionModel",
+            "keepAudio",
+            "offerToRecord",
+            "remindToTell",
+            "summarizeWithAi",
+            "includeMyNotes",
+            "attachTranscript",
+            "consentAcknowledged",
+        ] {
+            assert!(!after.contains(key), "{key}");
+        }
+    }
+
+    #[test]
     fn settings_exports_exclude_notes() {
         let database = Database::open_memory();
         database

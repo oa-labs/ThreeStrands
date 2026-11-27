@@ -123,6 +123,7 @@ import type {
   ImapConnectionUpdate,
   SendingIdentity,
   SendingIdentityInput,
+  RecordingSettings,
 } from "../domain";
 import type { AiProvider, AiReasoning } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
@@ -449,6 +450,9 @@ export interface MailClient extends CorrespondenceClient {
   listNoteTasks(): Promise<NoteTaskRecord[]>;
   patchNoteItem(id: string, marker: string, expected: string, checked?: boolean, task?: boolean): Promise<Note>;
   noteBacklinks(reference: NoteReference): Promise<NoteBacklink[]>;
+  /** Meeting Recording settings; device-local, so never part of settings transfer. */
+  recordingSettings(): Promise<RecordingSettings>;
+  setRecordingSettings(settings: RecordingSettings): Promise<void>;
   /** Local context for preparing one meeting; `mailScope` overrides the calendar's own mail account. */
   meetingContext(reference: NoteReference, mailScope?: string[] | null): Promise<MeetingContext>;
   /** Native preview of the bounded local sources for an AI meeting preparation brief. */
@@ -796,6 +800,8 @@ const tauriClient: MailClient = {
   listNoteTasks: () => read("list_note_tasks"),
   patchNoteItem: (id, marker, expected, checked, task) => complete("patch_note_item", { id, marker, expected, checked: checked ?? null, task: task ?? null }),
   noteBacklinks: (reference) => read("note_backlinks", { reference }),
+  recordingSettings: () => read("recording_settings"),
+  setRecordingSettings: (settings) => complete("set_recording_settings", { settings }),
   meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),
   meetingSourcePreview: (reference, mailScope = null, selection = null) => read("meeting_source_preview", { reference, mailScope, selection }),
   prepareMeetingBrief: (reference, mailScope, selection, expectedPayloadRevision, provider, model, endpoint, reasoning = "default") =>

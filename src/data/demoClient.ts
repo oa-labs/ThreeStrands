@@ -2,7 +2,7 @@ import { collapseQuotedHistoryText } from "../quotedHistory";
 import { createDemoInboxAgents } from "./demoInboxAgents";
 import { previewScheduleChoices } from "../scheduleTimes";
 import { isHolidayCalendar } from "../calendarAvailability";
-import type { FindAvailabilityRequest } from "../domain";
+import type { FindAvailabilityRequest, RecordingSettings } from "../domain";
 import type { CreatedScheduleEvent, SentInRange } from "../domain";
 import { demoSignatureClient } from "./demoSignatures";
 import { createDemoNotes } from "./demoNotes";
@@ -81,6 +81,19 @@ import type {
 export { DEMO_ACCOUNT_ID };
 
 /** Builds an in-memory browser-preview client that starts from its own copy of `dataset`. */
+/** Matches `RecordingSettings::default()` in Rust. */
+const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
+  recordMeetings: false,
+  transcriptionModel: "fast",
+  keepAudio: "days7",
+  offerToRecord: true,
+  remindToTell: true,
+  summarizeWithAi: false,
+  includeMyNotes: false,
+  attachTranscript: false,
+  consentAcknowledged: false,
+};
+
 export function createDemoClient(dataset: DemoDataset): MailClient {
   const seed = structuredClone(dataset);
   let accounts = seed.accounts;
@@ -116,6 +129,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   };
   const snoozes = new Map<string, import("../domain").ConversationSnooze>();
   let snippets = seed.snippets;
+  let recordingSettings: RecordingSettings = { ...DEFAULT_RECORDING_SETTINGS };
   let contacts = seed.contacts;
   const suppressedContacts = new Set<string>();
   /** A saved profile for `id`, saving a `derived:<email>` contact first. */
@@ -2132,6 +2146,12 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async listSplitInboxPage(splitInboxId, offset, limit): Promise<ThreadPage> {
       const items = visibleSplitInbox(splitInboxId);
       return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
+    },
+    async recordingSettings() {
+      return { ...recordingSettings };
+    },
+    async setRecordingSettings(settings) {
+      recordingSettings = { ...DEFAULT_RECORDING_SETTINGS, ...settings };
     },
     ...demoSignatureClient,
     ...demoNotes,

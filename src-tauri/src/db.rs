@@ -57,6 +57,7 @@ pub(crate) use note_additions::{AddToNoteRequest, NoteAddition};
 pub(crate) use note_entities::{MeetingCapture, NoteDocument, NoteTask};
 mod outbox;
 pub(crate) mod receipts;
+pub(crate) mod recordings;
 mod recovery;
 pub(crate) mod replicated_sync;
 mod scheduled_send;

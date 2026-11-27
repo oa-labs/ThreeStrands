@@ -123,6 +123,7 @@ describe("AI provider preferences", () => {
       // Resolving "next week" and stated hours into dates benefits from reasoning.
       findTimes: "reasoning",
       meetingPrep: "reasoning",
+      meetingRecap: "reasoning",
     });
     saveAiProvider("fireworks");
     saveAiModel("example/reasoning");

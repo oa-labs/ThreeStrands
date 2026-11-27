@@ -23,6 +23,27 @@ describe("demoClient account nicknames", () => {
   });
 });
 
+describe("demoClient recording settings", () => {
+  it("starts at the native defaults and round-trips a change", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    expect(await client.recordingSettings()).toEqual({
+      recordMeetings: false,
+      transcriptionModel: "fast",
+      keepAudio: "days7",
+      offerToRecord: true,
+      remindToTell: true,
+      summarizeWithAi: false,
+      includeMyNotes: false,
+      attachTranscript: false,
+      consentAcknowledged: false,
+    });
+    const settings = { ...(await client.recordingSettings()), recordMeetings: true, keepAudio: "untilDeleted" as const };
+    await client.setRecordingSettings(settings);
+    expect(await client.recordingSettings()).toEqual(settings);
+    expect(await createDemoClient(defaultDemoDataset()).recordingSettings()).toMatchObject({ recordMeetings: false });
+  });
+});
+
 describe("demoClient split inbox exclusion", () => {
   afterEach(async () => {
     const splits = await demoClient.listSplitInboxes();

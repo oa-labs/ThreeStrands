@@ -94,6 +94,14 @@ describe("native account requests", () => {
     expect(invoke).toHaveBeenLastCalledWith("rank_contact_group_candidates", { groupId: "team", selectedIds: ["alice"], emails: ["new@example.com"] });
   });
 
+  it("reads and saves device-local recording settings through their own commands", async () => {
+    await client.recordingSettings();
+    expect(invoke).toHaveBeenLastCalledWith("recording_settings", undefined);
+    const settings = { recordMeetings: true, transcriptionModel: "accurate" as const, keepAudio: "days30" as const, offerToRecord: true, remindToTell: false, summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true };
+    await client.setRecordingSettings(settings);
+    expect(invoke).toHaveBeenLastCalledWith("set_recording_settings", { settings });
+  });
+
   it("reads meeting preparation context with an optional mail scope", async () => {
     const reference = { version: 1 as const, kind: "event" as const, id: "evt", account: "me@example.com", calendar: "work" };
     await client.meetingContext(reference);

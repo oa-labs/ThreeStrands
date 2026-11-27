@@ -1849,3 +1849,47 @@ export type InboxAgentsSnapshot = {
   activeRuns: InboxAgentRun[];
   proposals: InboxAgentProposal[];
 };
+
+/** Meeting Recording settings. Device-local: never synced or exported. */
+export type TranscriptionModelChoice = "fast" | "accurate";
+export type KeepAudio = "days7" | "days30" | "untilDeleted" | "untilTranscribed";
+export type RecordingSettings = {
+  recordMeetings: boolean;
+  transcriptionModel: TranscriptionModelChoice;
+  keepAudio: KeepAudio;
+  offerToRecord: boolean;
+  remindToTell: boolean;
+  summarizeWithAi: boolean;
+  includeMyNotes: boolean;
+  attachTranscript: boolean;
+  consentAcknowledged: boolean;
+};
+
+export type RecordingTrackName = "mic" | "system";
+export type RecordingTrackStatus = { track: RecordingTrackName; state: "active" | "restarting" | "failed" | "unavailable" };
+export type RecordingStopReason = "lengthLimit" | "lowDisk" | "allTracksFailed";
+export type SystemAudioSupport = { kind: "available" } | { kind: "needsMacos"; major: number; minor: number } | { kind: "unsupported" };
+export type RecordingStatus = {
+  state: "idle" | "recording" | "paused";
+  recordingId: string | null;
+  title: string | null;
+  eventRef: import("./noteEntities").NoteReference | null;
+  elapsedMs: number;
+  tracks: RecordingTrackStatus[];
+  systemAudio: SystemAudioSupport;
+  lastStopReason: RecordingStopReason | null;
+};
+
+export type MeetingRecordingState = "recording" | "interrupted" | "recorded" | "transcribing" | "transcribed" | "failed";
+/** A recording as listed under its meeting. */
+export type MeetingRecording = {
+  id: string;
+  eventRef: import("./noteEntities").NoteReference | null;
+  title: string;
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number;
+  state: MeetingRecordingState;
+  error: string | null;
+  tracks: { track: RecordingTrackName; state: "active" | "failed" | "unavailable"; deviceName: string | null; firstFrameOffsetMs: number | null; error: string | null }[];
+};

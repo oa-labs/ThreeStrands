@@ -70,6 +70,7 @@ const MIGRATIONS: &[Migration] = &[
     (123, to_v123),
     (124, to_v124),
     (125, to_v125),
+    (126, to_v126),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1604,6 +1605,61 @@ fn to_v120(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v126(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Meeting recordings and their transcripts. Device-local by design: none
+    // of these tables replicate, sync, or enter settings transfer, because
+    // they hold audio of other people. `event_target` is the event
+    // occurrence's `NoteReference::target()` (its href without contact or
+    // series), the key `list_recordings` looks an occurrence up by.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS meeting_recordings (
+             id TEXT PRIMARY KEY,
+             event_ref TEXT,
+             event_target TEXT,
+             title TEXT NOT NULL,
+             started_at TEXT NOT NULL,
+             ended_at TEXT,
+             duration_ms INTEGER NOT NULL DEFAULT 0,
+             state TEXT NOT NULL CHECK (state IN
+                 ('recording','interrupted','recorded','transcribing','transcribed','failed')),
+             engine TEXT,
+             model TEXT,
+             audio_dir TEXT NOT NULL,
+             audio_deleted_at TEXT,
+             recap_json TEXT,
+             reviewed_operation_id TEXT,
+             error TEXT
+         );
+         CREATE INDEX IF NOT EXISTS meeting_recordings_by_event
+             ON meeting_recordings(event_target, started_at DESC);
+         CREATE TABLE IF NOT EXISTS meeting_recording_tracks (
+             recording_id TEXT NOT NULL REFERENCES meeting_recordings(id) ON DELETE CASCADE,
+             track TEXT NOT NULL CHECK (track IN ('mic','system')),
+             state TEXT NOT NULL CHECK (state IN ('active','failed','unavailable')),
+             device_name TEXT,
+             first_frame_offset_ms INTEGER,
+             error TEXT,
+             PRIMARY KEY (recording_id, track)
+         );
+         CREATE TABLE IF NOT EXISTS meeting_recording_segments (
+             recording_id TEXT NOT NULL REFERENCES meeting_recordings(id) ON DELETE CASCADE,
+             seq INTEGER NOT NULL,
+             track TEXT NOT NULL CHECK (track IN ('mic','system')),
+             start_ms INTEGER NOT NULL,
+             end_ms INTEGER NOT NULL,
+             text TEXT NOT NULL,
+             dropped_as_echo INTEGER NOT NULL DEFAULT 0 CHECK (dropped_as_echo IN (0,1)),
+             PRIMARY KEY (recording_id, seq)
+         );
+         CREATE TABLE IF NOT EXISTS meeting_recording_settings (
+             id INTEGER PRIMARY KEY CHECK (id = 1),
+             settings_json TEXT NOT NULL
+         );",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
 fn to_v125(tx: &rusqlite::Transaction) -> Result<(), String> {
     // Where the user placed a task in its task board column. Tasks from
     // before this version have none and show unplaced.
@@ -2289,6 +2345,11 @@ mod tests {
         "index:operation_receipts_by_time",
         "table:draft_handoffs",
         "index:draft_handoffs_by_time",
+        "table:meeting_recordings",
+        "index:meeting_recordings_by_event",
+        "table:meeting_recording_tracks",
+        "table:meeting_recording_segments",
+        "table:meeting_recording_settings",
     ];
 
     #[test]
@@ -2491,6 +2552,52 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kept, ("Hello".to_string(), 1));
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
+        // Running it again changes nothing.
+        super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v126_adds_device_local_recording_tables_and_keeps_existing_data() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE meeting_recording_segments; DROP TABLE meeting_recording_tracks;
+                 DROP TABLE meeting_recordings; DROP TABLE meeting_recording_settings;
+                 PRAGMA user_version=125;
+                 INSERT INTO tasks(id,account_id,title,kind,due_kind,status,created_at,updated_at)
+                 VALUES('t-rec','you@example.com','Plan','action','none','open','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let title: String = connection
+            .query_row("SELECT title FROM tasks WHERE id='t-rec'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(title, "Plan");
+        for table in [
+            "meeting_recordings",
+            "meeting_recording_tracks",
+            "meeting_recording_segments",
+            "meeting_recording_settings",
+        ] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, 0, "{table}");
+        }
+        // The state checks refuse unknown values.
+        assert!(connection
+            .execute(
+                "INSERT INTO meeting_recordings(id,title,started_at,state,audio_dir)
+                 VALUES('r','t','2026-01-01T00:00:00Z','paused','d')",
+                [],
+            )
+            .is_err());
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();

@@ -61,6 +61,7 @@ mod notes;
 mod notes_export;
 mod notes_import;
 mod provider;
+mod recording;
 mod replicated_sync;
 mod s3_transport;
 mod schema;
@@ -1838,6 +1839,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::notes::note_task_warnings,
         commands::notes::patch_note_item,
         commands::notes::note_backlinks,
+        commands::recordings::recording_settings,
+        commands::recordings::set_recording_settings,
         commands::meetings::meeting_context,
         commands::meetings::meeting_source_preview,
         commands::meetings::prepare_meeting_brief,

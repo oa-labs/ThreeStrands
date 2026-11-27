@@ -20,6 +20,7 @@ pub enum Feature {
     Contact,
     FindTimes,
     MeetingPrep,
+    MeetingRecap,
     Connection,
     AgentStaleReads,
     AgentResolvedSweeper,
@@ -37,6 +38,7 @@ impl Feature {
             Self::Contact => "contact",
             Self::FindTimes => "find_times",
             Self::MeetingPrep => "meeting_prep",
+            Self::MeetingRecap => "meeting_recap",
             Self::Connection => "connection",
             Self::AgentStaleReads => "agent_stale_reads",
             Self::AgentResolvedSweeper => "agent_resolved_sweeper",
@@ -55,6 +57,7 @@ impl Feature {
             Self::Contact => 2,
             Self::FindTimes => 1,
             Self::MeetingPrep => 1,
+            Self::MeetingRecap => 1,
             Self::Connection => 1,
             Self::AgentStaleReads | Self::AgentResolvedSweeper | Self::AgentAgingReplies => 1,
         }

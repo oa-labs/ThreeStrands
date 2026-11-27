@@ -1,0 +1,585 @@
+//! Meeting recordings: one row per recording with its tracks, plus the
+//! device-local Meeting Recording settings. Nothing here replicates or enters
+//! settings transfer. Transcript segments have their own table (transcription
+//! stage); deleting a recording cascades to tracks and segments.
+#![allow(dead_code)] // Stage 2 wires the recording service and commands to this layer.
+
+use super::{serialization_error, Database, DatabaseError, DbResult};
+use crate::note_entities::NoteReference;
+use crate::recording::capture::Track;
+use crate::recording::settings::RecordingSettings;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecordingState {
+    Recording,
+    Interrupted,
+    /// Stopped, waiting for transcription.
+    Recorded,
+    Transcribing,
+    Transcribed,
+    Failed,
+}
+
+impl RecordingState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Recording => "recording",
+            Self::Interrupted => "interrupted",
+            Self::Recorded => "recorded",
+            Self::Transcribing => "transcribing",
+            Self::Transcribed => "transcribed",
+            Self::Failed => "failed",
+        }
+    }
+
+    fn parse(value: &str) -> DbResult<Self> {
+        Ok(match value {
+            "recording" => Self::Recording,
+            "interrupted" => Self::Interrupted,
+            "recorded" => Self::Recorded,
+            "transcribing" => Self::Transcribing,
+            "transcribed" => Self::Transcribed,
+            "failed" => Self::Failed,
+            other => {
+                return Err(DatabaseError::corrupt(format!(
+                    "Unknown recording state {other}"
+                )))
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrackState {
+    Active,
+    Failed,
+    Unavailable,
+}
+
+impl TrackState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Failed => "failed",
+            Self::Unavailable => "unavailable",
+        }
+    }
+
+    fn parse(value: &str) -> DbResult<Self> {
+        Ok(match value {
+            "active" => Self::Active,
+            "failed" => Self::Failed,
+            "unavailable" => Self::Unavailable,
+            other => {
+                return Err(DatabaseError::corrupt(format!(
+                    "Unknown track state {other}"
+                )))
+            }
+        })
+    }
+}
+
+/// A recording to create, with the starting state of each of its tracks.
+pub struct NewRecording<'a> {
+    pub id: &'a str,
+    pub event_ref: Option<&'a NoteReference>,
+    pub title: &'a str,
+    pub started_at: &'a str,
+    pub audio_dir: &'a str,
+    pub tracks: &'a [(Track, TrackState)],
+}
+
+/// Fields of a track to change; `None` leaves a field as it is.
+#[derive(Debug, Default, Clone)]
+pub struct TrackPatch {
+    pub state: Option<TrackState>,
+    pub device_name: Option<String>,
+    /// Where the track's first audio sits on the recording's clock.
+    pub first_frame_offset_ms: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingRecordingTrack {
+    pub track: Track,
+    pub state: TrackState,
+    pub device_name: Option<String>,
+    pub first_frame_offset_ms: Option<i64>,
+    pub error: Option<String>,
+}
+
+/// A recording as the app lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingRecording {
+    pub id: String,
+    pub event_ref: Option<NoteReference>,
+    pub title: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub duration_ms: i64,
+    pub state: RecordingState,
+    pub error: Option<String>,
+    pub tracks: Vec<MeetingRecordingTrack>,
+}
+
+/// How an event occurrence is keyed: its reference without contact or series.
+fn event_target(reference: &NoteReference) -> DbResult<String> {
+    if reference.kind != "event" {
+        return Err(DatabaseError::invalid(
+            "A recording can only belong to an event",
+        ));
+    }
+    reference.target().map_err(DatabaseError::invalid)
+}
+
+fn tracks_of(connection: &Connection, id: &str) -> DbResult<Vec<MeetingRecordingTrack>> {
+    let mut statement = connection.prepare(
+        "SELECT track,state,device_name,first_frame_offset_ms,error
+         FROM meeting_recording_tracks WHERE recording_id=?1 ORDER BY track DESC",
+    )?;
+    let rows = statement.query_map([id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+        ))
+    })?;
+    let mut tracks = Vec::new();
+    for row in rows {
+        let (track, state, device_name, first_frame_offset_ms, error) = row?;
+        tracks.push(MeetingRecordingTrack {
+            track: Track::parse(&track)
+                .ok_or_else(|| DatabaseError::corrupt(format!("Unknown track {track}")))?,
+            state: TrackState::parse(&state)?,
+            device_name,
+            first_frame_offset_ms,
+            error,
+        });
+    }
+    Ok(tracks)
+}
+
+const RECORDING_COLUMNS: &str = "id,event_ref,title,started_at,ended_at,duration_ms,state,error";
+
+fn read_recording(connection: &Connection, row: &rusqlite::Row<'_>) -> DbResult<MeetingRecording> {
+    let id: String = row.get(0)?;
+    let event_ref: Option<String> = row.get(1)?;
+    let state: String = row.get(6)?;
+    Ok(MeetingRecording {
+        event_ref: event_ref
+            .map(|json| serde_json::from_str(&json).map_err(serialization_error))
+            .transpose()?,
+        title: row.get(2)?,
+        started_at: row.get(3)?,
+        ended_at: row.get(4)?,
+        duration_ms: row.get(5)?,
+        state: RecordingState::parse(&state)?,
+        error: row.get(7)?,
+        tracks: tracks_of(connection, &id)?,
+        id,
+    })
+}
+
+impl Database {
+    /// Creates a recording in the `recording` state with its tracks.
+    pub fn create_recording(&self, new: &NewRecording<'_>) -> DbResult<()> {
+        let (event_json, target) = match new.event_ref {
+            Some(reference) => (
+                Some(serde_json::to_string(reference).map_err(serialization_error)?),
+                Some(event_target(reference)?),
+            ),
+            None => (None, None),
+        };
+        self.with_transaction(|tx| {
+            tx.execute(
+                "INSERT INTO meeting_recordings(id,event_ref,event_target,title,started_at,state,audio_dir)
+                 VALUES(?1,?2,?3,?4,?5,'recording',?6)",
+                params![new.id, event_json, target, new.title, new.started_at, new.audio_dir],
+            )?;
+            for (track, state) in new.tracks {
+                tx.execute(
+                    "INSERT INTO meeting_recording_tracks(recording_id,track,state) VALUES(?1,?2,?3)",
+                    params![new.id, track.as_str(), state.as_str()],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn update_recording_track(
+        &self,
+        id: &str,
+        track: Track,
+        patch: &TrackPatch,
+    ) -> DbResult<()> {
+        self.with_connection(|c| {
+            let changed = c.execute(
+                "UPDATE meeting_recording_tracks SET
+                    state=COALESCE(?3,state),
+                    device_name=COALESCE(?4,device_name),
+                    first_frame_offset_ms=COALESCE(?5,first_frame_offset_ms),
+                    error=COALESCE(?6,error)
+                 WHERE recording_id=?1 AND track=?2",
+                params![
+                    id,
+                    track.as_str(),
+                    patch.state.map(TrackState::as_str),
+                    patch.device_name,
+                    patch.first_frame_offset_ms,
+                    patch.error
+                ],
+            )?;
+            if changed == 0 {
+                return Err(DatabaseError::NotFound("Recording track"));
+            }
+            Ok(())
+        })
+    }
+
+    pub fn set_recording_state(
+        &self,
+        id: &str,
+        state: RecordingState,
+        error: Option<&str>,
+    ) -> DbResult<()> {
+        self.with_connection(|c| {
+            let changed = c.execute(
+                "UPDATE meeting_recordings SET state=?2,error=?3 WHERE id=?1",
+                params![id, state.as_str(), error],
+            )?;
+            if changed == 0 {
+                return Err(DatabaseError::NotFound("Recording"));
+            }
+            Ok(())
+        })
+    }
+
+    /// Ends a recording: when it ended, how long it ran (pauses excluded),
+    /// and the state it ends in.
+    pub fn finish_recording(
+        &self,
+        id: &str,
+        ended_at: &str,
+        duration_ms: i64,
+        state: RecordingState,
+        error: Option<&str>,
+    ) -> DbResult<()> {
+        self.with_connection(|c| {
+            let changed = c.execute(
+                "UPDATE meeting_recordings SET ended_at=?2,duration_ms=?3,state=?4,error=?5 WHERE id=?1",
+                params![id, ended_at, duration_ms, state.as_str(), error],
+            )?;
+            if changed == 0 {
+                return Err(DatabaseError::NotFound("Recording"));
+            }
+            Ok(())
+        })
+    }
+
+    pub fn recording(&self, id: &str) -> DbResult<Option<MeetingRecording>> {
+        self.with_connection(|c| {
+            c.query_row(
+                &format!("SELECT {RECORDING_COLUMNS} FROM meeting_recordings WHERE id=?1"),
+                [id],
+                |row| Ok(read_recording(c, row)),
+            )
+            .optional()?
+            .transpose()
+        })
+    }
+
+    /// An event occurrence's recordings, newest first.
+    pub fn list_recordings(&self, event: &NoteReference) -> DbResult<Vec<MeetingRecording>> {
+        let target = event_target(event)?;
+        self.with_connection(|c| {
+            let mut statement = c.prepare(&format!(
+                "SELECT {RECORDING_COLUMNS} FROM meeting_recordings
+                 WHERE event_target=?1 ORDER BY started_at DESC, id DESC"
+            ))?;
+            let rows = statement.query_map([target], |row| Ok(read_recording(c, row)))?;
+            rows.map(|row| row?).collect()
+        })
+    }
+
+    /// Deletes a recording; its tracks and segments go with it.
+    pub fn delete_recording(&self, id: &str) -> DbResult<bool> {
+        self.with_connection(|c| {
+            Ok(c.execute("DELETE FROM meeting_recordings WHERE id=?1", [id])? > 0)
+        })
+    }
+
+    /// Startup crash recovery: a row still `recording` belongs to a process
+    /// that is gone. Returns how many were marked.
+    pub fn mark_interrupted_recordings(&self) -> DbResult<usize> {
+        self.with_connection(|c| {
+            Ok(c.execute(
+                "UPDATE meeting_recordings SET state='interrupted' WHERE state='recording'",
+                [],
+            )?)
+        })
+    }
+
+    /// The device-local settings; defaults when none were saved.
+    pub fn recording_settings(&self) -> DbResult<RecordingSettings> {
+        self.with_connection(|c| {
+            let json: Option<String> = c
+                .query_row(
+                    "SELECT settings_json FROM meeting_recording_settings WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match json {
+                Some(json) => {
+                    serde_json::from_str(&json).map_err(|e| DatabaseError::corrupt(e.to_string()))
+                }
+                None => Ok(RecordingSettings::default()),
+            }
+        })
+    }
+
+    pub fn set_recording_settings(&self, settings: &RecordingSettings) -> DbResult<()> {
+        let json = serde_json::to_string(settings).map_err(serialization_error)?;
+        self.with_connection(|c| {
+            c.execute(
+                "INSERT INTO meeting_recording_settings(id,settings_json) VALUES(1,?1)
+                 ON CONFLICT(id) DO UPDATE SET settings_json=excluded.settings_json",
+                [json],
+            )?;
+            Ok(())
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::recording::settings::KeepAudio;
+
+    fn event(id: &str) -> NoteReference {
+        NoteReference {
+            version: 1,
+            kind: "event".into(),
+            id: id.into(),
+            account: Some("you@example.com".into()),
+            calendar: Some("primary".into()),
+            note: None,
+            contact: None,
+            series: None,
+        }
+    }
+
+    fn create(database: &Database, id: &str, event_ref: Option<&NoteReference>, at: &str) {
+        database
+            .create_recording(&NewRecording {
+                id,
+                event_ref,
+                title: "Weekly Sync",
+                started_at: at,
+                audio_dir: "/audio/x",
+                tracks: &[
+                    (Track::Mic, TrackState::Active),
+                    (Track::System, TrackState::Unavailable),
+                ],
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_new_recording_has_its_tracks_and_updates_apply() {
+        let database = Database::open_memory();
+        create(&database, "r1", Some(&event("e1")), "2026-11-27T10:00:00Z");
+        let recording = database.recording("r1").unwrap().unwrap();
+        assert_eq!(recording.state, RecordingState::Recording);
+        assert_eq!(recording.event_ref, Some(event("e1")));
+        assert_eq!(recording.tracks.len(), 2);
+        database
+            .update_recording_track(
+                "r1",
+                Track::Mic,
+                &TrackPatch {
+                    device_name: Some("MacBook Mic".into()),
+                    first_frame_offset_ms: Some(120),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        database
+            .update_recording_track(
+                "r1",
+                Track::Mic,
+                &TrackPatch {
+                    state: Some(TrackState::Failed),
+                    error: Some("Device lost".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mic = &database.recording("r1").unwrap().unwrap().tracks;
+        let mic = mic.iter().find(|t| t.track == Track::Mic).unwrap();
+        assert_eq!(mic.state, TrackState::Failed);
+        assert_eq!(mic.device_name.as_deref(), Some("MacBook Mic"));
+        assert_eq!(mic.first_frame_offset_ms, Some(120));
+        assert_eq!(mic.error.as_deref(), Some("Device lost"));
+        assert!(matches!(
+            database.update_recording_track("nope", Track::Mic, &TrackPatch::default()),
+            Err(DatabaseError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn state_and_finish_are_written() {
+        let database = Database::open_memory();
+        create(&database, "r1", None, "2026-11-27T10:00:00Z");
+        database
+            .set_recording_state("r1", RecordingState::Failed, Some("No audio was recorded."))
+            .unwrap();
+        let failed = database.recording("r1").unwrap().unwrap();
+        assert_eq!(failed.error.as_deref(), Some("No audio was recorded."));
+        database
+            .finish_recording(
+                "r1",
+                "2026-11-27T10:30:00Z",
+                1_800_000,
+                RecordingState::Recorded,
+                None,
+            )
+            .unwrap();
+        let done = database.recording("r1").unwrap().unwrap();
+        assert_eq!(done.state, RecordingState::Recorded);
+        assert_eq!(done.ended_at.as_deref(), Some("2026-11-27T10:30:00Z"));
+        assert_eq!(done.duration_ms, 1_800_000);
+        assert_eq!(done.error, None);
+        assert!(database.recording("missing").unwrap().is_none());
+        assert!(matches!(
+            database.set_recording_state("missing", RecordingState::Failed, None),
+            Err(DatabaseError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn listing_finds_one_occurrence_newest_first_and_ignores_series_and_contact_differences() {
+        let database = Database::open_memory();
+        create(&database, "old", Some(&event("e1")), "2026-11-27T09:00:00Z");
+        create(&database, "new", Some(&event("e1")), "2026-11-27T11:00:00Z");
+        create(
+            &database,
+            "other",
+            Some(&event("e2")),
+            "2026-11-27T12:00:00Z",
+        );
+        create(&database, "none", None, "2026-11-27T13:00:00Z");
+        let mut with_series = event("e1");
+        with_series.series = Some("weekly".into());
+        let ids: Vec<String> = database
+            .list_recordings(&with_series)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(ids, ["new", "old"]);
+        let mut not_event = event("e1");
+        not_event.kind = "note".into();
+        assert!(database.list_recordings(&not_event).is_err());
+    }
+
+    #[test]
+    fn deleting_cascades_to_tracks_and_segments() {
+        let database = Database::open_memory();
+        create(&database, "r1", Some(&event("e1")), "2026-11-27T10:00:00Z");
+        database
+            .with_connection(|c| {
+                c.execute(
+                    "INSERT INTO meeting_recording_segments(recording_id,seq,track,start_ms,end_ms,text)
+                     VALUES('r1',0,'mic',0,1000,'hello')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(database.delete_recording("r1").unwrap());
+        assert!(!database.delete_recording("r1").unwrap());
+        for table in ["meeting_recording_tracks", "meeting_recording_segments"] {
+            let count: i64 = database
+                .with_connection(|c| {
+                    Ok(c.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table}");
+        }
+    }
+
+    #[test]
+    fn only_recording_rows_become_interrupted() {
+        let database = Database::open_memory();
+        create(&database, "live", None, "2026-11-27T10:00:00Z");
+        create(&database, "done", None, "2026-11-27T09:00:00Z");
+        database
+            .finish_recording(
+                "done",
+                "2026-11-27T09:10:00Z",
+                1,
+                RecordingState::Recorded,
+                None,
+            )
+            .unwrap();
+        assert_eq!(database.mark_interrupted_recordings().unwrap(), 1);
+        assert_eq!(
+            database.recording("live").unwrap().unwrap().state,
+            RecordingState::Interrupted
+        );
+        assert_eq!(
+            database.recording("done").unwrap().unwrap().state,
+            RecordingState::Recorded
+        );
+        assert_eq!(database.mark_interrupted_recordings().unwrap(), 0);
+    }
+
+    #[test]
+    fn settings_default_when_missing_and_round_trip() {
+        let database = Database::open_memory();
+        assert_eq!(
+            database.recording_settings().unwrap(),
+            RecordingSettings::default()
+        );
+        let settings = RecordingSettings {
+            record_meetings: true,
+            keep_audio: KeepAudio::UntilDeleted,
+            ..Default::default()
+        };
+        database.set_recording_settings(&settings).unwrap();
+        assert_eq!(database.recording_settings().unwrap(), settings);
+        database
+            .set_recording_settings(&RecordingSettings::default())
+            .unwrap();
+        assert_eq!(
+            database.recording_settings().unwrap(),
+            RecordingSettings::default()
+        );
+    }
+
+    #[test]
+    fn stored_settings_from_an_older_build_still_load() {
+        let database = Database::open_memory();
+        database
+            .with_connection(|c| {
+                c.execute(
+                    "INSERT INTO meeting_recording_settings(id,settings_json) VALUES(1,'{\"recordMeetings\":true,\"removedField\":3}')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let settings = database.recording_settings().unwrap();
+        assert!(settings.record_meetings);
+        assert!(settings.offer_to_record);
+    }
+}
