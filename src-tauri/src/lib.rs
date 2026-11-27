@@ -253,6 +253,7 @@ struct AppState {
     /// Meeting recording: the one active recording, recovery, retention,
     /// and the tray's source of truth.
     recording: Arc<recording::runtime::RecordingRuntime>,
+    _recording_sleep_observer: recording::sleep::SleepObserver,
 }
 
 /// SQLite and the mutex guarding its connection are synchronous. Run database
@@ -1254,6 +1255,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let agent_runner = agents::Runner::new(database.clone());
     agent_runner.start();
     let recording = start_recording_runtime(&data_dir, &database, app.handle())?;
+    let _recording_sleep_observer = recording::sleep::install(recording.clone());
     app.manage(AppState {
         agent_runner,
         database,
@@ -1272,6 +1274,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         notes_export_folder: notes_export::ChosenFolder::default(),
         notes_import: notes_import::PendingImport::default(),
         recording,
+        _recording_sleep_observer,
     });
     Ok(())
 }
@@ -1290,11 +1293,9 @@ fn start_recording_runtime(
 ) -> std::io::Result<Arc<recording::runtime::RecordingRuntime>> {
     use recording::transcribe::{memory, models, power, worker};
     let audio_root = data_dir.join("recordings");
-    std::fs::create_dir_all(&audio_root)?;
-    restrict_dir_to_owner(&audio_root);
+    recording::files::ensure_private_dir(&audio_root)?;
     let models_dir = data_dir.join("recording-models");
-    std::fs::create_dir_all(&models_dir)?;
-    restrict_dir_to_owner(&models_dir);
+    recording::files::ensure_private_dir(&models_dir)?;
     let transcription = recording::runtime::TranscriptionParts {
         transcriber: Arc::new(worker::WorkerTranscriber {
             command: worker::WorkerCommand::current_exe()?,
@@ -1920,6 +1921,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::recordings::recording_settings,
         commands::recordings::set_recording_settings,
         commands::recordings::recording_capabilities,
+        commands::recordings::recording_input_devices,
+        commands::recordings::open_system_audio_settings,
         commands::recordings::recording_status,
         commands::recordings::recording_start,
         commands::recordings::recording_pause,

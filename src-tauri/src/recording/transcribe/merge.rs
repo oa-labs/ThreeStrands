@@ -20,10 +20,18 @@ use crate::recording::policy;
 use std::collections::HashSet;
 
 /// A line of the merged transcript.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MergedLine {
     pub line: TranscriptLine,
     pub dropped_as_echo: bool,
+}
+
+/// Options controlling echo filtering during track merge.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MergeOptions {
+    /// True when every audio output used during the recording was headphones,
+    /// meaning there is no speaker-to-microphone acoustic echo path.
+    pub headphones: bool,
 }
 
 /// Lowercase words with punctuation stripped.
@@ -80,19 +88,42 @@ pub fn post_filter(lines: Vec<TranscriptLine>) -> Vec<TranscriptLine> {
     kept
 }
 
-/// The share (0 to 1) of `mic`'s words found in the system lines that
-/// overlap it in time, with slack.
-pub fn echo_score(mic: &TranscriptLine, system: &[TranscriptLine]) -> f32 {
-    let slack = policy::MERGE_TIME_SLACK_MS.max(0) as u64;
-    let heard: HashSet<String> = system
+/// Non-stop-words used to score echo overlap while protecting short
+/// backchannels and confirmations.
+pub fn content_words(text: &str) -> Vec<String> {
+    normalized_words(text)
+        .into_iter()
+        .filter(|word| !policy::ECHO_STOP_WORDS.contains(&word.as_str()))
+        .collect()
+}
+
+/// Overlapping system lines in the causal echo window:
+/// `[system.start - ECHO_LEAD_SLACK_MS, system.end + ECHO_TRAIL_SLACK_MS]`.
+fn overlapping_system<'a>(
+    mic: &TranscriptLine,
+    system: &'a [TranscriptLine],
+) -> Vec<&'a TranscriptLine> {
+    system
         .iter()
         .filter(|line| {
-            line.start_ms <= mic.end_ms.saturating_add(slack)
-                && line.end_ms.saturating_add(slack) >= mic.start_ms
+            line.start_ms <= mic.end_ms.saturating_add(policy::ECHO_LEAD_SLACK_MS)
+                && line.end_ms.saturating_add(policy::ECHO_TRAIL_SLACK_MS) >= mic.start_ms
         })
+        .collect()
+}
+
+/// The share (0 to 1) of `mic`'s content words found in the causally
+/// overlapping system lines.
+pub fn echo_score(mic: &TranscriptLine, system: &[TranscriptLine]) -> f32 {
+    let overlap = overlapping_system(mic, system);
+    if overlap.is_empty() {
+        return 0.0;
+    }
+    let heard: HashSet<String> = overlap
+        .iter()
         .flat_map(|line| normalized_words(&line.text))
         .collect();
-    let words = normalized_words(&mic.text);
+    let words = content_words(&mic.text);
     if words.is_empty() {
         return 0.0;
     }
@@ -100,10 +131,60 @@ pub fn echo_score(mic: &TranscriptLine, system: &[TranscriptLine]) -> f32 {
     found as f32 / words.len() as f32
 }
 
+/// Decides whether a microphone line is acoustic speaker echo.
+pub fn is_echo(mic: &TranscriptLine, system: &[TranscriptLine], options: MergeOptions) -> bool {
+    if options.headphones || system.is_empty() {
+        return false;
+    }
+    let overlap = overlapping_system(mic, system);
+    if overlap.is_empty() {
+        return false;
+    }
+    let sys_rms = overlap.iter().filter_map(|l| l.rms).reduce(f32::max);
+    let rms_ratio = match (mic.rms, sys_rms) {
+        (Some(m), Some(s)) if s > 1e-6 => Some(m / s),
+        _ => None,
+    };
+
+    let content = content_words(&mic.text);
+    if content.len() < policy::ECHO_MIN_CONTENT_WORDS {
+        // Short confirmations ("Yeah, on Friday", "I think we should") are kept
+        // unless RMS proves quiet speaker bleed matching the system words verbatim.
+        if let Some(ratio) = rms_ratio {
+            if ratio < policy::ECHO_BLEED_RMS_RATIO {
+                let all_mic = normalized_words(&mic.text);
+                let heard: HashSet<String> = overlap
+                    .iter()
+                    .flat_map(|line| normalized_words(&line.text))
+                    .collect();
+                return !all_mic.is_empty() && all_mic.iter().all(|w| heard.contains(w));
+            }
+        }
+        return false;
+    }
+
+    let score = echo_score(mic, system);
+    if score < policy::ECHO_DROP_THRESHOLD {
+        return false;
+    }
+    if let (Some(mic_rms), Some(ratio)) = (mic.rms, rms_ratio) {
+        if mic_rms >= policy::ECHO_LOUD_MIC_RMS && ratio > policy::ECHO_MAX_RMS_RATIO && score < 0.9
+        {
+            return false;
+        }
+    }
+    true
+}
+
 /// Filters each track, orders all lines by start time (the microphone first
-/// on a tie, then by end), and marks microphone echo. Echo is only judged
-/// when the system track has lines.
+/// on a tie, then by end), and marks microphone echo.
+#[cfg(test)]
 pub fn merge(lines: Vec<TranscriptLine>) -> Vec<MergedLine> {
+    merge_with_options(lines, MergeOptions::default())
+}
+
+/// Same as [`merge`], with explicit [`MergeOptions`].
+pub fn merge_with_options(lines: Vec<TranscriptLine>, options: MergeOptions) -> Vec<MergedLine> {
     let (mic, system): (Vec<_>, Vec<_>) = lines.into_iter().partition(|l| l.track == Track::Mic);
     let mut mic = post_filter(mic);
     let mut system = post_filter(system);
@@ -115,8 +196,7 @@ pub fn merge(lines: Vec<TranscriptLine>) -> Vec<MergedLine> {
     let mut merged: Vec<MergedLine> = mic
         .into_iter()
         .map(|line| MergedLine {
-            dropped_as_echo: !system.is_empty()
-                && echo_score(&line, &system) >= policy::ECHO_DROP_THRESHOLD,
+            dropped_as_echo: is_echo(&line, &system, options),
             line,
         })
         .collect();
@@ -144,6 +224,17 @@ mod tests {
             start_ms,
             end_ms,
             text: text.into(),
+            rms: None,
+        }
+    }
+
+    fn line_rms(track: Track, start_ms: u64, end_ms: u64, text: &str, rms: f32) -> TranscriptLine {
+        TranscriptLine {
+            track,
+            start_ms,
+            end_ms,
+            text: text.into(),
+            rms: Some(rms),
         }
     }
 
@@ -228,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn echo_is_scored_on_words_heard_in_overlapping_system_lines() {
+    fn echo_is_scored_on_words_heard_in_causal_overlapping_system_lines() {
         let remote = [system(
             10_000,
             14_000,
@@ -237,20 +328,22 @@ mod tests {
         let echo = mic(10_060, 14_060, "The launch moves to March fifteenth");
         assert_eq!(echo_score(&echo, &remote), 1.0);
         let own = mic(12_000, 13_000, "I'll tell the launch team");
-        assert_eq!(echo_score(&own, &remote), 0.4, "the, launch");
-        // The same words outside the time window don't count.
+        assert_eq!(
+            echo_score(&own, &remote),
+            0.25,
+            "only 'launch' of 4 content words"
+        );
+        // The same words outside the trailing window don't count.
         let later = mic(15_001, 16_000, "The launch moves to March fifteenth");
         assert_eq!(echo_score(&later, &remote), 0.0);
-        let within_slack = mic(15_000, 16_000, "The launch moves to March fifteenth");
-        assert_eq!(echo_score(&within_slack, &remote), 1.0);
-        let before = mic(8_000, 9_000, "The launch moves");
-        assert_eq!(
-            echo_score(&before, &remote),
-            1.0,
-            "ends 1 s before: inside the slack"
-        );
-        let too_early = mic(8_000, 8_999, "The launch moves");
-        assert_eq!(echo_score(&too_early, &remote), 0.0);
+        let within_trail = mic(15_000, 16_000, "The launch moves to March fifteenth");
+        assert_eq!(echo_score(&within_trail, &remote), 1.0);
+        // Causal leading edge: within 250 ms before system starts still matches; 500 ms before does not.
+        let within_lead = mic(8_000, 9_750, "The launch moves");
+        assert_eq!(echo_score(&within_lead, &remote), 1.0);
+        let user_before_remote_repeats = mic(8_000, 9_500, "The launch moves");
+        assert_eq!(user_before_remote_repeats.end_ms, 9_500);
+        assert_eq!(echo_score(&user_before_remote_repeats, &remote), 0.0);
     }
 
     /// A microphone line with `found` of its 10 words in the system line.
@@ -320,5 +413,69 @@ mod tests {
         ]);
         let mic_line = merged.iter().find(|m| m.line.track == Track::Mic).unwrap();
         assert!(!mic_line.dropped_as_echo);
+    }
+
+    #[test]
+    fn short_confirmations_and_headphones_are_protected_while_quiet_bleed_drops() {
+        // Short confirmation ("Yeah, on Friday") immediately after remote speaker is kept.
+        let merged = merge(vec![
+            system(0, 4_000, "I think we should ship the release on Friday."),
+            mic(4_100, 5_000, "Yeah, on Friday."),
+        ]);
+        assert!(
+            !merged
+                .iter()
+                .find(|m| m.line.track == Track::Mic)
+                .unwrap()
+                .dropped_as_echo
+        );
+
+        // Quiet verbatim speaker bleed of a short phrase drops via RMS ratio.
+        let bleed = merge(vec![
+            line_rms(Track::System, 0, 4_000, "Ship on Friday.", 0.2),
+            line_rms(Track::Mic, 60, 4_060, "Ship on Friday.", 0.01),
+        ]);
+        assert!(
+            bleed
+                .iter()
+                .find(|m| m.line.track == Track::Mic)
+                .unwrap()
+                .dropped_as_echo
+        );
+
+        // Loud direct user speech talking over speakers with partial overlap is kept.
+        let simultaneous = merge(vec![
+            line_rms(
+                Track::System,
+                0,
+                5_000,
+                "Review budget forecast vendor timeline.",
+                0.08,
+            ),
+            line_rms(
+                Track::Mic,
+                100,
+                5_000,
+                "Wait budget forecast vendor needs approval.",
+                0.09,
+            ),
+        ]);
+        assert!(
+            !simultaneous
+                .iter()
+                .find(|m| m.line.track == Track::Mic)
+                .unwrap()
+                .dropped_as_echo
+        );
+
+        // Headphones exempt everything from echo drop.
+        let on_headphones = merge_with_options(
+            vec![
+                system(0, 5_000, "The launch moves to March fifteenth."),
+                mic(60, 5_060, "The launch moves to March fifteenth."),
+            ],
+            MergeOptions { headphones: true },
+        );
+        assert!(on_headphones.iter().all(|m| !m.dropped_as_echo));
     }
 }

@@ -69,7 +69,12 @@ const failedWithoutAudio = (recording: MeetingRecording) => recording.audioDelet
  * model, null until known; `percent` is the latest live progress, which beats
  * the percent the list carried.
  */
-export function recordingDetail(recording: MeetingRecording, model: TranscriptionModelStatus | null = null, percent: number | null = null): string {
+export function recordingDetail(
+  recording: MeetingRecording,
+  model: TranscriptionModelStatus | null = null,
+  percent: number | null = null,
+  usingSpeechAnalyzer = false,
+): string {
   const minutes = minutesLabel(recording.durationMs);
   const parts: string[] = [];
   switch (recording.state) {
@@ -82,7 +87,9 @@ export function recordingDetail(recording: MeetingRecording, model: Transcriptio
       break;
     }
     case "transcribed": parts.push(minutes, "Transcribed"); break;
-    case "recorded": parts.push(minutes, model && model.state !== "ready" ? "Waiting for a transcription model" : "Waiting to transcribe"); break;
+    case "recorded":
+      parts.push(minutes, !usingSpeechAnalyzer && model && model.state !== "ready" ? "Waiting for a transcription model" : "Waiting to transcribe");
+      break;
   }
   const system = recording.tracks.find((track) => track.track === "system");
   if (recording.state !== "recording" && recording.state !== "failed" && system?.state !== "active") parts.push("Microphone only");
@@ -111,6 +118,7 @@ export function stopReasonNotice(reason: RecordingStopReason | null): string | n
     case "lowDisk": return "Recording stopped because this Mac is low on disk space. The audio was saved.";
     // Earlier audio may have been saved, so this says only why it stopped.
     case "allTracksFailed": return "Recording stopped because the microphone and computer audio stopped working.";
+    case "systemSleep": return "Recording stopped because this Mac went to sleep. The audio was saved.";
     default: return null;
   }
 }

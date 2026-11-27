@@ -71,6 +71,7 @@ const MIGRATIONS: &[Migration] = &[
     (124, to_v124),
     (125, to_v125),
     (126, to_v126),
+    (127, to_v127),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1605,6 +1606,34 @@ fn to_v120(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v127(tx: &rusqlite::Transaction) -> Result<(), String> {
+    let has_column = |table: &str, column: &str| -> Result<bool, String> {
+        tx.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name='{column}')"
+            ),
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)
+    };
+    if !has_column("meeting_recording_segments", "rms")? {
+        tx.execute_batch("ALTER TABLE meeting_recording_segments ADD COLUMN rms REAL;")
+            .map_err(error)?;
+    }
+    if !has_column("meeting_recording_tracks", "is_headphones")? {
+        tx.execute_batch(
+            "ALTER TABLE meeting_recording_tracks ADD COLUMN is_headphones INTEGER CHECK (is_headphones IN (0, 1));",
+        )
+        .map_err(error)?;
+    }
+    if !has_column("meeting_recordings", "attendees_json")? {
+        tx.execute_batch("ALTER TABLE meeting_recordings ADD COLUMN attendees_json TEXT;")
+            .map_err(error)?;
+    }
+    Ok(())
+}
+
 fn to_v126(tx: &rusqlite::Transaction) -> Result<(), String> {
     // Meeting recordings and their transcripts. Device-local by design: none
     // of these tables replicate, sync, or enter settings transfer, because
@@ -2557,6 +2586,44 @@ mod tests {
             .unwrap();
         assert_eq!(version, super::LATEST_VERSION);
         // Running it again changes nothing.
+        super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v127_adds_recording_hardening_columns_and_keeps_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO meeting_recordings(id,title,started_at,state,audio_dir)
+                 VALUES('r127','Sync','2026-11-27T10:00:00Z','recorded','/a/r127');
+                 PRAGMA user_version=126;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let title: String = connection
+            .query_row(
+                "SELECT title FROM meeting_recordings WHERE id='r127'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "Sync");
+        for (table, col) in [
+            ("meeting_recording_segments", "rms"),
+            ("meeting_recording_tracks", "is_headphones"),
+            ("meeting_recordings", "attendees_json"),
+        ] {
+            let exists: bool = connection
+                .query_row(
+                    &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name='{col}')"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(exists, "{table}.{col}");
+        }
         super::migrate(&mut connection).unwrap();
     }
 

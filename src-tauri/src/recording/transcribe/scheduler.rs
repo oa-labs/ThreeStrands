@@ -48,13 +48,13 @@ use super::merge;
 use super::models::ModelStore;
 use super::plan::{self, PlannedSegment};
 use super::power::PowerSource;
-use super::protocol::{HeldAudio, TranscriptLine};
+use super::protocol::{HeldAudio, TranscriptLine, WorkerEngine};
 use super::{JobConfig, JobError, StopCheck, Transcriber, TranscriptionSession, ENGINE};
 use crate::db::recordings::{RecordingState, TranscriptRow};
 use crate::recording::capture::Track;
 use crate::recording::policy;
 use crate::recording::runtime::RecordingRuntime;
-use crate::recording::settings::TranscriptionModelChoice;
+use crate::recording::settings::{self, EffectiveEngine, KeepAudio, TranscriptionModelChoice};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -107,8 +107,15 @@ impl StopCheck for JobControl {
 struct Job {
     recording_id: String,
     audio_dir: PathBuf,
+    engine: EffectiveEngine,
     model: TranscriptionModelChoice,
     model_name: String,
+    /// User-chosen language setting (`None` = Auto detect-once).
+    configured_language: Option<String>,
+    /// Auto-detected language pinned by the first speech span across batches.
+    detected_language: Option<String>,
+    /// Sanitized calendar vocabulary hint built from title and attendees.
+    initial_prompt: Option<String>,
     /// The worker settings with the model just checked, for the next
     /// worker; checked again before each later one.
     config: Option<JobConfig>,
@@ -347,14 +354,22 @@ impl Scheduler {
     }
 
     /// Whether memory pressure is normal and the Mac has room for a worker
-    /// running `model`. A Mac that can't say how much is available is
-    /// trusted; the model's budget still stops a runaway worker.
-    fn memory_allows(&self, model: TranscriptionModelChoice) -> bool {
-        self.memory.pressure() == MemoryPressure::Normal
-            && self
-                .memory
-                .available_bytes()
-                .is_none_or(|available| policy::memory_allows_start(model.model(), available))
+    /// running `engine`/`model`. A Mac that can't say how much is available is
+    /// trusted; the worker's budget still stops a runaway worker.
+    fn memory_allows(&self, engine: EffectiveEngine, model: TranscriptionModelChoice) -> bool {
+        if self.memory.pressure() != MemoryPressure::Normal {
+            return false;
+        }
+        self.memory
+            .available_bytes()
+            .is_none_or(|available| match engine {
+                EffectiveEngine::SpeechAnalyzer => {
+                    available
+                        >= policy::SPEECH_ANALYZER_MEMORY_BYTES
+                            .saturating_add(policy::WORKER_START_MARGIN_BYTES)
+                }
+                EffectiveEngine::Whisper => policy::memory_allows_start(model.model(), available),
+            })
     }
 
     /// Whether the recording in progress may be transcribed now, memory
@@ -384,11 +399,18 @@ fn percent(done_ms: u64, total_ms: u64) -> u8 {
 }
 
 /// The language whisper is told: English for the English-only Fast model,
-/// detected for Accurate.
-fn language(model: TranscriptionModelChoice) -> Option<String> {
+/// otherwise the user-chosen language or pinned detected language (or `None`
+/// to auto-detect on the first speech span).
+fn whisper_language(
+    model: TranscriptionModelChoice,
+    configured: Option<&str>,
+    detected: Option<&str>,
+) -> Option<String> {
     match model {
         TranscriptionModelChoice::Fast => Some("en".into()),
-        TranscriptionModelChoice::Accurate => None,
+        TranscriptionModelChoice::Accurate => {
+            policy::normalize_language_code(configured).or_else(|| detected.map(str::to_string))
+        }
     }
 }
 
@@ -431,8 +453,11 @@ impl RecordingRuntime {
         if lock(&self.scheduler.state).current.is_some() {
             return None;
         }
-        let model = self.settings().transcription_model;
-        if !self.scheduler.models.is_ready(model) {
+        let settings = self.settings();
+        let engine =
+            settings::effective_engine(settings.transcription_engine, self.speech_analyzer);
+        let model = settings.transcription_model;
+        if engine == EffectiveEngine::Whisper && !self.scheduler.models.is_ready(model) {
             return None;
         }
         let rows = match self.database.recording_audio() {
@@ -474,14 +499,11 @@ impl RecordingRuntime {
                 row
             }
         };
-        if !self.scheduler.memory_allows(model) {
+        if !self.scheduler.memory_allows(engine, model) {
             // Waits, still `recorded`, for pressure to fall or memory to
             // free up; the transcription thread looks again shortly.
             return None;
         }
-        // A model that fails its check is marked failed; the recording
-        // waits for it.
-        let (config, model_name) = self.job_config(model)?;
         let live = Some(&row.id) == active.as_ref();
         let title = self
             .database
@@ -490,6 +512,22 @@ impl RecordingRuntime {
             .flatten()
             .map(|r| r.title)
             .unwrap_or_default();
+        let attendees = self
+            .database
+            .recording_attendees(&row.id)
+            .unwrap_or_default();
+        let initial_prompt = policy::sanitize_initial_prompt(&title, &attendees);
+        let configured_language =
+            policy::normalize_language_code(settings.transcription_language.as_deref());
+        // A model that fails its check is marked failed; the recording
+        // waits for it.
+        let (config, model_name) = self.job_config(
+            engine,
+            model,
+            configured_language.as_deref(),
+            None,
+            initial_prompt.clone(),
+        )?;
         let control = Arc::new(JobControl {
             cancel: AtomicBool::new(false),
             live: AtomicBool::new(live),
@@ -508,8 +546,12 @@ impl RecordingRuntime {
         Some(Job {
             recording_id: row.id.clone(),
             audio_dir: PathBuf::from(&row.audio_dir),
+            engine,
             model,
             model_name,
+            configured_language,
+            detected_language: None,
+            initial_prompt,
             config: Some(config),
             control,
             session: None,
@@ -528,9 +570,29 @@ impl RecordingRuntime {
     }
 
     /// The worker's settings, with `model` checked against its pinned hash
-    /// (before every load), and the model's file name. `None` when the
-    /// model failed the check; it is then marked failed.
-    fn job_config(&self, model: TranscriptionModelChoice) -> Option<(JobConfig, String)> {
+    /// (before every load) when running Whisper, and the model's file name.
+    /// `None` when the model failed the check; it is then marked failed.
+    fn job_config(
+        &self,
+        engine: EffectiveEngine,
+        model: TranscriptionModelChoice,
+        configured_language: Option<&str>,
+        detected_language: Option<&str>,
+        initial_prompt: Option<String>,
+    ) -> Option<(JobConfig, String)> {
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        if engine == EffectiveEngine::SpeechAnalyzer {
+            let config = JobConfig {
+                engine: WorkerEngine::SpeechAnalyzer,
+                model_path: PathBuf::new(),
+                vad_model_path: PathBuf::new(),
+                language: configured_language.map(str::to_string),
+                initial_prompt,
+                threads: policy::transcription_threads(threads) as u32,
+                memory_bytes: policy::SPEECH_ANALYZER_MEMORY_BYTES,
+            };
+            return Some((config, policy::SPEECH_ANALYZER_MODEL.to_string()));
+        }
         let (model_path, vad_model_path) = match self.scheduler.models.verified_paths(model) {
             Ok(paths) => paths,
             Err(error) => {
@@ -542,11 +604,12 @@ impl RecordingRuntime {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
         let config = JobConfig {
+            engine: WorkerEngine::Whisper,
             model_path,
             vad_model_path,
-            language: language(model),
+            language: whisper_language(model, configured_language, detected_language),
+            initial_prompt,
             threads: policy::transcription_threads(threads) as u32,
             memory_bytes: policy::worker_memory_budget(model.model()),
         };
@@ -636,13 +699,19 @@ impl RecordingRuntime {
             let due = !active
                 || (self.scheduler.live_allowed(&job.recording_id)
                     && policy::live_batch_due(standing.waiting_ms));
-            if !due || !self.scheduler.memory_allows(job.model) {
+            if !due || !self.scheduler.memory_allows(job.engine, job.model) {
                 self.scheduler.park(job);
                 return false;
             }
             let config = match job.config.take() {
                 Some(config) => config,
-                None => match self.job_config(job.model) {
+                None => match self.job_config(
+                    job.engine,
+                    job.model,
+                    job.configured_language.as_deref(),
+                    job.detected_language.as_deref(),
+                    job.initial_prompt.clone(),
+                ) {
                     Some((config, _)) => config,
                     None => {
                         self.model_unavailable(job);
@@ -693,6 +762,11 @@ impl RecordingRuntime {
                     return true;
                 }
                 job.done_through.insert(track, segment.number);
+                if job.detected_language.is_none() {
+                    if let Some(detected) = result.detected_language {
+                        job.detected_language = Some(detected);
+                    }
+                }
                 match result.held {
                     Some(held) => job.held.insert(track, held),
                     None => job.held.remove(&track),
@@ -787,29 +861,51 @@ impl RecordingRuntime {
 
     fn finish_job(&self, mut job: Job) {
         let id = job.recording_id.clone();
+        let audio_dir = job.audio_dir.clone();
+        let engine_name = match job.engine {
+            EffectiveEngine::SpeechAnalyzer => policy::SPEECH_ANALYZER_ENGINE,
+            EffectiveEngine::Whisper => ENGINE,
+        };
         let model_name = std::mem::take(&mut job.model_name);
         let lines = std::mem::take(&mut job.lines);
-        let system_start = plan::standing(&job.audio_dir, true, |_| true)
+        let system_start = plan::standing(&audio_dir, true, |_| true)
             .system_start_ms
             .map(|start| start as i64);
         drop(job);
-        let rows: Vec<TranscriptRow> = merge::merge(lines)
-            .into_iter()
-            .map(|line| TranscriptRow {
-                track: line.line.track,
-                start_ms: line.line.start_ms as i64,
-                end_ms: line.line.end_ms as i64,
-                text: line.line.text,
-                dropped_as_echo: line.dropped_as_echo,
-            })
-            .collect();
-        let saved = self
+        let headphones = self
             .database
-            .save_transcript(&id, &rows, ENGINE, &model_name, system_start);
+            .recording(&id)
+            .ok()
+            .flatten()
+            .is_some_and(|r| {
+                r.tracks
+                    .iter()
+                    .any(|t| t.track == Track::System && t.is_headphones == Some(true))
+            });
+        let rows: Vec<TranscriptRow> =
+            merge::merge_with_options(lines, merge::MergeOptions { headphones })
+                .into_iter()
+                .map(|line| TranscriptRow {
+                    track: line.line.track,
+                    start_ms: line.line.start_ms as i64,
+                    end_ms: line.line.end_ms as i64,
+                    text: line.line.text,
+                    rms: line.line.rms,
+                    dropped_as_echo: line.dropped_as_echo,
+                })
+                .collect();
+        let saved =
+            self.database
+                .save_transcript(&id, &rows, engine_name, &model_name, system_start);
         drop(rows);
         self.scheduler.end_job();
         match saved {
             Ok(()) => {
+                if self.settings().keep_audio != KeepAudio::UntilTranscribed {
+                    if let Err(error) = super::transcode::transcode_recording_dir(&audio_dir) {
+                        log::warn!(target: "recording", "transcoding completed recording: {error}");
+                    }
+                }
                 self.notifier.recordings_changed(&id);
                 self.refresh_tray_now();
                 // Keep Audio: Until Transcribed applies now.

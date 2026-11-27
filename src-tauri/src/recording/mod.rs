@@ -10,12 +10,14 @@
 //! tick thread's work, crash recovery, retention, and change events.
 
 pub mod capture;
+pub mod files;
 pub mod permissions;
 pub mod policy;
 pub mod retention;
 pub mod runtime;
 pub mod segments;
 pub mod settings;
+pub mod sleep;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod transcribe;
@@ -89,6 +91,7 @@ pub enum StopReason {
     LengthLimit,
     LowDisk,
     AllTracksFailed,
+    SystemSleep,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -96,6 +99,7 @@ pub enum StopReason {
 pub struct TrackStatus {
     pub track: Track,
     pub state: TrackRunState,
+    pub signal_active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -108,6 +112,9 @@ pub struct RecordingStatus {
     pub elapsed_ms: u64,
     pub tracks: Vec<TrackStatus>,
     pub system_audio: SystemAudioSupport,
+    /// True when the system-audio tap has only streamed digital zeros while
+    /// the microphone hears speech, suggesting missing macOS permission.
+    pub system_audio_silent_warning: bool,
     /// Why the last recording was stopped automatically; cleared by the
     /// next start and by a stop the user asked for.
     pub last_stop_reason: Option<StopReason>,
@@ -129,6 +136,8 @@ struct TrackRun {
     last_activity: SystemTime,
     /// Restarts already scheduled since the track last delivered frames.
     restarts_used: usize,
+    signal_active: bool,
+    ever_nonzero_audio: bool,
 }
 
 struct Active {
@@ -142,6 +151,9 @@ struct Active {
     paused_since: Option<SystemTime>,
     tracks: HashMap<Track, TrackRun>,
     any_audio: bool,
+    all_outputs_headphones: Option<bool>,
+    mic_speech_secs_while_tap_zero: u64,
+    system_audio_silent_warning: bool,
 }
 
 pub struct RecordingService {
@@ -186,13 +198,25 @@ impl RecordingService {
         }
     }
 
-    /// Starts a recording. The microphone is the one track that must start
-    /// unless system audio is running; a track that cannot start is marked
-    /// failed and the other continues.
+    /// Starts a recording with default input device and no attendee hints.
+    #[cfg(test)]
     pub fn start(
         &mut self,
         event_ref: Option<NoteReference>,
         title: &str,
+    ) -> Result<RecordingStatus, String> {
+        self.start_with_options(event_ref, title, None, &[])
+    }
+
+    /// Starts a recording. The microphone is the one track that must start
+    /// unless system audio is running; a track that cannot start is marked
+    /// failed and the other continues.
+    pub fn start_with_options(
+        &mut self,
+        event_ref: Option<NoteReference>,
+        title: &str,
+        microphone_uid: Option<String>,
+        attendees: &[String],
     ) -> Result<RecordingStatus, String> {
         if self.active.is_some() {
             return Err("A recording is already in progress.".into());
@@ -225,12 +249,14 @@ impl RecordingService {
         let target = TrackTarget {
             audio_dir: audio_dir.clone(),
             origin_host_ns: self.backend.host_time_ns(),
+            microphone_uid,
         };
         self.database
             .create_recording(&NewRecording {
                 id: &id,
                 event_ref: event_ref.as_ref(),
                 title,
+                attendees,
                 started_at: &rfc3339(now),
                 audio_dir: &audio_dir.to_string_lossy(),
                 tracks: &[
@@ -284,6 +310,9 @@ impl RecordingService {
             paused_since: None,
             tracks,
             any_audio: false,
+            all_outputs_headphones: None,
+            mic_speech_secs_while_tap_zero: 0,
+            system_audio_silent_warning: false,
         });
         Ok(self.status())
     }
@@ -304,6 +333,7 @@ impl RecordingService {
         }
         active.paused_since = Some(now);
         for run in active.tracks.values_mut() {
+            run.signal_active = false;
             if let Some(session) = run.session.as_mut() {
                 session.pause();
             }
@@ -335,6 +365,14 @@ impl RecordingService {
     /// Stops the recording the user is looking at.
     pub fn stop(&mut self) -> Result<RecordingStatus, String> {
         self.finish(None)
+    }
+
+    /// Stops any active recording when the Mac goes to sleep, so waking never
+    /// silently resumes microphone capture.
+    pub fn stop_for_sleep(&mut self) {
+        if self.active.is_some() {
+            let _ = self.finish(Some(StopReason::SystemSleep));
+        }
     }
 
     fn finish(&mut self, reason: Option<StopReason>) -> Result<RecordingStatus, String> {
@@ -410,21 +448,58 @@ impl RecordingService {
                     );
                 }
             }
-            CaptureEvent::Frames { count, .. } => {
+            CaptureEvent::Frames { count, peak, .. } => {
                 if count > 0 {
                     active.any_audio = true;
                     run.first_frame_seen = true;
                     run.last_activity = now;
                     run.restarts_used = 0;
+                    run.signal_active = peak >= policy::SIGNAL_ACTIVE_PEAK;
+                    if peak > 0.0 {
+                        run.ever_nonzero_audio = true;
+                    }
+                    if track == Track::System && peak > 0.0 {
+                        active.mic_speech_secs_while_tap_zero = 0;
+                        active.system_audio_silent_warning = false;
+                    } else if track == Track::Mic && peak >= policy::MIC_SPEECH_PEAK {
+                        let system_stuck_zero =
+                            active.tracks.get(&Track::System).is_some_and(|s| {
+                                matches!(s.state, RunState::Active) && !s.ever_nonzero_audio
+                            });
+                        if system_stuck_zero {
+                            active.mic_speech_secs_while_tap_zero += 1;
+                            if active.mic_speech_secs_while_tap_zero
+                                >= policy::SILENT_TAP_SPEECH_SECS
+                            {
+                                active.system_audio_silent_warning = true;
+                            }
+                        }
+                    }
                 }
             }
-            CaptureEvent::DeviceChanged { device_name, .. } => {
+            CaptureEvent::DeviceChanged {
+                device_name,
+                is_headphones,
+                ..
+            } => {
                 let id = active.id.clone();
+                let effective_headphones = if track == Track::System {
+                    if let Some(headphones) = is_headphones {
+                        active.all_outputs_headphones = Some(match active.all_outputs_headphones {
+                            Some(false) => false,
+                            _ => headphones,
+                        });
+                    }
+                    active.all_outputs_headphones
+                } else {
+                    is_headphones
+                };
                 self.patch_track(
                     &id,
                     track,
                     TrackPatch {
                         device_name: Some(device_name),
+                        is_headphones: effective_headphones,
                         ..Default::default()
                     },
                 );
@@ -497,6 +572,7 @@ impl RecordingService {
                 elapsed_ms: 0,
                 tracks: Vec::new(),
                 system_audio,
+                system_audio_silent_warning: false,
                 last_stop_reason: self.last_stop_reason,
             };
         };
@@ -511,6 +587,7 @@ impl RecordingService {
                     RunState::Failed => TrackRunState::Failed,
                     RunState::Unavailable => TrackRunState::Unavailable,
                 },
+                signal_active: run.signal_active,
             })
             .collect();
         tracks.sort_by_key(|t| t.track);
@@ -526,6 +603,7 @@ impl RecordingService {
             elapsed_ms: active.elapsed(self.clock.now()).as_millis() as u64,
             tracks,
             system_audio,
+            system_audio_silent_warning: active.system_audio_silent_warning,
             last_stop_reason: self.last_stop_reason,
         }
     }
@@ -636,6 +714,8 @@ impl TrackRun {
             first_frame_seen: false,
             last_activity: now,
             restarts_used: 0,
+            signal_active: false,
+            ever_nonzero_audio: false,
         }
     }
 
@@ -646,6 +726,8 @@ impl TrackRun {
             first_frame_seen: false,
             last_activity: now,
             restarts_used: 0,
+            signal_active: false,
+            ever_nonzero_audio: false,
         }
     }
 

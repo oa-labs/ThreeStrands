@@ -25,17 +25,17 @@ vi.mock("./recordingEvents", async (original) => ({
 const emit = <K extends keyof RecordingEvents>(name: K, payload: RecordingEvents[K]) => act(() => bus.emit(name, payload));
 
 const settings = (overrides: Partial<RecordingSettings> = {}): RecordingSettings => ({
-  recordMeetings: true, transcriptionModel: "fast", transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
+  recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast", transcriptionLanguage: null, transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
   summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true, ...overrides,
 });
 const status = (overrides: Partial<RecordingStatus> = {}): RecordingStatus => ({
   state: "recording", recordingId: "r1", title: "Meeting at 3:04 PM", eventRef: null, elapsedMs: 0, tracks: [],
-  systemAudio: { kind: "available" }, lastStopReason: null, ...overrides,
+  systemAudio: { kind: "available" }, systemAudioSilentWarning: false, lastStopReason: null, ...overrides,
 });
 const idle = status({ state: "idle", recordingId: null, title: null });
 
 function setup(saved: RecordingSettings = settings(), supported = true) {
-  vi.spyOn(mailClient, "recordingCapabilities").mockResolvedValue({ supported, systemAudio: { kind: "available" } });
+  vi.spyOn(mailClient, "recordingCapabilities").mockResolvedValue({ supported, systemAudio: { kind: "available" }, speechAnalyzer: false });
   vi.spyOn(mailClient, "recordingStatus").mockResolvedValue(idle);
   vi.spyOn(mailClient, "recordingSettings").mockResolvedValue(saved);
   const setSettings = vi.spyOn(mailClient, "setRecordingSettings").mockResolvedValue(undefined);

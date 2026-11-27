@@ -85,7 +85,10 @@ export { DEMO_ACCOUNT_ID };
 /** Matches `RecordingSettings::default()` in Rust. */
 const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
   recordMeetings: false,
+  microphoneDeviceUid: null,
+  transcriptionEngine: "auto",
   transcriptionModel: "fast",
+  transcriptionLanguage: null,
   transcribeDuringMeetings: true,
   keepAudio: "days7",
   offerToRecord: true,
@@ -2156,7 +2159,11 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       recordingSettings = { ...DEFAULT_RECORDING_SETTINGS, ...settings };
     },
     ...demoSignatureClient,
-    ...createDemoRecordings({ chosenModel: () => recordingSettings.transcriptionModel, seed: import.meta.env.VITE_DEMO_DATASET === "showcase" ? [{ version: 1, kind: "event", id: "one-on-one-prev", account: SHOWCASE_WORK_ACCOUNT, calendar: SHOWCASE_WORK_ACCOUNT, series: "series-one-on-one" }] : [] }),
+    ...createDemoRecordings({
+      chosenModel: () => recordingSettings.transcriptionModel,
+      usingSpeechAnalyzer: () => recordingSettings.transcriptionEngine !== "whisper" && false,
+      seed: import.meta.env.VITE_DEMO_DATASET === "showcase" ? [{ version: 1, kind: "event", id: "one-on-one-prev", account: SHOWCASE_WORK_ACCOUNT, calendar: SHOWCASE_WORK_ACCOUNT, series: "series-one-on-one" }] : [],
+    }),
     ...demoNotes,
     ...createDemoPlans({ tasks: () => tasks, goals: () => goals, contacts: () => client.listContactProfiles("", 5000), notes: demoNotes, threads: () => threads, latestMessageId: (id) => { const thread = threads.find((candidate) => candidate.id === id); return thread ? messagesFor(thread).at(-1)?.id ?? null : null; }, events: connectedEvents, promises: (accountId) => client.listOpenPromises(accountId) }),
     ...createDemoMeetings({

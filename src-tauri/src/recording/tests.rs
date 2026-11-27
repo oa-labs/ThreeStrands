@@ -653,3 +653,64 @@ fn a_restart_writes_to_the_same_folder_and_a_failed_first_retry_backs_off_again(
         "a restarted track keeps the recording's folder and clock"
     );
 }
+
+#[test]
+fn sleep_stops_active_recording_cleanly() {
+    let mut h = Harness::new();
+    let id = h.started();
+    h.backend.emit_frames(Track::Mic, 10);
+    h.service.tick();
+    h.service.stop_for_sleep();
+    let status = h.service.status();
+    assert_eq!(status.state, RecordingPhase::Idle);
+    assert_eq!(status.last_stop_reason, Some(StopReason::SystemSleep));
+    assert_eq!(h.stored(&id).state, RecordingState::Recorded);
+}
+
+#[test]
+fn digital_zero_system_tap_warns_after_sustained_mic_speech_and_clears_on_signal() {
+    let mut h = Harness::new();
+    h.started();
+    for _ in 0..(policy::SILENT_TAP_SPEECH_SECS - 1) {
+        h.backend.emit_frames_with_peak(Track::Mic, 16_000, 0.1);
+        h.backend.emit_frames_with_peak(Track::System, 16_000, 0.0);
+        h.service.tick();
+        assert!(!h.service.status().system_audio_silent_warning);
+    }
+    h.backend.emit_frames_with_peak(Track::Mic, 16_000, 0.1);
+    h.backend.emit_frames_with_peak(Track::System, 16_000, 0.0);
+    h.service.tick();
+    assert!(h.service.status().system_audio_silent_warning);
+    // Real system audio clears the warning.
+    h.backend.emit_frames_with_peak(Track::System, 16_000, 0.05);
+    h.service.tick();
+    assert!(!h.service.status().system_audio_silent_warning);
+}
+
+#[test]
+fn device_change_records_headphones_state_unless_any_output_used_speakers() {
+    let mut h = Harness::new();
+    let id = h.started();
+    h.backend
+        .emit_device_changed_route(Track::System, "AirPods", Some(true));
+    h.service.tick();
+    assert_eq!(
+        stored_track(&h.stored(&id), Track::System).is_headphones,
+        Some(true)
+    );
+    h.backend
+        .emit_device_changed_route(Track::System, "MacBook Speakers", Some(false));
+    h.service.tick();
+    assert_eq!(
+        stored_track(&h.stored(&id), Track::System).is_headphones,
+        Some(false)
+    );
+    h.backend
+        .emit_device_changed_route(Track::System, "AirPods", Some(true));
+    h.service.tick();
+    assert_eq!(
+        stored_track(&h.stored(&id), Track::System).is_headphones,
+        Some(false),
+        "stay false once speakers were used"
+    );
+}

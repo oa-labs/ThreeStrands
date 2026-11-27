@@ -14,7 +14,7 @@
 //! scheduler whose step runs on its own thread
 //! ([`super::transcribe::scheduler`]).
 
-use super::capture::{CaptureBackend, SystemAudioSupport, Track};
+use super::capture::{AudioInputDevice, CaptureBackend, SystemAudioSupport, Track};
 use super::retention;
 use super::segments;
 use super::settings::{RecordingSettings, TranscriptionModelChoice};
@@ -94,6 +94,7 @@ pub struct RecordingTranscriptLine {
 pub struct RecordingCapabilities {
     pub supported: bool,
     pub system_audio: SystemAudioSupport,
+    pub speech_analyzer: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -114,8 +115,10 @@ fn rfc3339(time: SystemTime) -> String {
 
 pub struct RecordingRuntime {
     service: Mutex<RecordingService>,
+    backend: Arc<dyn CaptureBackend>,
     pub(super) database: Arc<Database>,
     supported: bool,
+    pub(super) speech_analyzer: bool,
     audio_root: PathBuf,
     clock: Arc<dyn Clock + Send + Sync>,
     pub(super) notifier: Arc<dyn RecordingNotifier>,
@@ -147,6 +150,7 @@ impl RecordingRuntime {
             RecordingSettings::default()
         });
         let supported = backend.supported();
+        let speech_analyzer = supported && backend.speech_analyzer();
         let scheduler = Arc::new(Scheduler::new(
             transcription.transcriber,
             transcription.power,
@@ -170,13 +174,15 @@ impl RecordingRuntime {
         Self {
             service: Mutex::new(RecordingService::new(
                 database.clone(),
-                backend,
+                backend.clone(),
                 clock.clone(),
                 disk,
                 audio_root.clone(),
             )),
+            backend,
             database,
             supported,
+            speech_analyzer,
             audio_root,
             clock,
             notifier,
@@ -191,7 +197,15 @@ impl RecordingRuntime {
         RecordingCapabilities {
             supported: self.supported,
             system_audio: lock(&self.service).status().system_audio,
+            speech_analyzer: self.speech_analyzer,
         }
+    }
+
+    pub fn input_devices(&self) -> Vec<AudioInputDevice> {
+        if !self.supported {
+            return Vec::new();
+        }
+        self.backend.list_input_devices()
     }
 
     pub fn status(&self) -> RecordingStatus {
@@ -251,10 +265,20 @@ impl RecordingRuntime {
         );
     }
 
+    #[cfg(test)]
     pub fn start(
         &self,
         event_ref: Option<NoteReference>,
         title: &str,
+    ) -> Result<RecordingStatus, String> {
+        self.start_meeting(event_ref, title, &[])
+    }
+
+    pub fn start_meeting(
+        &self,
+        event_ref: Option<NoteReference>,
+        title: &str,
+        attendees: &[String],
     ) -> Result<RecordingStatus, String> {
         let title = title.trim();
         if title.is_empty() {
@@ -263,9 +287,10 @@ impl RecordingRuntime {
         if !self.supported {
             return Err(super::capture::UNSUPPORTED_MESSAGE.into());
         }
+        let microphone_uid = self.settings().microphone_device_uid;
         let (result, failed) = {
             let mut service = lock(&self.service);
-            let result = service.start(event_ref, title);
+            let result = service.start_with_options(event_ref, title, microphone_uid, attendees);
             (result, service.take_failed_start())
         };
         let created = result.as_ref().ok().and_then(|s| s.recording_id.clone());
@@ -302,6 +327,16 @@ impl RecordingRuntime {
             if let Err(error) = self.stop() {
                 log::warn!(target: "recording", "stopping before quit: {error}");
             }
+        }
+    }
+
+    /// Stops any active recording when the Mac enters system sleep and queues
+    /// transcription immediately.
+    pub fn stop_for_sleep(&self) {
+        if self.is_active() {
+            lock(&self.service).stop_for_sleep();
+            self.publish();
+            self.scheduler.wake();
         }
     }
 
@@ -799,6 +834,7 @@ mod tests {
                     id,
                     event_ref: None,
                     title: "Sync",
+                    attendees: &[],
                     started_at: ended,
                     audio_dir: &dir.to_string_lossy(),
                     tracks: &[(Track::Mic, crate::db::recordings::TrackState::Active)],
@@ -965,7 +1001,8 @@ mod tests {
             runtime.capabilities(),
             RecordingCapabilities {
                 supported: false,
-                system_audio: SystemAudioSupport::Unsupported
+                system_audio: SystemAudioSupport::Unsupported,
+                speech_analyzer: false,
             }
         );
         assert_eq!(
@@ -988,7 +1025,8 @@ mod tests {
             json,
             serde_json::json!({
                 "supported": true,
-                "systemAudio": { "kind": "needsMacos", "major": 14, "minor": 2 }
+                "systemAudio": { "kind": "needsMacos", "major": 14, "minor": 2 },
+                "speechAnalyzer": h.runtime.capabilities().speech_analyzer,
             })
         );
     }
@@ -1042,6 +1080,7 @@ mod tests {
                 id: "r1",
                 event_ref: None,
                 title: "Sync",
+                attendees: &[],
                 started_at: "2026-11-27T09:00:00Z",
                 audio_dir: &outside.path().to_string_lossy(),
                 tracks: &[],
@@ -1148,6 +1187,7 @@ mod tests {
                 id: "crashed",
                 event_ref: None,
                 title: "Sync",
+                attendees: &[],
                 started_at: "2026-11-27T09:00:00Z",
                 audio_dir: &dir.to_string_lossy(),
                 tracks: &[
@@ -1171,6 +1211,7 @@ mod tests {
                 id: "silent",
                 event_ref: None,
                 title: "Sync",
+                attendees: &[],
                 started_at: "2026-11-27T09:30:00Z",
                 audio_dir: &h.root.path().join("silent").to_string_lossy(),
                 tracks: &[],

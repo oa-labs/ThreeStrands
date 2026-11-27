@@ -27,11 +27,27 @@ pub trait SpeechEngine {
     /// The sentences in one span: start and end in milliseconds from the
     /// span's first sample, and text.
     fn transcribe(&mut self, samples: &[f32]) -> Result<Vec<(u64, u64, String)>, String>;
+    /// Language code detected and pinned by the engine, if any.
+    fn detected_language(&self) -> Option<&str> {
+        None
+    }
 }
 
-/// Reads one of the app's 16 kHz mono 16-bit WAV segments as samples in
-/// -1..1. Anything else is refused.
+/// Computes the root-mean-square energy of `samples` (`0.0` when empty).
+pub fn slice_rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f64 = samples.iter().map(|&s| (s as f64) * (s as f64)).sum();
+    (sum_sq / samples.len() as f64).sqrt() as f32
+}
+
+/// Reads one of the app's 16 kHz mono segment files (`.wav` or transcoded
+/// `.m4a`) as samples in `-1..1`. Anything else is refused.
 pub fn read_segment(path: &Path) -> Result<Vec<f32>, String> {
+    if path.extension().and_then(|e| e.to_str()) == Some("m4a") {
+        return super::transcode::read_m4a_samples(path);
+    }
     use std::io::Read;
     let file = std::fs::File::open(path).map_err(|e| format!("opening the segment: {e}"))?;
     let length = file.metadata().map_err(|e| e.to_string())?.len();
@@ -233,16 +249,28 @@ fn transcribe_span(
 ) -> Result<Vec<TranscriptLine>, String> {
     let span_start_ms = buffer_start_ms + spans::samples_to_ms(start);
     let span_ms = spans::samples_to_ms(end - start);
+    let span_samples = &buffer[start..end];
     Ok(engine
-        .transcribe(&buffer[start..end])?
+        .transcribe(span_samples)?
         .into_iter()
         .map(|(from, to, text)| {
             let from = from.min(span_ms);
+            let to = to.clamp(from, span_ms);
+            let s0 = (from as usize * policy::OUTPUT_SAMPLE_RATE as usize / 1000)
+                .min(span_samples.len());
+            let s1 = (to as usize * policy::OUTPUT_SAMPLE_RATE as usize / 1000)
+                .clamp(s0, span_samples.len());
+            let rms = if s1 > s0 {
+                slice_rms(&span_samples[s0..s1])
+            } else {
+                slice_rms(span_samples)
+            };
             TranscriptLine {
                 track,
                 start_ms: span_start_ms + from,
-                end_ms: span_start_ms + to.clamp(from, span_ms),
+                end_ms: span_start_ms + to,
                 text,
+                rms: Some(rms),
             }
         })
         .collect())

@@ -12,13 +12,14 @@
 //!   nothing, and they split each span into sentences for the echo merge.
 //! - Flash attention stays off; it crashes on macOS (anarlog).
 
+use super::merge::normalized_words;
 use super::spans::{ms_to_samples, Span};
 use super::stream::SpeechEngine;
 use super::worker::WorkerConfig;
 use crate::recording::policy;
 use whisper_rs::{
-    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
-    WhisperVadContext, WhisperVadContextParams, WhisperVadParams,
+    get_lang_str, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
+    WhisperState, WhisperVadContext, WhisperVadContextParams, WhisperVadParams,
 };
 
 pub struct WhisperEngine {
@@ -27,6 +28,9 @@ pub struct WhisperEngine {
     _context: WhisperContext,
     vad: WhisperVadContext,
     language: Option<String>,
+    detected_language: Option<String>,
+    initial_prompt: Option<String>,
+    prompt_words: Vec<String>,
     threads: i32,
 }
 
@@ -51,11 +55,19 @@ impl WhisperEngine {
         vad_parameters.set_n_threads(1);
         vad_parameters.set_use_gpu(false);
         let vad = WhisperVadContext::new(vad_model, vad_parameters).map_err(|e| e.to_string())?;
+        let prompt_words = config
+            .initial_prompt
+            .as_deref()
+            .map(normalized_words)
+            .unwrap_or_default();
         Ok(Self {
             state,
             _context: context,
             vad,
             language: config.language.clone(),
+            detected_language: None,
+            initial_prompt: config.initial_prompt.clone(),
+            prompt_words,
             threads,
         })
     }
@@ -101,12 +113,21 @@ impl SpeechEngine for WhisperEngine {
             .collect())
     }
 
+    fn detected_language(&self) -> Option<&str> {
+        self.detected_language.as_deref()
+    }
+
     fn transcribe(&mut self, samples: &[f32]) -> Result<Vec<(u64, u64, String)>, String> {
         let mut parameters = FullParams::new(SamplingStrategy::BeamSearch {
             beam_size: policy::WHISPER_BEAM_SIZE,
             patience: -1.0,
         });
-        parameters.set_language(Some(self.language.as_deref().unwrap_or("auto")));
+        let language = self
+            .language
+            .as_deref()
+            .or(self.detected_language.as_deref())
+            .unwrap_or("auto");
+        parameters.set_language(Some(language));
         parameters.set_n_threads(self.threads);
         parameters.set_print_progress(false);
         parameters.set_print_realtime(false);
@@ -117,15 +138,35 @@ impl SpeechEngine for WhisperEngine {
         parameters.set_no_timestamps(false);
         // Each span stands alone, so a misheard span can't seed the next.
         parameters.set_no_context(true);
+        let seeded = samples.len() >= ms_to_samples(policy::WHISPER_PROMPT_MIN_SPAN_MS);
+        if seeded {
+            if let Some(prompt) = self.initial_prompt.as_deref() {
+                parameters.set_initial_prompt(prompt);
+            }
+        }
         self.state
             .full(parameters, samples)
             .map_err(|e| e.to_string())?;
         let mut sentences = Vec::new();
         for segment in self.state.as_iter() {
             let text = segment.to_str_lossy().map_err(|e| e.to_string())?;
+            if seeded
+                && !self.prompt_words.is_empty()
+                && normalized_words(&text) == self.prompt_words
+            {
+                continue;
+            }
             let start = segment.start_timestamp().max(0) as u64 * 10;
             let end = segment.end_timestamp().max(0) as u64 * 10;
             sentences.push((start, end.max(start), text.into_owned()));
+        }
+        if self.language.is_none() && self.detected_language.is_none() && !sentences.is_empty() {
+            let lang_id = self.state.full_lang_id_from_state();
+            if let Some(code) =
+                get_lang_str(lang_id).and_then(|s| policy::normalize_language_code(Some(s)))
+            {
+                self.detected_language = Some(code);
+            }
         }
         Ok(sentences)
     }

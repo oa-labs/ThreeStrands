@@ -1,11 +1,12 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mailClient } from "./data/client";
 import type { RecordingStatus } from "./domain";
 import { RecordingIndicator } from "./RecordingIndicator";
 
 const status = (overrides: Partial<RecordingStatus> = {}): RecordingStatus => ({
   state: "recording", recordingId: "r1", title: "Weekly Sync", eventRef: null, elapsedMs: 65_000, tracks: [],
-  systemAudio: { kind: "available" }, lastStopReason: null, ...overrides,
+  systemAudio: { kind: "available" }, systemAudioSilentWarning: false, lastStopReason: null, ...overrides,
 });
 
 describe("RecordingIndicator", () => {
@@ -56,5 +57,27 @@ describe("RecordingIndicator", () => {
     expect(screen.getByRole("group", { name: "Recording" })).toBeInTheDocument();
     expect(outside).toHaveFocus();
     outside.remove();
+  });
+
+  it("shows track signal state and links to System Settings when system audio is silent", () => {
+    const openSettings = vi.spyOn(mailClient, "openSystemAudioSettings").mockResolvedValue(undefined);
+    render(
+      <RecordingIndicator
+        status={status({
+          tracks: [
+            { track: "mic", state: "active", signalActive: true },
+            { track: "system", state: "active", signalActive: false },
+          ],
+          systemAudioSilentWarning: true,
+        })}
+        onStop={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText("Microphone signal active")).toBeInTheDocument();
+    expect(screen.getByLabelText("System audio silent")).toBeInTheDocument();
+    expect(screen.getByText("System audio is silent")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Check Permission" }));
+    expect(openSettings).toHaveBeenCalledOnce();
+    openSettings.mockRestore();
   });
 });

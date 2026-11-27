@@ -21,9 +21,13 @@
 //! pressure); it kills and reaps the worker on any breach, on a malformed
 //! frame, and on drop.
 
-use super::protocol::{self, FrameError, Request, Response, SegmentRequest};
+use super::protocol::{
+    self, FrameError, Request, Response, SegmentRequest, TranscriptLine, WorkerEngine,
+};
 use super::stream::{self, SpeechEngine, Streams};
-use super::{JobConfig, JobError, StopCheck, Transcribed, Transcriber, TranscriptionSession};
+use super::{
+    speech_analyzer, JobConfig, JobError, StopCheck, Transcribed, Transcriber, TranscriptionSession,
+};
 use crate::recording::policy;
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -98,9 +102,11 @@ fn open_engine(_config: &WorkerConfig) -> Result<Box<dyn SpeechEngine>, String> 
 /// The worker's settings, from the parent's first frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkerConfig {
+    pub engine: WorkerEngine,
     pub model_path: PathBuf,
     pub vad_model_path: PathBuf,
     pub language: Option<String>,
+    pub initial_prompt: Option<String>,
     pub threads: u32,
 }
 
@@ -114,21 +120,32 @@ pub(crate) fn run_worker_io<R: Read, W: Write>(
     let max = policy::WORKER_MAX_FRAME_BYTES;
     let config = match protocol::read_frame::<_, Request>(input, max) {
         Ok(Some(Request::Config {
+            engine,
             model_path,
             vad_model_path,
             language,
+            initial_prompt,
             threads,
         })) => WorkerConfig {
+            engine,
             model_path,
             vad_model_path,
             language,
+            initial_prompt,
             threads,
         },
         _ => return EXIT_PROTOCOL,
     };
-    let mut engine = match open(&config) {
-        Ok(engine) => engine,
-        Err(_) => return EXIT_MODEL,
+    let mut engine = if config.engine == WorkerEngine::SpeechAnalyzer {
+        if !speech_analyzer::is_available() {
+            return EXIT_MODEL;
+        }
+        None
+    } else {
+        match open(&config) {
+            Ok(engine) => Some(engine),
+            Err(_) => return EXIT_MODEL,
+        }
     };
     if protocol::write_frame(output, &Response::Ready).is_err() {
         return EXIT_PROTOCOL;
@@ -152,12 +169,59 @@ pub(crate) fn run_worker_io<R: Read, W: Write>(
             Ok(samples) => samples,
             Err(_) => return EXIT_AUDIO,
         };
-        let lines = match streams.feed(engine.as_mut(), &request, samples) {
-            Ok(lines) => lines,
-            Err(_) => return EXIT_ENGINE,
+        let (lines, held, detected_language) = match engine.as_deref_mut() {
+            Some(whisper) => {
+                let lines = match streams.feed(whisper, &request, samples) {
+                    Ok(lines) => lines,
+                    Err(_) => return EXIT_ENGINE,
+                };
+                let held = streams.held(request.track);
+                let detected_language = whisper.detected_language().map(str::to_string);
+                (lines, held, detected_language)
+            }
+            None => {
+                let raw = match speech_analyzer::transcribe_file(
+                    &request.wav_path,
+                    config.language.as_deref(),
+                    config.initial_prompt.as_deref(),
+                ) {
+                    Ok(raw) => raw,
+                    Err(_) => return EXIT_ENGINE,
+                };
+                let lines = raw
+                    .into_iter()
+                    .map(|(from_ms, to_ms, text)| {
+                        let s0 = (from_ms as usize * policy::OUTPUT_SAMPLE_RATE as usize / 1000)
+                            .min(samples.len());
+                        let s1 = (to_ms as usize * policy::OUTPUT_SAMPLE_RATE as usize / 1000)
+                            .clamp(s0, samples.len());
+                        let rms = if s1 > s0 {
+                            stream::slice_rms(&samples[s0..s1])
+                        } else {
+                            stream::slice_rms(&samples)
+                        };
+                        TranscriptLine {
+                            track: request.track,
+                            start_ms: request.start_ms + from_ms,
+                            end_ms: request.start_ms + to_ms,
+                            text,
+                            rms: Some(rms),
+                        }
+                    })
+                    .collect();
+                (lines, None, None)
+            }
         };
-        let held = streams.held(request.track);
-        if protocol::write_frame(output, &Response::Lines { lines, held }).is_err() {
+        if protocol::write_frame(
+            output,
+            &Response::Lines {
+                lines,
+                held,
+                detected_language,
+            },
+        )
+        .is_err()
+        {
             return EXIT_PROTOCOL;
         }
     }
@@ -312,9 +376,11 @@ impl WorkerSession {
             stop,
         };
         session.send(&Request::Config {
+            engine: config.engine,
             model_path: config.model_path.clone(),
             vad_model_path: config.vad_model_path.clone(),
             language: config.language.clone(),
+            initial_prompt: config.initial_prompt.clone(),
             threads: config.threads,
         })?;
         match session.wait(limits.load_timeout)? {
@@ -382,11 +448,19 @@ impl WorkerSession {
             .request_timeout
             .unwrap_or_else(|| policy::worker_request_timeout(audio_ms));
         match self.wait(timeout)? {
-            Response::Lines { lines, held } => {
+            Response::Lines {
+                lines,
+                held,
+                detected_language,
+            } => {
                 if lines.iter().any(|line| line.track != request.track) {
                     return Err(JobError::Failed(CRASH_MESSAGE.into()));
                 }
-                Ok(Transcribed { lines, held })
+                Ok(Transcribed {
+                    lines,
+                    held,
+                    detected_language,
+                })
             }
             Response::Ready => Err(JobError::Failed(CRASH_MESSAGE.into())),
         }
@@ -425,9 +499,11 @@ impl Transcriber for WorkerTranscriber {
             ..self.limits
         };
         let config = WorkerConfig {
+            engine: config.engine,
             model_path: config.model_path.clone(),
             vad_model_path: config.vad_model_path.clone(),
             language: config.language.clone(),
+            initial_prompt: config.initial_prompt.clone(),
             threads: config.threads,
         };
         let session = WorkerSession::spawn(&self.command, &config, limits, stop)?;
@@ -445,9 +521,11 @@ mod tests {
 
     fn config() -> WorkerConfig {
         WorkerConfig {
+            engine: WorkerEngine::Whisper,
             model_path: "/m/model.bin".into(),
             vad_model_path: "/m/vad.bin".into(),
             language: Some("en".into()),
+            initial_prompt: None,
             threads: 2,
         }
     }
@@ -455,9 +533,11 @@ mod tests {
     fn config_frame() -> Request {
         let config = config();
         Request::Config {
+            engine: config.engine,
             model_path: config.model_path,
             vad_model_path: config.vad_model_path,
             language: config.language,
+            initial_prompt: config.initial_prompt,
             threads: config.threads,
         }
     }
@@ -521,7 +601,7 @@ mod tests {
         let replies = responses(&out);
         assert_eq!(replies.len(), 3);
         assert_eq!(replies[0], Response::Ready);
-        let Response::Lines { lines, held } = &replies[2] else {
+        let Response::Lines { lines, held, .. } = &replies[2] else {
             panic!("{replies:?}");
         };
         assert_eq!(lines.len(), 1);
@@ -570,7 +650,7 @@ mod tests {
             0
         );
         let replies = responses(&out);
-        let Response::Lines { lines, held } = &replies[1] else {
+        let Response::Lines { lines, held, .. } = &replies[1] else {
             panic!("{replies:?}");
         };
         assert!(lines.is_empty(), "the speech at the end is held: {lines:?}");
@@ -587,7 +667,7 @@ mod tests {
             0
         );
         let replies = responses(&out);
-        let Response::Lines { lines, held } = &replies[1] else {
+        let Response::Lines { lines, held, .. } = &replies[1] else {
             panic!("{replies:?}");
         };
         let placed: Vec<(u64, u64, &str)> = lines
@@ -734,6 +814,7 @@ mod tests {
                 start_ms: 1,
                 end_ms: 2,
                 text: "Hello.".into(),
+                rms: None,
             }
         }
 
@@ -760,6 +841,7 @@ mod tests {
                     Response::Lines {
                         lines: vec![line(Track::Mic)],
                         held: None,
+                        detected_language: None,
                     },
                 ],
             );
@@ -773,7 +855,8 @@ mod tests {
                 session.transcribe(&request(), 60_000),
                 Ok(Transcribed {
                     lines: vec![line(Track::Mic)],
-                    held: None
+                    held: None,
+                    detected_language: None,
                 })
             );
         }
@@ -793,6 +876,7 @@ mod tests {
                 &[Response::Lines {
                     lines: vec![],
                     held: None,
+                    detected_language: None,
                 }],
             );
             for (name, file) in [
@@ -816,6 +900,7 @@ mod tests {
                     Response::Lines {
                         lines: vec![line(Track::System)],
                         held: None,
+                        detected_language: None,
                     },
                 ],
             );

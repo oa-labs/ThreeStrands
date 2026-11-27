@@ -29,7 +29,10 @@
 
 use super::pipeline::{Stamp, TrackPipeline};
 use super::ring::{ring, Consumer, Producer};
-use super::{CaptureBackend, CaptureSession, EventSink, SystemAudioSupport, Track, TrackTarget};
+use super::{
+    AudioInputDevice, CaptureBackend, CaptureSession, EventSink, SystemAudioSupport, Track,
+    TrackTarget,
+};
 use crate::recording::policy;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -38,18 +41,21 @@ use objc2_core_audio::{
     kAudioAggregateDeviceIsPrivateKey, kAudioAggregateDeviceIsStackedKey,
     kAudioAggregateDeviceMainSubDeviceKey, kAudioAggregateDeviceNameKey,
     kAudioAggregateDeviceTapAutoStartKey, kAudioAggregateDeviceTapListKey,
-    kAudioAggregateDeviceUIDKey, kAudioDevicePropertyDeviceIsAlive, kAudioDevicePropertyDeviceUID,
-    kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreams,
+    kAudioAggregateDeviceUIDKey, kAudioDevicePropertyDataSource, kAudioDevicePropertyDeviceIsAlive,
+    kAudioDevicePropertyDeviceUID, kAudioDevicePropertyNominalSampleRate,
+    kAudioDevicePropertyStreams, kAudioDevicePropertyTransportType,
+    kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE,
     kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice,
     kAudioHardwarePropertyDevices, kAudioHardwarePropertyTranslatePIDToProcessObject,
     kAudioObjectPropertyElementMain, kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal,
-    kAudioObjectPropertyScopeInput, kAudioObjectSystemObject, kAudioStreamPropertyVirtualFormat,
-    kAudioSubTapDriftCompensationKey, kAudioSubTapUIDKey, kAudioTapPropertyFormat,
-    AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart,
-    AudioDeviceStop, AudioHardwareCreateAggregateDevice, AudioHardwareCreateProcessTap,
-    AudioHardwareDestroyAggregateDevice, AudioHardwareDestroyProcessTap,
-    AudioObjectAddPropertyListener, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
-    AudioObjectID, AudioObjectPropertyAddress, CATapDescription, CATapMuteBehavior,
+    kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
+    kAudioStreamPropertyVirtualFormat, kAudioSubTapDriftCompensationKey, kAudioSubTapUIDKey,
+    kAudioTapPropertyFormat, AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID,
+    AudioDeviceIOProcID, AudioDeviceStart, AudioDeviceStop, AudioHardwareCreateAggregateDevice,
+    AudioHardwareCreateProcessTap, AudioHardwareDestroyAggregateDevice,
+    AudioHardwareDestroyProcessTap, AudioObjectAddPropertyListener, AudioObjectGetPropertyData,
+    AudioObjectGetPropertyDataSize, AudioObjectID, AudioObjectPropertyAddress, CATapDescription,
+    CATapMuteBehavior,
 };
 use objc2_core_audio_types::{
     kAudioFormatFlagIsFloat, kAudioFormatLinearPCM, AudioBuffer, AudioBufferList,
@@ -271,6 +277,111 @@ fn default_device(selector: u32) -> Option<AudioObjectID> {
     let device: AudioObjectID =
         unsafe { get(SYSTEM, selector, kAudioObjectPropertyScopeGlobal, None) }.ok()?;
     (device != 0).then_some(device)
+}
+
+fn device_uid(device: AudioObjectID) -> Option<String> {
+    // SAFETY: DeviceUID is a CFString.
+    unsafe { get_string(device, kAudioDevicePropertyDeviceUID) }.ok()
+}
+
+fn transport_type(device: AudioObjectID) -> Option<u32> {
+    // SAFETY: TransportType is a UInt32.
+    unsafe {
+        get::<u32>(
+            device,
+            kAudioDevicePropertyTransportType,
+            kAudioObjectPropertyScopeGlobal,
+            None,
+        )
+    }
+    .ok()
+}
+
+fn is_bluetooth_device(device: AudioObjectID) -> bool {
+    matches!(
+        transport_type(device),
+        Some(t) if t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE
+    )
+}
+
+fn output_is_headphones(device: AudioObjectID) -> bool {
+    if is_bluetooth_device(device) {
+        return true;
+    }
+    // SAFETY: DataSource is a UInt32 FourCC in output scope.
+    let source = unsafe {
+        get::<u32>(
+            device,
+            kAudioDevicePropertyDataSource,
+            kAudioObjectPropertyScopeOutput,
+            None,
+        )
+    }
+    .ok();
+    source == Some(u32::from_be_bytes(*b"hdpn"))
+}
+
+fn has_input_streams(device: AudioObjectID) -> bool {
+    // SAFETY: Streams is an array of AudioObjectIDs.
+    unsafe {
+        get_ids(
+            device,
+            kAudioDevicePropertyStreams,
+            kAudioObjectPropertyScopeInput,
+        )
+    }
+    .is_ok_and(|streams| !streams.is_empty())
+}
+
+fn input_devices_list() -> Vec<AudioInputDevice> {
+    // SAFETY: Devices is an array of AudioObjectIDs on the system object.
+    let Ok(ids) = (unsafe {
+        get_ids(
+            SYSTEM,
+            kAudioHardwarePropertyDevices,
+            kAudioObjectPropertyScopeGlobal,
+        )
+    }) else {
+        return Vec::new();
+    };
+    let default = default_device(kAudioHardwarePropertyDefaultInputDevice);
+    let mut devices = Vec::new();
+    for id in ids {
+        if !has_input_streams(id) {
+            continue;
+        }
+        let Some(uid) = device_uid(id) else {
+            continue;
+        };
+        if uid.is_empty() || uid.starts_with("app.threestrands.recording.tap.") {
+            continue;
+        }
+        let name = device_name(id);
+        if name.is_empty() {
+            continue;
+        }
+        devices.push(AudioInputDevice {
+            uid,
+            name,
+            is_default: Some(id) == default,
+            is_bluetooth: is_bluetooth_device(id),
+        });
+    }
+    devices
+}
+
+fn find_input_by_uid(uid: &str) -> Option<AudioObjectID> {
+    // SAFETY: Devices is an array of AudioObjectIDs on the system object.
+    let ids = unsafe {
+        get_ids(
+            SYSTEM,
+            kAudioHardwarePropertyDevices,
+            kAudioObjectPropertyScopeGlobal,
+        )
+    }
+    .ok()?;
+    ids.into_iter()
+        .find(|&id| has_input_streams(id) && device_uid(id).as_deref() == Some(uid))
 }
 
 /// The rate and total channel count of a device's input streams, which must
@@ -544,6 +655,20 @@ impl DeviceStream {
         Ok(stream)
     }
 
+    fn start(&mut self) -> Result<(), String> {
+        if !self.running {
+            // SAFETY: the IOProc was created on this device.
+            unsafe {
+                check(
+                    AudioDeviceStart(self.device, self.proc_id),
+                    "Starting the audio device",
+                )
+            }?;
+            self.running = true;
+        }
+        Ok(())
+    }
+
     fn stop(&mut self) {
         if self.running {
             // SAFETY: stopping the IOProc this stream started.
@@ -801,36 +926,39 @@ fn save_error(error: std::io::Error) -> String {
     format!("Couldn't save the recording's audio: {error}")
 }
 
-/// The loop both tracks share: follow pause, run the track's `step`
-/// (drain its device and follow device changes; `poll` is true about once a
-/// second), and flush once a second, until stopped or `step` fails.
+/// The loop both tracks share: follow pause (stopping the audio hardware so
+/// the OS microphone indicator turns off), run the track's `step` (drain its
+/// device and follow device changes; `poll` is true about once a second), and
+/// flush once a second, until stopped or `step` fails.
 fn capture_loop(
     control: &Control,
     pipeline: &mut TrackPipeline,
-    mut step: impl FnMut(&mut TrackPipeline, bool) -> Result<(), String>,
+    mut step: impl FnMut(&mut TrackPipeline, bool, bool, bool) -> Result<(), String>,
 ) {
     let mut last_poll = Instant::now();
+    let mut was_paused = false;
     loop {
         let stopping = control.stop.load(Ordering::SeqCst);
-        if let Err(error) = pipeline.set_paused(control.paused.load(Ordering::SeqCst)) {
-            pipeline.fail(&save_error(error));
-            return;
-        }
+        let paused = control.paused.load(Ordering::SeqCst);
+        let pause_changed = paused != was_paused;
+        was_paused = paused;
         let now = Instant::now();
         let poll = now.duration_since(last_poll) >= Duration::from_secs(1);
         if poll {
             last_poll = now;
         }
-        if let Err(error) = step(pipeline, poll && !stopping) {
+        if let Err(error) = step(pipeline, pause_changed, paused, poll && !stopping) {
             pipeline.fail(&error);
             return;
         }
         if stopping {
             return;
         }
-        if let Err(error) = pipeline.maybe_flush(now) {
-            pipeline.fail(&save_error(error));
-            return;
+        if !paused {
+            if let Err(error) = pipeline.maybe_flush(now) {
+                pipeline.fail(&save_error(error));
+                return;
+            }
         }
         std::thread::sleep(policy::CAPTURE_POLL_INTERVAL);
     }
@@ -862,9 +990,16 @@ fn run_microphone(
     ready: SyncSender<Result<(), String>>,
 ) {
     let mut watch = DeviceWatch::new();
-    let opened = default_device(kAudioHardwarePropertyDefaultInputDevice)
-        .ok_or_else(|| "No microphone is connected.".to_string())
-        .and_then(open_microphone);
+    let pinned_uid = target.microphone_uid.clone();
+    let resolve_mic = || -> Result<AudioObjectID, String> {
+        match pinned_uid.as_deref() {
+            Some(uid) => find_input_by_uid(uid)
+                .ok_or_else(|| "The selected microphone is not connected.".to_string()),
+            None => default_device(kAudioHardwarePropertyDefaultInputDevice)
+                .ok_or_else(|| "No microphone is connected.".to_string()),
+        }
+    };
+    let opened = resolve_mic().and_then(open_microphone);
     let mut stream = match opened {
         Ok(stream) => stream,
         Err(error) => {
@@ -880,52 +1015,68 @@ fn run_microphone(
                 return;
             }
         };
-    pipeline.report_device(&device_name(stream.device));
+    pipeline.report_device(&device_name(stream.device), None);
     let _ = ready.send(Ok(()));
     let mut reported = 0;
     let mut format_errors = 0;
-    capture_loop(&control, &mut pipeline, |pipeline, poll| {
-        stream.drain(pipeline).map_err(save_error)?;
-        report_overruns(Track::Mic, &stream, &mut reported);
-        let mut follow = watch.settled_change();
-        if stream.format_errors() > format_errors {
-            format_errors = stream.format_errors();
-            follow = true;
-        }
-        if poll {
-            let rate = nominal_rate(stream.device).unwrap_or(0.0).round() as u32;
-            follow |= !is_alive(stream.device) || rate != stream.rate;
-        }
-        if !follow {
-            return Ok(());
-        }
-        let device = default_device(kAudioHardwarePropertyDefaultInputDevice)
-            .ok_or("The microphone was disconnected.")?;
-        if device == stream.device && is_alive(device) {
-            if let Ok((rate, channels)) = input_format(device) {
-                if rate == stream.rate && channels == stream.channels {
-                    if stream.format_errors() > 0 {
-                        // Same device, same format, yet the callbacks don't
-                        // match it: fail, and let the service restart the
-                        // track with backoff.
-                        return Err(
-                            "The microphone delivered audio in an unexpected layout.".into()
-                        );
-                    }
-                    return Ok(());
+    capture_loop(
+        &control,
+        &mut pipeline,
+        |pipeline, pause_changed, paused, poll| {
+            if pause_changed {
+                if paused {
+                    stream.stop();
+                    stream.drain(pipeline).map_err(save_error)?;
+                    pipeline.set_paused(true).map_err(save_error)?;
+                } else {
+                    pipeline.set_paused(false).map_err(save_error)?;
+                    stream.start()?;
                 }
             }
-        }
-        stream.stop();
-        stream.drain(pipeline).map_err(save_error)?;
-        stream = open_microphone(device)?;
-        format_errors = 0;
-        reported = 0;
-        pipeline
-            .change_device(stream.rate, stream.channels, &device_name(device))
-            .map_err(save_error)?;
-        Ok(())
-    });
+            if paused {
+                return Ok(());
+            }
+            stream.drain(pipeline).map_err(save_error)?;
+            report_overruns(Track::Mic, &stream, &mut reported);
+            let mut follow = watch.settled_change();
+            if stream.format_errors() > format_errors {
+                format_errors = stream.format_errors();
+                follow = true;
+            }
+            if poll {
+                let rate = nominal_rate(stream.device).unwrap_or(0.0).round() as u32;
+                follow |= !is_alive(stream.device) || rate != stream.rate;
+            }
+            if !follow {
+                return Ok(());
+            }
+            let device = resolve_mic()?;
+            if device == stream.device && is_alive(device) {
+                if let Ok((rate, channels)) = input_format(device) {
+                    if rate == stream.rate && channels == stream.channels {
+                        if stream.format_errors() > 0 {
+                            // Same device, same format, yet the callbacks don't
+                            // match it: fail, and let the service restart the
+                            // track with backoff.
+                            return Err(
+                                "The microphone delivered audio in an unexpected layout.".into()
+                            );
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+            stream.stop();
+            stream.drain(pipeline).map_err(save_error)?;
+            stream = open_microphone(device)?;
+            format_errors = 0;
+            reported = 0;
+            pipeline
+                .change_device(stream.rate, stream.channels, &device_name(device))
+                .map_err(save_error)?;
+            Ok(())
+        },
+    );
     stream.stop();
     let _ = stream.drain(&mut pipeline);
     if let Err(error) = pipeline.finish() {
@@ -958,39 +1109,58 @@ fn run_system_audio(
             return;
         }
     };
-    pipeline.report_device(&tap.output_name);
+    pipeline.report_device(&tap.output_name, Some(output_is_headphones(tap.output)));
     let _ = ready.send(Ok(()));
     let mut reported = 0;
-    capture_loop(&control, &mut pipeline, |pipeline, _poll| {
-        tap.stream().drain(pipeline).map_err(save_error)?;
-        report_overruns(Track::System, tap.stream(), &mut reported);
-        if tap.stream().format_errors() > 0 {
-            // The service restarts the track with backoff.
-            return Err("System audio arrived in an unexpected layout.".into());
-        }
-        if !watch.settled_change() {
-            return Ok(());
-        }
-        let output = default_device(kAudioHardwarePropertyDefaultOutputDevice);
-        if output == Some(tap.output) {
-            return Ok(());
-        }
-        tap.stream().stop();
-        tap.stream().drain(pipeline).map_err(save_error)?;
-        // The replacement is made first, so a failure leaves the old tap to
-        // be cleaned up as the track ends; then the old one is removed.
-        drop(std::mem::replace(
-            &mut tap,
-            Tap::create(own).map_err(|e| format!("Couldn't follow the new audio output. {e}"))?,
-        ));
-        reported = 0;
-        let (rate, channels) = (tap.stream().rate, tap.stream().channels);
-        let name = tap.output_name.clone();
-        pipeline
-            .change_device(rate, channels, &name)
-            .map_err(save_error)?;
-        Ok(())
-    });
+    capture_loop(
+        &control,
+        &mut pipeline,
+        |pipeline, pause_changed, paused, _poll| {
+            if pause_changed {
+                if paused {
+                    tap.stream().stop();
+                    tap.stream().drain(pipeline).map_err(save_error)?;
+                    pipeline.set_paused(true).map_err(save_error)?;
+                } else {
+                    pipeline.set_paused(false).map_err(save_error)?;
+                    tap.stream().start()?;
+                }
+            }
+            if paused {
+                return Ok(());
+            }
+            tap.stream().drain(pipeline).map_err(save_error)?;
+            report_overruns(Track::System, tap.stream(), &mut reported);
+            if tap.stream().format_errors() > 0 {
+                // The service restarts the track with backoff.
+                return Err("System audio arrived in an unexpected layout.".into());
+            }
+            if !watch.settled_change() {
+                return Ok(());
+            }
+            let output = default_device(kAudioHardwarePropertyDefaultOutputDevice);
+            if output == Some(tap.output) {
+                return Ok(());
+            }
+            tap.stream().stop();
+            tap.stream().drain(pipeline).map_err(save_error)?;
+            // The replacement is made first, so a failure leaves the old tap to
+            // be cleaned up as the track ends; then the old one is removed.
+            drop(std::mem::replace(
+                &mut tap,
+                Tap::create(own)
+                    .map_err(|e| format!("Couldn't follow the new audio output. {e}"))?,
+            ));
+            reported = 0;
+            let (rate, channels) = (tap.stream().rate, tap.stream().channels);
+            let name = tap.output_name.clone();
+            let headphones = output_is_headphones(tap.output);
+            pipeline
+                .change_device_route(rate, channels, &name, Some(headphones))
+                .map_err(save_error)?;
+            Ok(())
+        },
+    );
     tap.stream().stop();
     let _ = tap.stream().drain(&mut pipeline);
     drop(tap);
@@ -1030,6 +1200,14 @@ impl MacBackend {
 impl CaptureBackend for MacBackend {
     fn system_audio(&self) -> SystemAudioSupport {
         self.system_audio
+    }
+
+    fn speech_analyzer(&self) -> bool {
+        crate::recording::transcribe::speech_analyzer::is_available()
+    }
+
+    fn list_input_devices(&self) -> Vec<AudioInputDevice> {
+        input_devices_list()
     }
 
     fn host_time_ns(&self) -> u64 {
@@ -1113,6 +1291,7 @@ mod tests {
         let target = TrackTarget {
             audio_dir: dir.path().to_path_buf(),
             origin_host_ns: backend.host_time_ns(),
+            microphone_uid: None,
         };
         let (events, received) = std::sync::mpsc::channel();
         let mic = backend.start(Track::Mic, &target, events.clone());

@@ -78,6 +78,16 @@ pub enum SystemAudioSupport {
     Unsupported,
 }
 
+/// An available audio input device, for Settings → Meeting Recording.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioInputDevice {
+    pub uid: String,
+    pub name: String,
+    pub is_default: bool,
+    pub is_bluetooth: bool,
+}
+
 /// Something a capture session reports. Health only, never samples.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CaptureEvent {
@@ -86,14 +96,19 @@ pub enum CaptureEvent {
     /// tap delivers nothing until some app plays audio, so the two tracks'
     /// first frames are far apart.
     FirstFrame { track: Track, host_time_ns: u64 },
-    /// `count` more frames were captured and written. Sent often enough
-    /// (at least once per flush interval) that silence means a stall.
-    Frames { track: Track, count: u64 },
+    /// `count` more frames were captured and written, with peak amplitude
+    /// (`0.0..=1.0`) over the interval. Sent often enough (at least once per
+    /// flush interval) that silence means a stall.
+    Frames { track: Track, count: u64, peak: f32 },
     /// The track can no longer capture. The service decides whether to
     /// restart it.
     Failed { track: Track, error: String },
     /// The device behind the track changed, such as headphones plugged in.
-    DeviceChanged { track: Track, device_name: String },
+    DeviceChanged {
+        track: Track,
+        device_name: String,
+        is_headphones: Option<bool>,
+    },
 }
 
 /// Where a backend sends events. The service owns the receiving end and
@@ -109,6 +124,8 @@ pub struct TrackTarget {
     /// ([`CaptureBackend::host_time_ns`]). Segment start times are measured
     /// from it.
     pub origin_host_ns: u64,
+    /// Optional explicit microphone UID; `None` follows the system default.
+    pub microphone_uid: Option<String>,
 }
 
 /// A platform's capture capability.
@@ -120,6 +137,16 @@ pub trait CaptureBackend: Send + Sync {
 
     /// Whether the system audio track can be started on this device.
     fn system_audio(&self) -> SystemAudioSupport;
+
+    /// Whether Apple `SpeechAnalyzer` is available on this device.
+    fn speech_analyzer(&self) -> bool {
+        false
+    }
+
+    /// Available audio input devices, empty on unsupported platforms.
+    fn list_input_devices(&self) -> Vec<AudioInputDevice> {
+        Vec::new()
+    }
 
     /// Now, in nanoseconds on the same monotonic clock that
     /// [`CaptureEvent::FirstFrame`] reports, so the service can place a

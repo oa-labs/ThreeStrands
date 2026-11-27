@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
-import type { RecordingCapabilities, RecordingSettings, TranscriptionModelStatus } from "./domain";
+import type { AudioInputDevice, RecordingCapabilities, RecordingSettings, TranscriptionModelStatus } from "./domain";
 import type { RecordingEvents } from "./recordingEvents";
 import { MeetingRecordingSettings } from "./MeetingRecordingSettings";
 
@@ -19,20 +19,29 @@ vi.mock("./recordingEvents", async (original) => ({
   },
 }));
 
-const available: RecordingCapabilities = { supported: true, systemAudio: { kind: "available" } };
+const available: RecordingCapabilities = { supported: true, systemAudio: { kind: "available" }, speechAnalyzer: false };
 const defaults: RecordingSettings = {
-  recordMeetings: false, transcriptionModel: "fast", transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
+  recordMeetings: false, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast", transcriptionLanguage: null,
+  transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
   summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: false,
 };
+const builtInMic: AudioInputDevice = { uid: "built-in", name: "MacBook Pro Microphone", isDefault: true, isBluetooth: false };
 
 const model = (name: "fast" | "accurate", overrides: Partial<TranscriptionModelStatus> = {}): TranscriptionModelStatus => ({
   model: name, bytes: name === "fast" ? 190_000_000 : 574_000_000, state: "absent", receivedBytes: 0, error: null, ...overrides,
 });
 
-function setup(capabilities = available, saved = defaults, usage = { recordings: 3, audioBytes: 5 * 1024 * 1024 }, models = [model("fast"), model("accurate")]) {
+function setup(
+  capabilities = available,
+  saved = defaults,
+  usage = { recordings: 3, audioBytes: 5 * 1024 * 1024 },
+  models = [model("fast"), model("accurate")],
+  devices: AudioInputDevice[] = [builtInMic],
+) {
   vi.spyOn(mailClient, "transcriptionModels").mockResolvedValue(models);
   vi.spyOn(mailClient, "recordingSettings").mockResolvedValue(saved);
   vi.spyOn(mailClient, "recordingsUsage").mockResolvedValue(usage);
+  vi.spyOn(mailClient, "recordingInputDevices").mockResolvedValue(devices);
   const save = vi.spyOn(mailClient, "setRecordingSettings").mockResolvedValue(undefined);
   render(<MeetingRecordingSettings capabilities={capabilities} />);
   return { save };
@@ -103,7 +112,7 @@ describe("MeetingRecordingSettings", () => {
   });
 
   it("says system audio needs macOS 14.4 and that recordings will be microphone only", async () => {
-    setup({ supported: true, systemAudio: { kind: "needsMacos", major: 13, minor: 6 } });
+    setup({ supported: true, systemAudio: { kind: "needsMacos", major: 13, minor: 6 }, speechAnalyzer: false });
     const note = await screen.findByRole("note");
     expect(note).toHaveTextContent("macOS 14.4");
     expect(note).toHaveTextContent("microphone only");
@@ -286,5 +295,45 @@ describe("Transcription Model", () => {
     const fast = await group("Fast model");
     fireEvent.click(await fast.findByRole("button", { name: "Download" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("already downloading");
+  });
+
+  it("lists microphones, saves the choice, and warns about Bluetooth headsets", async () => {
+    const airpods: AudioInputDevice = { uid: "bt-airpods", name: "AirPods Pro", isDefault: false, isBluetooth: true };
+    const { save } = setup(available, defaults, undefined, undefined, [builtInMic, airpods]);
+    const field = await screen.findByRole("combobox", { name: "Microphone" });
+    await waitFor(() => expect(field).toBeEnabled());
+    expect(field).toHaveValue("");
+    expect(field).toHaveAccessibleDescription();
+    expect(within(field).getAllByRole("option").map((o) => o.textContent)).toEqual(["System Default", "MacBook Pro Microphone (Default)", "AirPods Pro"]);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+
+    fireEvent.change(field, { target: { value: "bt-airpods" } });
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ ...defaults, microphoneDeviceUid: "bt-airpods" }));
+    expect(await screen.findByRole("note")).toHaveTextContent("Bluetooth headsets");
+  });
+
+  it("offers Apple On-Device first when SpeechAnalyzer is available, and lets the user switch to Whisper", async () => {
+    const { save } = setup({ ...available, speechAnalyzer: true });
+    const field = await screen.findByRole("combobox", { name: "Transcription Model" });
+    await waitFor(() => expect(field).toBeEnabled());
+    expect(field).toHaveValue("apple");
+    expect(within(field).getAllByRole("option").map((o) => o.textContent)).toEqual(["Apple On-Device", "Fast", "Accurate"]);
+
+    fireEvent.change(field, { target: { value: "accurate" } });
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, transcriptionEngine: "whisper", transcriptionModel: "accurate" }));
+    fireEvent.change(field, { target: { value: "apple" } });
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, transcriptionEngine: "speechAnalyzer", transcriptionModel: "accurate" }));
+  });
+
+  it("saves Transcription Language and returns null for Auto", async () => {
+    const { save } = setup();
+    const field = await screen.findByRole("combobox", { name: "Transcription Language" });
+    await waitFor(() => expect(field).toBeEnabled());
+    expect(field).toHaveValue("");
+    expect(field).toHaveAccessibleDescription();
+    fireEvent.change(field, { target: { value: "es" } });
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, transcriptionLanguage: "es" }));
+    fireEvent.change(field, { target: { value: "" } });
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, transcriptionLanguage: null }));
   });
 });

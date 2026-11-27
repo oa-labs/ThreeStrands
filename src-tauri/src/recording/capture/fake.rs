@@ -24,6 +24,7 @@ struct TrackScript {
 
 struct Script {
     system: SystemAudioSupport,
+    speech_analyzer: bool,
     host_time_ns: u64,
     tracks: HashMap<Track, TrackScript>,
 }
@@ -38,6 +39,7 @@ impl FakeBackend {
         Self {
             script: Arc::new(Mutex::new(Script {
                 system: SystemAudioSupport::Available,
+                speech_analyzer: false,
                 host_time_ns: 0,
                 tracks: HashMap::new(),
             })),
@@ -51,6 +53,10 @@ impl FakeBackend {
 
     pub fn set_system_audio(&self, support: SystemAudioSupport) {
         self.script.lock().unwrap().system = support;
+    }
+
+    pub fn set_speech_analyzer(&self, available: bool) {
+        self.script.lock().unwrap().speech_analyzer = available;
     }
 
     pub fn set_host_time_ns(&self, ns: u64) {
@@ -89,7 +95,11 @@ impl FakeBackend {
     }
 
     pub fn emit_frames(&self, track: Track, count: u64) {
-        self.emit(track, CaptureEvent::Frames { track, count });
+        self.emit_frames_with_peak(track, count, 0.1);
+    }
+
+    pub fn emit_frames_with_peak(&self, track: Track, count: u64, peak: f32) {
+        self.emit(track, CaptureEvent::Frames { track, count, peak });
     }
 
     pub fn emit_failed(&self, track: Track, error: &str) {
@@ -103,11 +113,21 @@ impl FakeBackend {
     }
 
     pub fn emit_device_changed(&self, track: Track, device_name: &str) {
+        self.emit_device_changed_route(track, device_name, None);
+    }
+
+    pub fn emit_device_changed_route(
+        &self,
+        track: Track,
+        device_name: &str,
+        is_headphones: Option<bool>,
+    ) {
         self.emit(
             track,
             CaptureEvent::DeviceChanged {
                 track,
                 device_name: device_name.to_string(),
+                is_headphones,
             },
         );
     }
@@ -142,6 +162,10 @@ impl FakeBackend {
 impl CaptureBackend for FakeBackend {
     fn system_audio(&self) -> SystemAudioSupport {
         self.script.lock().unwrap().system
+    }
+
+    fn speech_analyzer(&self) -> bool {
+        self.script.lock().unwrap().speech_analyzer
     }
 
     fn host_time_ns(&self) -> u64 {

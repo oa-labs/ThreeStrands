@@ -1,3 +1,4 @@
 ### New
-- On a Mac, ThreeStrands can record a meeting's microphone and your computer's audio from the menu bar, a meeting's details, or Today. Turn it on in **Settings → Meeting Recording**; the audio stays on your Mac, and you choose how long it is kept.
-- After you download a transcription model in **Settings → Meeting Recording**, recordings are transcribed on your Mac, and you can read a meeting's transcript from its details. Choose with **Transcribe During Meetings** whether a recording is transcribed while the meeting goes on or only after you stop.
+- On a Mac, ThreeStrands can record a meeting's microphone and your computer's audio from the menu bar, a meeting's details, or Today, stopping cleanly if your Mac goes to sleep. Turn it on and choose your microphone in **Settings → Meeting Recording**; saved audio is compressed after transcription, stays on your Mac, and follows your retention choice.
+- Recordings are transcribed on your Mac using **Apple On-Device** on macOS 26 and later or downloadable Whisper models (**Fast** and **Accurate**) in **Settings → Meeting Recording**, with a **Transcription Language** choice and a switch in **Transcribe During Meetings** to run during the meeting or only after you stop.
+

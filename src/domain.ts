@@ -1851,11 +1851,16 @@ export type InboxAgentsSnapshot = {
 };
 
 /** Meeting Recording settings. Device-local: never synced or exported. */
+export type TranscriptionEngineChoice = "auto" | "speechAnalyzer" | "whisper";
 export type TranscriptionModelChoice = "fast" | "accurate";
 export type KeepAudio = "days7" | "days30" | "untilDeleted" | "untilTranscribed";
+export type AudioInputDevice = { uid: string; name: string; isDefault: boolean; isBluetooth: boolean };
 export type RecordingSettings = {
   recordMeetings: boolean;
+  microphoneDeviceUid: string | null;
+  transcriptionEngine: TranscriptionEngineChoice;
   transcriptionModel: TranscriptionModelChoice;
+  transcriptionLanguage: string | null;
   /** Transcribe in batches while the meeting is recorded; off waits for Stop. */
   transcribeDuringMeetings: boolean;
   keepAudio: KeepAudio;
@@ -1868,8 +1873,8 @@ export type RecordingSettings = {
 };
 
 export type RecordingTrackName = "mic" | "system";
-export type RecordingTrackStatus = { track: RecordingTrackName; state: "active" | "restarting" | "failed" | "unavailable" };
-export type RecordingStopReason = "lengthLimit" | "lowDisk" | "allTracksFailed";
+export type RecordingTrackStatus = { track: RecordingTrackName; state: "active" | "restarting" | "failed" | "unavailable"; signalActive: boolean };
+export type RecordingStopReason = "lengthLimit" | "lowDisk" | "allTracksFailed" | "systemSleep";
 export type SystemAudioSupport = { kind: "available" } | { kind: "needsMacos"; major: number; minor: number } | { kind: "unsupported" };
 export type RecordingStatus = {
   state: "idle" | "recording" | "paused";
@@ -1879,6 +1884,7 @@ export type RecordingStatus = {
   elapsedMs: number;
   tracks: RecordingTrackStatus[];
   systemAudio: SystemAudioSupport;
+  systemAudioSilentWarning: boolean;
   lastStopReason: RecordingStopReason | null;
 };
 
@@ -1920,9 +1926,9 @@ export type RecordingTranscript = {
 };
 
 /** What this device can record, from `recording_capabilities`. `supported` is false off macOS, where all recording UI is hidden. */
-export type RecordingCapabilities = { supported: boolean; systemAudio: SystemAudioSupport };
+export type RecordingCapabilities = { supported: boolean; systemAudio: SystemAudioSupport; speechAnalyzer: boolean };
 export type MicrophonePermission = "granted" | "denied" | "restricted";
 export type RecordingPermissions = { microphone: MicrophonePermission };
 /** Recordings kept on this Mac. */
 export type RecordingsUsage = { recordings: number; audioBytes: number };
-export type RecordingStartRequest = { eventRef: import("./noteEntities").NoteReference | null; title: string };
+export type RecordingStartRequest = { eventRef: import("./noteEntities").NoteReference | null; title: string; attendees?: string[] };

@@ -28,7 +28,10 @@ describe("demoClient recording settings", () => {
     const client = createDemoClient(defaultDemoDataset());
     expect(await client.recordingSettings()).toEqual({
       recordMeetings: false,
+      microphoneDeviceUid: null,
+      transcriptionEngine: "auto",
       transcriptionModel: "fast",
+      transcriptionLanguage: null,
       transcribeDuringMeetings: true,
       keepAudio: "days7",
       offerToRecord: true,
@@ -53,7 +56,7 @@ describe("demoClient meeting recording", () => {
     try {
       vi.setSystemTime(new Date("2026-11-27T15:00:00Z"));
       const client = createDemoClient(defaultDemoDataset());
-      expect(await client.recordingCapabilities()).toEqual({ supported: true, systemAudio: { kind: "available" } });
+      expect(await client.recordingCapabilities()).toEqual({ supported: true, systemAudio: { kind: "available" }, speechAnalyzer: false });
       expect(await client.recordingStatus()).toMatchObject({ state: "idle", recordingId: null });
       const started = await client.startRecording({ eventRef, title: "Weekly Sync" });
       expect(started).toMatchObject({ state: "recording", title: "Weekly Sync", eventRef });

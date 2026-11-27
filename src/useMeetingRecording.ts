@@ -9,7 +9,7 @@ import { useTranscriptionModels } from "./useTranscriptionModels";
 
 export const IDLE_RECORDING_STATUS: RecordingStatus = {
   state: "idle", recordingId: null, title: null, eventRef: null, elapsedMs: 0, tracks: [],
-  systemAudio: { kind: "available" }, lastStopReason: null,
+  systemAudio: { kind: "available" }, systemAudioSilentWarning: false, lastStopReason: null,
 };
 
 export type RecordingController = {
@@ -22,6 +22,8 @@ export type RecordingController = {
   status: RecordingStatus;
   /** The model chosen in Settings, or null until known. */
   transcriptionModel: TranscriptionModelStatus | null;
+  /** True when Apple On-Device (`SpeechAnalyzer`) is the effective transcription engine. */
+  usingSpeechAnalyzer: boolean;
   /** Changes when a recording's rows may have changed, so lists read them again. */
   recordingsVersion: number;
   /** A start is waiting on the first-use consent. */
@@ -40,7 +42,7 @@ export type RecordingController = {
 
 /** Context for a webview that cannot record: every capability is absent. */
 export const UNSUPPORTED_RECORDING: RecordingController = {
-  capabilities: null, supported: false, enabled: false, status: IDLE_RECORDING_STATUS, transcriptionModel: null, recordingsVersion: 0,
+  capabilities: null, supported: false, enabled: false, status: IDLE_RECORDING_STATUS, transcriptionModel: null, usingSpeechAnalyzer: false, recordingsVersion: 0,
   consentPending: false, quitRequested: false,
   start: async () => {}, startAdHoc: async () => {}, stop: async () => {}, pause: async () => {}, resume: async () => {},
   acceptConsent: async () => {}, cancelConsent: () => {}, confirmQuit: async () => {}, cancelQuit: () => {},
@@ -178,11 +180,12 @@ export function useMeetingRecording({ onNotice, onOpenSettings }: {
   }, [supported]);
 
   const enabled = supported && settings?.recordMeetings === true;
+  const usingSpeechAnalyzer = capabilities?.speechAnalyzer === true && settings?.transcriptionEngine !== "whisper";
   const models = useTranscriptionModels(supported);
   const transcriptionModel = models?.find((model) => model.model === (settings?.transcriptionModel ?? "fast")) ?? null;
   return useMemo(() => ({
-    capabilities, supported, enabled, status, transcriptionModel, recordingsVersion,
+    capabilities, supported, enabled, status, transcriptionModel, usingSpeechAnalyzer, recordingsVersion,
     consentPending: pending !== null, quitRequested,
     start, startAdHoc, stop, pause, resume, acceptConsent, cancelConsent, confirmQuit, cancelQuit,
-  }), [capabilities, supported, enabled, status, transcriptionModel, recordingsVersion, pending, quitRequested, start, startAdHoc, stop, pause, resume, acceptConsent, cancelConsent, confirmQuit, cancelQuit]);
+  }), [capabilities, supported, enabled, status, transcriptionModel, usingSpeechAnalyzer, recordingsVersion, pending, quitRequested, start, startAdHoc, stop, pause, resume, acceptConsent, cancelConsent, confirmQuit, cancelQuit]);
 }

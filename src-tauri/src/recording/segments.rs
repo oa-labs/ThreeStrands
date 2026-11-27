@@ -28,6 +28,7 @@
 //! the last second of audio is lost.
 
 use crate::recording::capture::Track;
+use crate::recording::files;
 use crate::recording::policy;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
@@ -77,7 +78,7 @@ impl WavWriter {
     /// Creates the file with placeholder sizes (zero), which a crash leaves
     /// for [`repair_wav`] to fix.
     pub fn create(path: &Path) -> io::Result<Self> {
-        let mut file = BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?);
+        let mut file = BufWriter::new(files::create_private_file(path)?);
         file.write_all(&wav_header(0))?;
         Ok(Self { file, samples: 0 })
     }
@@ -186,6 +187,9 @@ pub enum ManifestEntry {
         segment: u32,
         file: String,
         start_ms: u64,
+        /// Duration in milliseconds recorded when transcoded to M4A/AAC.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audio_ms: Option<u64>,
     },
     #[serde(rename_all = "camelCase")]
     Gap {
@@ -201,6 +205,10 @@ pub fn manifest_path(dir: &Path, track: Track) -> PathBuf {
 
 pub fn segment_file_name(track: Track, segment: u32) -> String {
     format!("{}-{segment:04}.wav", track.as_str())
+}
+
+pub fn transcoded_file_name(track: Track, segment: u32) -> String {
+    format!("{}-{segment:04}.m4a", track.as_str())
 }
 
 /// Reads a manifest, skipping a torn last line or any line it can't parse.
@@ -238,7 +246,7 @@ impl SegmentWriter {
     /// Opens the writer for `track` in `dir`, continuing the numbering of
     /// segments already there (a restarted track keeps its earlier files).
     pub fn open(dir: &Path, track: Track) -> io::Result<Self> {
-        std::fs::create_dir_all(dir)?;
+        files::ensure_private_dir(dir)?;
         let last_number = read_manifest(dir, track)
             .iter()
             .filter_map(|entry| match entry {
@@ -247,10 +255,7 @@ impl SegmentWriter {
             })
             .max()
             .unwrap_or(0);
-        let manifest = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(manifest_path(dir, track))?;
+        let manifest = files::open_append_private_file(&manifest_path(dir, track))?;
         Ok(Self {
             dir: dir.to_path_buf(),
             track,
@@ -274,6 +279,7 @@ impl SegmentWriter {
             segment: number,
             file: file.clone(),
             start_ms,
+            audio_ms: None,
         })?;
         let wav = WavWriter::create(&self.dir.join(&file))?;
         self.last_number = number;
@@ -366,14 +372,27 @@ pub struct SavedTrack {
 pub fn saved_track(dir: &Path, track: Track) -> SavedTrack {
     let mut saved = SavedTrack::default();
     for entry in read_manifest(dir, track) {
-        let ManifestEntry::Segment { file, start_ms, .. } = entry else {
+        let ManifestEntry::Segment {
+            file,
+            start_ms,
+            audio_ms,
+            ..
+        } = entry
+        else {
             continue;
         };
-        let Ok(metadata) = std::fs::metadata(dir.join(&file)) else {
+        let path = dir.join(&file);
+        let Ok(metadata) = std::fs::metadata(&path) else {
             continue;
         };
-        let samples = metadata.len().saturating_sub(HEADER_BYTES) / BYTES_PER_SAMPLE;
-        let length = samples_to_ms(samples);
+        let length = if file.ends_with(".m4a") {
+            audio_ms.unwrap_or_else(|| {
+                crate::recording::transcribe::transcode::m4a_duration_ms(&path).unwrap_or(0)
+            })
+        } else {
+            let samples = metadata.len().saturating_sub(HEADER_BYTES) / BYTES_PER_SAMPLE;
+            samples_to_ms(samples)
+        };
         saved.audio_ms += length;
         saved.end_ms = saved.end_ms.max(start_ms + length);
     }
@@ -544,12 +563,14 @@ mod tests {
                 ManifestEntry::Segment {
                     segment: 1,
                     file: "mic-0001.wav".into(),
-                    start_ms: 250
+                    start_ms: 250,
+                    audio_ms: None,
                 },
                 ManifestEntry::Segment {
                     segment: 2,
                     file: "mic-0002.wav".into(),
-                    start_ms: 60_250
+                    start_ms: 60_250,
+                    audio_ms: None,
                 },
                 ManifestEntry::Gap {
                     gap: GapReason::Stop,
@@ -590,7 +611,8 @@ mod tests {
                 ManifestEntry::Segment {
                     segment: 1,
                     file: "mic-0001.wav".into(),
-                    start_ms: 0
+                    start_ms: 0,
+                    audio_ms: None,
                 },
                 ManifestEntry::Gap {
                     gap: GapReason::Pause,
@@ -600,7 +622,8 @@ mod tests {
                 ManifestEntry::Segment {
                     segment: 2,
                     file: "mic-0002.wav".into(),
-                    start_ms: 30_000
+                    start_ms: 30_000,
+                    audio_ms: None,
                 },
                 ManifestEntry::Gap {
                     gap: GapReason::DeviceChange,
@@ -610,7 +633,8 @@ mod tests {
                 ManifestEntry::Segment {
                     segment: 3,
                     file: "mic-0003.wav".into(),
-                    start_ms: 30_700
+                    start_ms: 30_700,
+                    audio_ms: None,
                 },
                 ManifestEntry::Gap {
                     gap: GapReason::Stop,
@@ -641,6 +665,7 @@ mod tests {
             segment: 1,
             file: "mic-0001.wav".into(),
             start_ms: 7,
+            audio_ms: None,
         })
         .unwrap();
         assert_eq!(line, r#"{"segment":1,"file":"mic-0001.wav","startMs":7}"#);

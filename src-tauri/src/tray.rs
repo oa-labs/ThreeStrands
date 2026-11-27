@@ -637,6 +637,7 @@ mod tests {
             elapsed_ms: 0,
             tracks: Vec::new(),
             system_audio: SystemAudioSupport::Available,
+            system_audio_silent_warning: false,
             last_stop_reason: None,
         }
     }
@@ -651,10 +652,12 @@ mod tests {
                 TrackStatus {
                     track: Track::Mic,
                     state: TrackRunState::Active,
+                    signal_active: false,
                 },
                 TrackStatus {
                     track: Track::System,
                     state: system,
+                    signal_active: false,
                 },
             ],
             ..idle()

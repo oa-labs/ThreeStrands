@@ -24,10 +24,12 @@ pub mod power;
 pub mod protocol;
 pub mod scheduler;
 pub mod spans;
+pub mod speech_analyzer;
 pub mod stream;
+pub mod transcode;
 pub mod worker;
 
-use protocol::{HeldAudio, SegmentRequest, TranscriptLine};
+use protocol::{HeldAudio, SegmentRequest, TranscriptLine, WorkerEngine};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -38,10 +40,13 @@ pub const ENGINE: &str = "whisper.cpp";
 /// What a job's worker is started with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobConfig {
+    pub engine: WorkerEngine,
     pub model_path: PathBuf,
     pub vad_model_path: PathBuf,
-    /// A whisper language code, or `None` to detect it.
+    /// A whisper/speech language code, or `None` to detect it.
     pub language: Option<String>,
+    /// Short, sanitized vocabulary hint built from the meeting title and attendees.
+    pub initial_prompt: Option<String>,
     pub threads: u32,
     /// The physical footprint the worker may reach before it is killed: the
     /// model's budget in the policy module.
@@ -87,11 +92,13 @@ pub trait Transcriber: Send + Sync {
 }
 
 /// One segment file's result.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Transcribed {
     pub lines: Vec<TranscriptLine>,
     /// What the worker now holds back for the file's track.
     pub held: Option<HeldAudio>,
+    /// Auto-detected language pinned by the engine on its first speech span.
+    pub detected_language: Option<String>,
 }
 
 /// One worker: from its first segment to the end of its batch or job.

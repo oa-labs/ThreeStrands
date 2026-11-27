@@ -10,7 +10,7 @@ const event = (overrides: Partial<ScheduleEvent> = {}): ScheduleEvent => ({
 const at = (iso: string) => new Date(iso);
 const status = (overrides: Partial<RecordingStatus> = {}): RecordingStatus => ({
   state: "idle", recordingId: null, title: null, eventRef: null, elapsedMs: 0, tracks: [],
-  systemAudio: { kind: "available" }, lastStopReason: null, ...overrides,
+  systemAudio: { kind: "available" }, systemAudioSilentWarning: false, lastStopReason: null, ...overrides,
 });
 const recording = (overrides: Partial<MeetingRecording> = {}): MeetingRecording => ({
   id: "r1", eventRef: null, title: "Weekly Sync", startedAt: "2026-11-27T15:00:00Z", endedAt: "2026-11-27T15:42:00Z",
@@ -104,6 +104,7 @@ describe("recordingDetail with transcription", () => {
     expect(recordingDetail(recording({ durationMs: 18 * 60_000 }), model("downloading"))).toBe("18 min · Waiting for a transcription model");
     expect(recordingDetail(recording({ durationMs: 18 * 60_000 }), model("failed"))).toBe("18 min · Waiting for a transcription model");
     expect(recordingDetail(recording({ durationMs: 18 * 60_000 }), model("ready"))).toBe("18 min · Waiting to transcribe");
+    expect(recordingDetail(recording({ durationMs: 18 * 60_000 }), model("absent"), null, true)).toBe("18 min · Waiting to transcribe");
     expect(recordingDetail(recording({ durationMs: 18 * 60_000 }), null)).toBe("18 min · Waiting to transcribe");
   });
 
@@ -167,5 +168,6 @@ describe("formatting", () => {
     expect(stopReasonNotice("lengthLimit")).toContain("length limit");
     expect(stopReasonNotice("lowDisk")).toContain("disk space");
     expect(stopReasonNotice("allTracksFailed")).toContain("stopped working");
+    expect(stopReasonNotice("systemSleep")).toContain("sleep");
   });
 });

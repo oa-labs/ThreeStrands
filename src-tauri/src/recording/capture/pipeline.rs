@@ -58,6 +58,7 @@ pub struct TrackPipeline {
     first_frame_sent: bool,
     paused: bool,
     written_since_report: u64,
+    peak_since_report: f32,
     last_report: Instant,
 }
 
@@ -86,6 +87,7 @@ impl TrackPipeline {
             first_frame_sent: false,
             paused: false,
             written_since_report: 0,
+            peak_since_report: 0.0,
             last_report: Instant::now(),
         })
     }
@@ -103,20 +105,31 @@ impl TrackPipeline {
     /// Reports a device change and switches to the new device's format.
     /// The current run ends first.
     pub fn change_device(&mut self, rate: u32, channels: usize, name: &str) -> io::Result<()> {
+        self.change_device_route(rate, channels, name, None)
+    }
+
+    pub fn change_device_route(
+        &mut self,
+        rate: u32,
+        channels: usize,
+        name: &str,
+        is_headphones: Option<bool>,
+    ) -> io::Result<()> {
         self.end_run(GapReason::DeviceChange)?;
         if rate != self.rate {
             self.rate = rate;
             self.resampler = Resampler::new(rate, policy::OUTPUT_SAMPLE_RATE);
         }
         self.channels = channels.max(1);
-        self.report_device(name);
+        self.report_device(name, is_headphones);
         Ok(())
     }
 
-    pub fn report_device(&self, name: &str) {
+    pub fn report_device(&self, name: &str, is_headphones: Option<bool>) {
         self.send(CaptureEvent::DeviceChanged {
             track: self.track,
             device_name: name.to_string(),
+            is_headphones,
         });
     }
 
@@ -181,6 +194,9 @@ impl TrackPipeline {
                 .chunks_exact(channels)
                 .map(|frame| frame.iter().sum::<f32>() / channels as f32),
         );
+        for &sample in &self.mono {
+            self.peak_since_report = self.peak_since_report.max(sample.abs());
+        }
         let at_ms = self.next_output_ms();
         let mut resampled = std::mem::take(&mut self.resampled);
         self.resampler.process(&self.mono, &mut resampled);
@@ -226,8 +242,10 @@ impl TrackPipeline {
             self.send(CaptureEvent::Frames {
                 track: self.track,
                 count: self.written_since_report,
+                peak: self.peak_since_report,
             });
             self.written_since_report = 0;
+            self.peak_since_report = 0.0;
         }
         Ok(())
     }
@@ -267,6 +285,7 @@ mod tests {
         let target = TrackTarget {
             audio_dir: dir.path().to_path_buf(),
             origin_host_ns: ORIGIN,
+            microphone_uid: None,
         };
         (
             TrackPipeline::new(Track::Mic, &target, rate, channels, sender).unwrap(),
@@ -405,7 +424,8 @@ mod tests {
         assert!(events.try_iter().any(|e| e
             == CaptureEvent::DeviceChanged {
                 track: Track::Mic,
-                device_name: "AirPods".into()
+                device_name: "AirPods".into(),
+                is_headphones: None,
             }));
     }
 

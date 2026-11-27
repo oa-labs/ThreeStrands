@@ -118,6 +118,8 @@ struct Script {
     /// What the worker reports holding after the file starting at (track,
     /// start ms); nothing otherwise.
     held: HashMap<(Track, u64), HeldAudio>,
+    /// Detected language reported back by the fake worker.
+    detected_language: Option<String>,
     /// The memory budget each worker was started with.
     budgets: Vec<u64>,
 }
@@ -162,7 +164,7 @@ impl TranscriptionSession for FakeSession {
         request: &SegmentRequest,
         audio_ms: u64,
     ) -> Result<Transcribed, JobError> {
-        let (index, block, text, held) = {
+        let (index, block, text, held, detected_language) = {
             let mut script = self.script.lock().unwrap();
             script.requests.push(request.clone());
             let text = script
@@ -178,7 +180,14 @@ impl TranscriptionSession for FakeSession {
                     ),
                 });
             let held = script.held.get(&(request.track, request.start_ms)).cloned();
-            (script.requests.len() - 1, script.block, text, held)
+            let detected_language = script.detected_language.clone();
+            (
+                script.requests.len() - 1,
+                script.block,
+                text,
+                held,
+                detected_language,
+            )
         };
         if block {
             loop {
@@ -199,8 +208,10 @@ impl TranscriptionSession for FakeSession {
                 start_ms: request.start_ms,
                 end_ms: request.start_ms + audio_ms,
                 text,
+                rms: None,
             }],
             held,
+            detected_language,
         })
     }
 }
@@ -247,11 +258,32 @@ impl Harness {
         )
     }
 
+    fn with_speech_analyzer() -> Self {
+        let fake = FakeTranscriber::default();
+        Self::build(
+            test_pins(1),
+            local_urls(1),
+            Arc::new(fake.clone()),
+            fake,
+            true,
+        )
+    }
+
     fn with(
         pins: Pins,
         urls: UrlPolicy,
         transcriber: Arc<dyn Transcriber>,
         fake: FakeTranscriber,
+    ) -> Self {
+        Self::build(pins, urls, transcriber, fake, false)
+    }
+
+    fn build(
+        pins: Pins,
+        urls: UrlPolicy,
+        transcriber: Arc<dyn Transcriber>,
+        fake: FakeTranscriber,
+        speech_analyzer: bool,
     ) -> Self {
         let database = Arc::new(Database::open_memory());
         let calls = Arc::new(Recorder::default());
@@ -259,6 +291,7 @@ impl Harness {
         let data = TempDir::new();
         let models_dir = data.path().join("recording-models");
         let backend = FakeBackend::new();
+        backend.set_speech_analyzer(speech_analyzer);
         let power = Arc::new(Power(AtomicBool::new(true)));
         let memory = Arc::new(Memory {
             pressure: Mutex::new(MemoryPressure::Normal),
@@ -329,6 +362,7 @@ impl Harness {
                 id,
                 event_ref: None,
                 title: "Weekly Sync",
+                attendees: &[],
                 started_at: started,
                 audio_dir: &dir.to_string_lossy(),
                 tracks: &[
@@ -1549,6 +1583,7 @@ impl TranscriptionSession for StreamSession {
         Ok(Transcribed {
             lines,
             held: self.streams.held(request.track),
+            detected_language: None,
         })
     }
 }
@@ -1589,6 +1624,7 @@ fn batches_give_the_transcript_and_percentages_of_one_worker() {
             id: "whole",
             event_ref: None,
             title: "Weekly Sync",
+            attendees: &[],
             started_at: "2026-11-27T10:00:00Z",
             audio_dir: &dir.to_string_lossy(),
             tracks: &[(Track::Mic, TrackState::Active)],
@@ -1693,6 +1729,7 @@ impl TranscriptionSession for TextSession {
                     request.start_ms / 60_000,
                     request.track.as_str()
                 ),
+                rms: None,
             })
             .collect();
         let bytes: usize = lines
@@ -1700,7 +1737,11 @@ impl TranscriptionSession for TextSession {
             .map(|line| std::mem::size_of::<TranscriptLine>() + line.text.capacity())
             .sum();
         self.0.fetch_add(bytes as u64, Ordering::SeqCst);
-        Ok(Transcribed { lines, held: None })
+        Ok(Transcribed {
+            lines,
+            held: None,
+            detected_language: None,
+        })
     }
 }
 
@@ -1798,6 +1839,169 @@ fn a_two_hour_job_holds_its_transcript_and_nothing_else_that_grows() {
         after_finish <= SLACK,
         "{after_finish} bytes left after the job"
     );
+}
+
+#[test]
+fn speech_analyzer_transcribes_without_whisper_model_when_available() {
+    use crate::recording::settings::TranscriptionEngineChoice;
+    use crate::recording::transcribe::WorkerEngine;
+
+    let h = Harness::with_speech_analyzer();
+    h.runtime
+        .set_settings(RecordingSettings {
+            transcription_engine: TranscriptionEngineChoice::Auto,
+            ..Default::default()
+        })
+        .unwrap();
+    h.recorded(
+        "r-sa",
+        "2026-11-27T10:00:00Z",
+        60,
+        60,
+        RecordingState::Recorded,
+    );
+    h.run();
+    assert_eq!(h.state("r-sa"), RecordingState::Transcribed);
+    let opened = h.script().opened.clone();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].engine, WorkerEngine::SpeechAnalyzer);
+}
+
+#[test]
+fn explicit_whisper_engine_requires_whisper_model_even_when_speech_analyzer_available() {
+    use crate::recording::settings::TranscriptionEngineChoice;
+    use crate::recording::transcribe::WorkerEngine;
+
+    let h = Harness::with_speech_analyzer();
+    h.runtime
+        .set_settings(RecordingSettings {
+            transcription_engine: TranscriptionEngineChoice::Whisper,
+            ..Default::default()
+        })
+        .unwrap();
+    h.recorded(
+        "r-wh",
+        "2026-11-27T10:00:00Z",
+        60,
+        60,
+        RecordingState::Recorded,
+    );
+    h.run();
+    assert_eq!(h.state("r-wh"), RecordingState::Recorded);
+    assert!(h.script().opened.is_empty());
+
+    h.install_models();
+    h.run();
+    assert_eq!(h.state("r-wh"), RecordingState::Transcribed);
+    let opened = h.script().opened.clone();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].engine, WorkerEngine::Whisper);
+}
+
+#[test]
+fn initial_prompt_and_detected_language_propagate_across_batches() {
+    let h = Harness::new();
+    h.install_models();
+    h.install_accurate();
+    h.runtime
+        .set_settings(RecordingSettings {
+            transcription_model: TranscriptionModelChoice::Accurate,
+            ..Default::default()
+        })
+        .unwrap();
+    h.script().detected_language = Some("es".into());
+    let id = h
+        .runtime
+        .start_meeting(None, "Q4 Roadmap Sync", &["Alice".into(), "Bob".into()])
+        .unwrap()
+        .recording_id
+        .unwrap();
+
+    let mut mic = h.live_mic();
+    let batch_ms = policy::LIVE_BATCH.as_millis() as u64;
+    let chunk_s = (batch_ms / 1000) + 60;
+    mic.write(&seconds(chunk_s), 0).unwrap();
+    mic.flush().unwrap();
+    h.run();
+
+    mic.end_run(GapReason::Stop).unwrap();
+    drop(mic);
+    h.stop();
+    h.run();
+
+    assert_eq!(h.state(&id), RecordingState::Transcribed);
+    let opened = h.script().opened.clone();
+    assert!(opened.len() >= 2, "expected multiple batches: {opened:?}");
+    assert_eq!(
+        opened[0].initial_prompt.as_deref(),
+        Some("Q4, Roadmap, Sync, Alice, Bob")
+    );
+    assert_eq!(opened[0].language, None);
+    assert_eq!(opened[1].initial_prompt, opened[0].initial_prompt);
+    assert_eq!(opened[1].language.as_deref(), Some("es"));
+}
+
+#[test]
+fn headphones_skips_echo_drop_and_post_transcription_transcodes_to_m4a() {
+    use crate::db::recordings::TrackPatch;
+
+    let h = Harness::new();
+    h.install_models();
+    let dir = h.recorded(
+        "r-hp",
+        "2026-11-27T10:00:00Z",
+        20,
+        20,
+        RecordingState::Recorded,
+    );
+    h.database
+        .update_recording_track(
+            "r-hp",
+            Track::System,
+            &TrackPatch {
+                is_headphones: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    {
+        let mut script = h.script();
+        script.texts.insert(
+            (Track::Mic, 0),
+            "Thanks everyone for confirming Thursday tomorrow.".into(),
+        );
+        script.texts.insert(
+            (Track::System, 5_000),
+            "Thanks everyone for confirming Thursday tomorrow.".into(),
+        );
+    }
+    h.run();
+    assert_eq!(h.state("r-hp"), RecordingState::Transcribed);
+    let transcript = h.runtime.recording_transcript("r-hp").unwrap();
+    assert_eq!(
+        transcript.lines.len(),
+        2,
+        "headphones should exempt overlapping matching mic line from echo removal"
+    );
+
+    #[cfg(target_os = "macos")]
+    {
+        assert!(dir.join("mic-0001.m4a").is_file());
+        assert!(!dir.join("mic-0001.wav").exists());
+        h.database
+            .finish_recording(
+                "r-hp",
+                "2026-11-27T10:00:00Z",
+                20_000,
+                RecordingState::Failed,
+                Some("retry test"),
+            )
+            .unwrap();
+        h.runtime.transcribe_recording("r-hp").unwrap();
+        h.run();
+        assert_eq!(h.state("r-hp"), RecordingState::Transcribed);
+    }
+    let _ = dir;
 }
 
 /// The real worker over two hours of speech-like audio, in batches as

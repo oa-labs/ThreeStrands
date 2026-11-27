@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { mailClient } from "./data/client";
-import type { KeepAudio, RecordingCapabilities, RecordingSettings, RecordingsUsage, TranscriptionModelName, TranscriptionModelStatus } from "./domain";
+import type { AudioInputDevice, KeepAudio, RecordingCapabilities, RecordingSettings, RecordingsUsage, TranscriptionModelName, TranscriptionModelStatus } from "./domain";
 import { errorMessage } from "./errors";
 import { InlineConfirm } from "./InlineConfirm";
 import { announceRecordingSettingsChanged } from "./recordingEvents";
@@ -17,6 +17,23 @@ const KEEP_AUDIO: { value: KeepAudio; label: string }[] = [
 const MODELS: { value: TranscriptionModelName; label: string; note: string }[] = [
   { value: "fast", label: "Fast", note: "English only" },
   { value: "accurate", label: "Accurate", note: "many languages" },
+];
+
+const LANGUAGES: { value: string; label: string }[] = [
+  { value: "", label: "Auto" },
+  { value: "en", label: "English" },
+  { value: "es", label: "Spanish" },
+  { value: "fr", label: "French" },
+  { value: "de", label: "German" },
+  { value: "it", label: "Italian" },
+  { value: "pt", label: "Portuguese" },
+  { value: "nl", label: "Dutch" },
+  { value: "pl", label: "Polish" },
+  { value: "sv", label: "Swedish" },
+  { value: "ja", label: "Japanese" },
+  { value: "ko", label: "Korean" },
+  { value: "zh", label: "Chinese" },
+  { value: "hi", label: "Hindi" },
 ];
 /** Decimal megabytes, the way the model's download size is quoted. */
 const modelSize = (bytes: number) => `${Math.round(bytes / 1_000_000)} MB`;
@@ -75,6 +92,7 @@ function TranscriptionModelRow({ model, label, note, onDownload, onCancel, onDel
 export function MeetingRecordingSettings({ capabilities }: { capabilities: RecordingCapabilities }) {
   const [settings, setSettings] = useState<RecordingSettings | null>(null);
   const [usage, setUsage] = useState<RecordingsUsage | null>(null);
+  const [devices, setDevices] = useState<AudioInputDevice[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [permissionNote, setPermissionNote] = useState<string | null>(null);
@@ -82,15 +100,19 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
   const [message, setMessage] = useState<string | null>(null);
   const [deletingModel, setDeletingModel] = useState<TranscriptionModelName | null>(null);
   const models = useTranscriptionModels();
-  const ids = { record: useId(), keep: useId(), remind: useId(), usage: useId(), model: useId(), during: useId() };
+  const ids = {
+    record: useId(), microphone: useId(), keep: useId(), remind: useId(),
+    usage: useId(), model: useId(), language: useId(), during: useId(),
+  };
 
   const loadUsage = useCallback(async () => setUsage(await mailClient.recordingsUsage()), []);
   useEffect(() => {
     let active = true;
-    void Promise.all([mailClient.recordingSettings(), mailClient.recordingsUsage()]).then(([saved, used]) => {
+    void Promise.all([mailClient.recordingSettings(), mailClient.recordingsUsage(), mailClient.recordingInputDevices()]).then(([saved, used, inputs]) => {
       if (!active) return;
       setSettings(saved);
       setUsage(used);
+      setDevices(inputs);
     }, (reason: unknown) => { if (active) setError(errorMessage(reason)); });
     return () => { active = false; };
   }, []);
@@ -144,6 +166,13 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
   const confirm = (kind: Confirming) => { setMessage(null); setConfirming(kind); };
 
   const system = capabilities.systemAudio;
+  const activeDevice = settings?.microphoneDeviceUid
+    ? devices.find((device) => device.uid === settings.microphoneDeviceUid)
+    : devices.find((device) => device.isDefault);
+  const speechAnalyzerAvailable = capabilities.speechAnalyzer;
+  const selectedEngineValue = speechAnalyzerAvailable && settings?.transcriptionEngine !== "whisper"
+    ? "apple"
+    : (settings?.transcriptionModel ?? "fast");
   return (
     <section className="settings-section wide-label-settings" aria-label="Meeting Recording">
       <h3>Recording</h3>
@@ -163,6 +192,30 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
       {permissionNote ? <p className="form-error" role="alert">{permissionNote}</p> : null}
 
       <label className="settings-field settings-field-row">
+        <span>Microphone</span>
+        <select value={settings?.microphoneDeviceUid ?? ""} disabled={!settings} aria-describedby={ids.microphone}
+          onChange={(event) => void change({ microphoneDeviceUid: event.target.value || null })}>
+          <option value="">System Default</option>
+          {devices.map((device) => (
+            <option key={device.uid} value={device.uid}>
+              {device.isDefault ? `${device.name} (Default)` : device.name}
+            </option>
+          ))}
+          {settings?.microphoneDeviceUid && !devices.some((device) => device.uid === settings.microphoneDeviceUid) ? (
+            <option value={settings.microphoneDeviceUid}>{settings.microphoneDeviceUid} (Unavailable)</option>
+          ) : null}
+        </select>
+      </label>
+      <p className="settings-hint settings-field-detail" id={ids.microphone}>
+        Choose a specific microphone to avoid switching audio devices mid-call, or follow your Mac's default input.
+      </p>
+      {activeDevice?.isBluetooth ? (
+        <p className="settings-hint settings-field-detail" role="note">
+          Bluetooth headsets can drop audio quality into headset mode when recorded as a microphone; using your Mac's built-in mic keeps speaker audio crisp.
+        </p>
+      ) : null}
+
+      <label className="settings-field settings-field-row">
         <span>Keep Audio</span>
         <select value={settings?.keepAudio ?? "days7"} disabled={!settings} aria-describedby={ids.keep}
           onChange={(event) => void change({ keepAudio: event.target.value as KeepAudio })}>
@@ -175,13 +228,31 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
 
       <label className="settings-field settings-field-row">
         <span>Transcription Model</span>
-        <select value={settings?.transcriptionModel ?? "fast"} disabled={!settings} aria-describedby={ids.model}
-          onChange={(event) => void change({ transcriptionModel: event.target.value as TranscriptionModelName })}>
+        <select value={selectedEngineValue} disabled={!settings} aria-describedby={ids.model}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === "apple") void change({ transcriptionEngine: "speechAnalyzer" });
+            else if (speechAnalyzerAvailable) void change({ transcriptionEngine: "whisper", transcriptionModel: value as TranscriptionModelName });
+            else void change({ transcriptionModel: value as TranscriptionModelName });
+          }}>
+          {speechAnalyzerAvailable ? <option value="apple">Apple On-Device</option> : null}
           {MODELS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
       </label>
       <p className="settings-hint settings-field-detail" id={ids.model}>
-        Recordings are transcribed on this Mac, never uploaded, once the chosen model is downloaded. Fast suits English meetings; Accurate is larger and slower but handles many languages.
+        {speechAnalyzerAvailable
+          ? "Recordings are transcribed on this Mac, never uploaded. Apple On-Device needs no download; Whisper Fast and Accurate are optional downloadable models."
+          : "Recordings are transcribed on this Mac, never uploaded, once the chosen model is downloaded. Fast suits English meetings; Accurate is larger and slower but handles many languages."}
+      </p>
+      <label className="settings-field settings-field-row">
+        <span>Transcription Language</span>
+        <select value={settings?.transcriptionLanguage ?? ""} disabled={!settings} aria-describedby={ids.language}
+          onChange={(event) => void change({ transcriptionLanguage: event.target.value || null })}>
+          {LANGUAGES.map((option) => <option key={option.value || "auto"} value={option.value}>{option.label}</option>)}
+        </select>
+      </label>
+      <p className="settings-hint settings-field-detail" id={ids.language}>
+        Auto detects the spoken language once near the start of each recording. Whisper Fast supports English only.
       </p>
       <div className="settings-field-detail transcription-models">
         {MODELS.map((option) => (

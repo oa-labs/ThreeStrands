@@ -26,6 +26,14 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkerEngine {
+    #[default]
+    Whisper,
+    SpeechAnalyzer,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -34,10 +42,14 @@ use std::path::PathBuf;
 )]
 pub enum Request {
     Config {
+        #[serde(default)]
+        engine: WorkerEngine,
         model_path: PathBuf,
         vad_model_path: PathBuf,
-        /// A whisper language code, or `None` to detect it.
+        /// A whisper/speech language code, or `None` to detect it.
         language: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initial_prompt: Option<String>,
         threads: u32,
     },
     Segment(SegmentRequest),
@@ -83,13 +95,15 @@ pub struct HeldPiece {
 }
 
 /// A transcribed sentence, on the recording's clock.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptLine {
     pub track: Track,
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rms: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -106,6 +120,8 @@ pub enum Response {
         /// anything.
         #[serde(default)]
         held: Option<HeldAudio>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detected_language: Option<String>,
     },
 }
 
@@ -208,9 +224,11 @@ mod tests {
     #[test]
     fn frames_round_trip_in_camel_case() {
         let config = Request::Config {
+            engine: WorkerEngine::Whisper,
             model_path: "/m/ggml-small.en-q5_1.bin".into(),
             vad_model_path: "/m/ggml-silero-v5.1.2.bin".into(),
             language: Some("en".into()),
+            initial_prompt: Some("Weekly Sync".into()),
             threads: 4,
         };
         let bytes = frames(&[config.clone(), segment()]);
@@ -241,8 +259,10 @@ mod tests {
                 start_ms: 1,
                 end_ms: 2,
                 text: "Hi.".into(),
+                rms: Some(0.125),
             }],
             held: Some(held.clone()),
+            detected_language: Some("en".into()),
         };
         let mut out = Vec::new();
         write_frame(&mut out, &lines).unwrap();
@@ -272,7 +292,8 @@ mod tests {
             bare,
             Response::Lines {
                 lines: vec![],
-                held: None
+                held: None,
+                detected_language: None,
             }
         );
     }

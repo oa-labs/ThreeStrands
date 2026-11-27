@@ -9,8 +9,9 @@ use tauri::{Emitter, State};
 
 use crate::db::recordings::MeetingRecording;
 use crate::note_entities::NoteReference;
-use crate::recording::capture::SystemAudioSupport;
+use crate::recording::capture::{AudioInputDevice, SystemAudioSupport};
 use crate::recording::permissions::{self, RecordingPermissions};
+use crate::recording::policy;
 use crate::recording::runtime::RecordingTranscript;
 use crate::recording::runtime::{RecordingCapabilities, RecordingsUsage};
 use crate::recording::settings::{RecordingSettings, TranscriptionModelChoice};
@@ -42,6 +43,23 @@ pub(crate) async fn recording_capabilities(
 }
 
 #[tauri::command]
+pub(crate) async fn recording_input_devices(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<AudioInputDevice>> {
+    let runtime = state.recording.clone();
+    run_database_task(move || Ok::<_, String>(runtime.input_devices())).await
+}
+
+#[tauri::command]
+pub(crate) async fn open_system_audio_settings() -> AppResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        open::that(policy::SYSTEM_AUDIO_SETTINGS_URL).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) async fn recording_status(state: State<'_, AppState>) -> AppResult<RecordingStatus> {
     Ok(state.recording.status())
 }
@@ -50,10 +68,12 @@ pub(crate) async fn recording_status(state: State<'_, AppState>) -> AppResult<Re
 pub(crate) async fn recording_start(
     event_ref: Option<NoteReference>,
     title: String,
+    attendees: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> AppResult<RecordingStatus> {
     let runtime = state.recording.clone();
-    run_database_task(move || runtime.start(event_ref, &title)).await
+    let attendees = attendees.unwrap_or_default();
+    run_database_task(move || runtime.start_meeting(event_ref, &title, &attendees)).await
 }
 
 #[tauri::command]

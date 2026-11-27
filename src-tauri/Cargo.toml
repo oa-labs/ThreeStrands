@@ -148,7 +148,7 @@ block2 = "0.6"
 objc2-contacts = "0.3"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSRunningApplication", "block2", "objc2-uniform-type-identifiers"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSBundle", "NSData", "NSDate", "NSDictionary", "NSError", "NSHTTPCookieStorage", "NSObject", "NSOperation", "NSProcessInfo", "NSString", "NSURL", "NSURLAuthenticationChallenge", "NSURLCache", "NSURLCredential", "NSURLCredentialStorage", "NSURLProtectionSpace", "NSURLRequest", "NSURLResponse", "NSURLSession", "NSUUID", "NSValue"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSBundle", "NSData", "NSDate", "NSDictionary", "NSError", "NSHTTPCookieStorage", "NSNotification", "NSObject", "NSOperation", "NSProcessInfo", "NSString", "NSURL", "NSURLAuthenticationChallenge", "NSURLCache", "NSURLCredential", "NSURLCredentialStorage", "NSURLProtectionSpace", "NSURLRequest", "NSURLResponse", "NSURLSession", "NSUUID", "NSValue"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes", "CFDictionary", "CFString"] }
 objc2-quick-look-thumbnailing = { version = "0.3", default-features = false, features = ["std", "block2", "QLThumbnailGenerator", "QLThumbnailGenerationRequest", "objc2-core-foundation", "objc2-uniform-type-identifiers"] }

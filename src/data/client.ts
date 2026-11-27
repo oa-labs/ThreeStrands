@@ -123,6 +123,7 @@ import type {
   ImapConnectionUpdate,
   SendingIdentity,
   SendingIdentityInput,
+  AudioInputDevice,
   RecordingSettings,
   RecordingCapabilities,
   RecordingPermissions,
@@ -464,6 +465,8 @@ export interface MailClient extends CorrespondenceClient {
   setRecordingSettings(settings: RecordingSettings): Promise<void>;
   /** Whether this device can record; `supported` is false off macOS. */
   recordingCapabilities(): Promise<RecordingCapabilities>;
+  recordingInputDevices(): Promise<AudioInputDevice[]>;
+  openSystemAudioSettings(): Promise<void>;
   recordingStatus(): Promise<RecordingStatus>;
   startRecording(request: RecordingStartRequest): Promise<RecordingStatus>;
   pauseRecording(): Promise<RecordingStatus>;
@@ -839,6 +842,8 @@ const tauriClient: MailClient = {
   recordingSettings: () => read("recording_settings"),
   setRecordingSettings: (settings) => complete("set_recording_settings", { settings }),
   recordingCapabilities: () => read("recording_capabilities"),
+  recordingInputDevices: () => read("recording_input_devices"),
+  openSystemAudioSettings: () => complete("open_system_audio_settings"),
   recordingStatus: () => read("recording_status"),
   startRecording: (request) => complete("recording_start", request),
   pauseRecording: () => complete("recording_pause"),

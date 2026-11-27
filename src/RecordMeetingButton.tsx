@@ -38,7 +38,7 @@ export function RecordMeetingButton({ event, labelSuffix }: { event: ScheduleEve
       className="btn-icon btn-icon-sm"
       aria-label={labelSuffix ? `${label}: ${labelSuffix}` : label}
       title={label}
-      onClick={() => void (active ? recording.stop() : recording.start({ eventRef: reference, title: event.title }))}
+      onClick={() => void (active ? recording.stop() : recording.start({ eventRef: reference, title: event.title, ...(event.attendees?.length ? { attendees: event.attendees } : {}) }))}
     >
       {active ? <Square size={ICON_SIZE.sm} aria-hidden="true" /> : <Mic size={ICON_SIZE.sm} aria-hidden="true" />}
     </button>

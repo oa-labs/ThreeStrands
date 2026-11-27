@@ -88,6 +88,7 @@ pub struct NewRecording<'a> {
     pub id: &'a str,
     pub event_ref: Option<&'a NoteReference>,
     pub title: &'a str,
+    pub attendees: &'a [String],
     pub started_at: &'a str,
     pub audio_dir: &'a str,
     pub tracks: &'a [(Track, TrackState)],
@@ -100,6 +101,7 @@ pub struct TrackPatch {
     pub device_name: Option<String>,
     /// Where the track's first audio sits on the recording's clock.
     pub first_frame_offset_ms: Option<i64>,
+    pub is_headphones: Option<bool>,
     pub error: Option<String>,
 }
 
@@ -110,6 +112,7 @@ pub struct MeetingRecordingTrack {
     pub state: TrackState,
     pub device_name: Option<String>,
     pub first_frame_offset_ms: Option<i64>,
+    pub is_headphones: Option<bool>,
     pub error: Option<String>,
 }
 
@@ -137,12 +140,13 @@ pub struct MeetingRecording {
 }
 
 /// A transcript line to store.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptRow {
     pub track: Track,
     pub start_ms: i64,
     pub end_ms: i64,
     pub text: String,
+    pub rms: Option<f32>,
     pub dropped_as_echo: bool,
 }
 
@@ -169,7 +173,7 @@ fn event_target(reference: &NoteReference) -> DbResult<String> {
 
 fn tracks_of(connection: &Connection, id: &str) -> DbResult<Vec<MeetingRecordingTrack>> {
     let mut statement = connection.prepare(
-        "SELECT track,state,device_name,first_frame_offset_ms,error
+        "SELECT track,state,device_name,first_frame_offset_ms,is_headphones,error
          FROM meeting_recording_tracks WHERE recording_id=?1 ORDER BY track DESC",
     )?;
     let rows = statement.query_map([id], |row| {
@@ -178,18 +182,20 @@ fn tracks_of(connection: &Connection, id: &str) -> DbResult<Vec<MeetingRecording
             row.get::<_, String>(1)?,
             row.get(2)?,
             row.get(3)?,
-            row.get(4)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get(5)?,
         ))
     })?;
     let mut tracks = Vec::new();
     for row in rows {
-        let (track, state, device_name, first_frame_offset_ms, error) = row?;
+        let (track, state, device_name, first_frame_offset_ms, is_headphones, error) = row?;
         tracks.push(MeetingRecordingTrack {
             track: Track::parse(&track)
                 .ok_or_else(|| DatabaseError::corrupt(format!("Unknown track {track}")))?,
             state: TrackState::parse(&state)?,
             device_name,
             first_frame_offset_ms,
+            is_headphones: is_headphones.map(|value| value != 0),
             error,
         });
     }
@@ -231,11 +237,15 @@ impl Database {
             ),
             None => (None, None),
         };
+        let attendees_json = (!new.attendees.is_empty())
+            .then(|| serde_json::to_string(new.attendees))
+            .transpose()
+            .map_err(serialization_error)?;
         self.with_transaction(|tx| {
             tx.execute(
-                "INSERT INTO meeting_recordings(id,event_ref,event_target,title,started_at,state,audio_dir)
-                 VALUES(?1,?2,?3,?4,?5,'recording',?6)",
-                params![new.id, event_json, target, new.title, new.started_at, new.audio_dir],
+                "INSERT INTO meeting_recordings(id,event_ref,event_target,title,attendees_json,started_at,state,audio_dir)
+                 VALUES(?1,?2,?3,?4,?5,?6,'recording',?7)",
+                params![new.id, event_json, target, new.title, attendees_json, new.started_at, new.audio_dir],
             )?;
             for (track, state) in new.tracks {
                 tx.execute(
@@ -244,6 +254,25 @@ impl Database {
                 )?;
             }
             Ok(())
+        })
+    }
+
+    pub fn recording_attendees(&self, id: &str) -> DbResult<Vec<String>> {
+        self.with_connection(|c| {
+            let json: Option<String> = c
+                .query_row(
+                    "SELECT attendees_json FROM meeting_recordings WHERE id=?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+            match json {
+                Some(json) => {
+                    serde_json::from_str(&json).map_err(|e| DatabaseError::corrupt(e.to_string()))
+                }
+                None => Ok(Vec::new()),
+            }
         })
     }
 
@@ -259,7 +288,8 @@ impl Database {
                     state=COALESCE(?3,state),
                     device_name=COALESCE(?4,device_name),
                     first_frame_offset_ms=COALESCE(?5,first_frame_offset_ms),
-                    error=COALESCE(?6,error)
+                    is_headphones=COALESCE(?6,is_headphones),
+                    error=COALESCE(?7,error)
                  WHERE recording_id=?1 AND track=?2",
                 params![
                     id,
@@ -267,6 +297,7 @@ impl Database {
                     patch.state.map(TrackState::as_str),
                     patch.device_name,
                     patch.first_frame_offset_ms,
+                    patch.is_headphones.map(i64::from),
                     patch.error
                 ],
             )?;
@@ -464,8 +495,8 @@ impl Database {
             for (seq, row) in rows.iter().enumerate() {
                 tx.execute(
                     "INSERT INTO meeting_recording_segments
-                        (recording_id,seq,track,start_ms,end_ms,text,dropped_as_echo)
-                     VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                        (recording_id,seq,track,start_ms,end_ms,text,rms,dropped_as_echo)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
                     params![
                         id,
                         seq as i64,
@@ -473,6 +504,7 @@ impl Database {
                         row.start_ms,
                         row.end_ms,
                         row.text,
+                        row.rms.map(f64::from),
                         row.dropped_as_echo
                     ],
                 )?;
@@ -492,7 +524,7 @@ impl Database {
     pub fn transcript_rows(&self, id: &str) -> DbResult<Vec<TranscriptRow>> {
         self.with_connection(|c| {
             let mut statement = c.prepare(
-                "SELECT track,start_ms,end_ms,text,dropped_as_echo
+                "SELECT track,start_ms,end_ms,text,rms,dropped_as_echo
                  FROM meeting_recording_segments WHERE recording_id=?1 ORDER BY seq",
             )?;
             let rows = statement.query_map([id], |row| {
@@ -501,18 +533,20 @@ impl Database {
                     row.get(1)?,
                     row.get(2)?,
                     row.get(3)?,
-                    row.get(4)?,
+                    row.get::<_, Option<f64>>(4)?,
+                    row.get(5)?,
                 ))
             })?;
             let mut out = Vec::new();
             for row in rows {
-                let (track, start_ms, end_ms, text, dropped_as_echo) = row?;
+                let (track, start_ms, end_ms, text, rms, dropped_as_echo) = row?;
                 out.push(TranscriptRow {
                     track: Track::parse(&track)
                         .ok_or_else(|| DatabaseError::corrupt(format!("Unknown track {track}")))?,
                     start_ms,
                     end_ms,
                     text,
+                    rms: rms.map(|v| v as f32),
                     dropped_as_echo,
                 });
             }
@@ -589,6 +623,7 @@ mod tests {
                 id,
                 event_ref,
                 title: "Weekly Sync",
+                attendees: &[],
                 started_at: at,
                 audio_dir: "/audio/x",
                 tracks: &[
@@ -729,6 +764,7 @@ mod tests {
             start_ms,
             end_ms: start_ms + 1000,
             text: text.into(),
+            rms: Some(0.1),
             dropped_as_echo: echo,
         }
     }

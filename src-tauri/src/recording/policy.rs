@@ -16,11 +16,38 @@ const MIB: u64 = 1024 * 1024;
 /// The first macOS release (major, minor) with the Core Audio process tap
 /// that captures other apps' audio. Below it, recordings are microphone-only.
 pub const SYSTEM_AUDIO_MIN_MACOS: (u32, u32) = (14, 4);
+/// The first macOS release (major, minor) with Apple's on-device
+/// `SpeechAnalyzer` transcription framework.
+pub const SPEECH_ANALYZER_MIN_MACOS: (u32, u32) = (26, 0);
 
 /// Whether this macOS version can capture system audio.
 pub fn macos_has_system_audio(major: u32, minor: u32) -> bool {
     (major, minor) >= SYSTEM_AUDIO_MIN_MACOS
 }
+
+/// Whether this macOS version supports `SpeechAnalyzer`.
+pub fn macos_has_speech_analyzer(major: u32, minor: u32) -> bool {
+    (major, minor) >= SPEECH_ANALYZER_MIN_MACOS
+}
+
+/// Engine and model identifiers recorded for Apple `SpeechAnalyzer`.
+pub const SPEECH_ANALYZER_ENGINE: &str = "speech_analyzer";
+pub const SPEECH_ANALYZER_MODEL: &str = "apple-on-device";
+/// Memory budget enforced on the transcription worker when running
+/// `SpeechAnalyzer` (model weights live in the system speech daemon).
+pub const SPEECH_ANALYZER_MEMORY_BYTES: u64 = 512 * MIB;
+
+/// Minimum peak amplitude (0..1) considered live signal in the indicator.
+pub const SIGNAL_ACTIVE_PEAK: f32 = 0.005;
+/// Minimum microphone peak amplitude treated as user speech when checking
+/// whether the system-audio tap is stuck at digital zero.
+pub const MIC_SPEECH_PEAK: f32 = 0.02;
+/// Seconds of microphone speech with exact digital zeros on an active system
+/// audio tap before warning the user to check System Settings.
+pub const SILENT_TAP_SPEECH_SECS: u64 = 15;
+/// Deep link to macOS System Settings → Privacy & Security → System Audio Recording.
+pub const SYSTEM_AUDIO_SETTINGS_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture";
 
 /// Longest single recording. The service stops at this length.
 pub const MAX_RECORDING: Duration = Duration::from_secs(4 * 60 * 60);
@@ -97,9 +124,99 @@ pub const VAD_CONTINUE_OFFSET: f32 = 0.15;
 /// overlaps a system segment by at least this fraction (0 to 1) is dropped
 /// as speaker echo.
 pub const ECHO_DROP_THRESHOLD: f32 = 0.5;
-/// Slack in milliseconds, either side, when deciding that two segments
-/// overlap in time.
-pub const MERGE_TIME_SLACK_MS: i64 = 1000;
+/// Milliseconds before a system line's start that a microphone line may still
+/// overlap (small clock / VAD boundary jitter). Narrow so a remote speaker
+/// repeating what the user just said does not drop the user's line.
+pub const ECHO_LEAD_SLACK_MS: u64 = 250;
+/// Milliseconds after a system line's end that acoustic echo may still arrive.
+pub const ECHO_TRAIL_SLACK_MS: u64 = 1000;
+/// Minimum non-stop-words required before word-overlap drops a microphone
+/// line, protecting short confirmations such as "Yeah, on Friday".
+pub const ECHO_MIN_CONTENT_WORDS: usize = 3;
+/// Minimum microphone RMS considered loud direct speech when comparing RMS
+/// against overlapping system lines.
+pub const ECHO_LOUD_MIC_RMS: f32 = 0.04;
+/// Above this mic/system RMS ratio (with loud mic speech and non-exact text),
+/// the microphone line is kept as simultaneous user speech over speakers.
+pub const ECHO_MAX_RMS_RATIO: f32 = 0.6;
+/// Below this mic/system RMS ratio with verbatim overlap, even a short
+/// confirmation is treated as speaker bleed.
+pub const ECHO_BLEED_RMS_RATIO: f32 = 0.25;
+/// Stop words and short backchannels ignored when scoring echo overlap.
+pub const ECHO_STOP_WORDS: &[&str] = &[
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "did", "do", "for", "from",
+    "get", "got", "had", "has", "have", "he", "her", "here", "hi", "him", "his", "how", "i", "if",
+    "in", "into", "is", "it", "its", "just", "know", "like", "me", "my", "no", "not", "now", "of",
+    "oh", "ok", "okay", "on", "or", "our", "out", "right", "say", "see", "she", "should", "so",
+    "some", "sure", "that", "the", "their", "them", "then", "there", "they", "think", "this", "to",
+    "uh", "um", "up", "us", "was", "we", "well", "were", "what", "when", "where", "which", "who",
+    "will", "with", "would", "yeah", "yes", "you", "your",
+];
+
+/// Whisper vocabulary seeding: maximum whitespace tokens and UTF-8 bytes in
+/// `initial_prompt`, built from meeting title and attendee names.
+pub const WHISPER_INITIAL_PROMPT_MAX_TOKENS: usize = 80;
+pub const WHISPER_INITIAL_PROMPT_MAX_CHARS: usize = 320;
+/// Shortest speech span (ms) that receives `initial_prompt`, so brief noises
+/// don't parrot the prompt back.
+pub const WHISPER_PROMPT_MIN_SPAN_MS: u32 = 1000;
+
+/// Builds a short, sanitized `initial_prompt` from the meeting title and
+/// attendee display names, capped in tokens and characters.
+pub fn sanitize_initial_prompt(title: &str, attendees: &[String]) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut terms: Vec<String> = Vec::new();
+    for raw in std::iter::once(title).chain(attendees.iter().map(String::as_str)) {
+        let cleaned: String = raw
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+        for token in cleaned.split_whitespace() {
+            let trimmed =
+                token.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '-');
+            if trimmed.is_empty() {
+                continue;
+            }
+            let key = trimmed.to_ascii_lowercase();
+            if seen.insert(key) {
+                terms.push(trimmed.to_string());
+                if terms.len() >= WHISPER_INITIAL_PROMPT_MAX_TOKENS {
+                    break;
+                }
+            }
+        }
+        if terms.len() >= WHISPER_INITIAL_PROMPT_MAX_TOKENS {
+            break;
+        }
+    }
+    if terms.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    for term in terms {
+        let sep = if out.is_empty() { "" } else { ", " };
+        if out.len() + sep.len() + term.len() > WHISPER_INITIAL_PROMPT_MAX_CHARS {
+            break;
+        }
+        out.push_str(sep);
+        out.push_str(&term);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Normalizes a user-chosen language setting (`None` or `"auto"` -> `None`,
+/// otherwise a validated lowercase ASCII language tag such as `"en"` or `"pt-br"`).
+pub fn normalize_language_code(input: Option<&str>) -> Option<String> {
+    let raw = input?.trim().to_ascii_lowercase();
+    if raw.is_empty() || raw == "auto" {
+        return None;
+    }
+    let valid = raw.len() <= 12
+        && raw.split('-').all(|part| {
+            (2..=4).contains(&part.len()) && part.chars().all(|c| c.is_ascii_lowercase())
+        });
+    valid.then_some(raw)
+}
 
 /// Lines dropped from a transcript as whisper hallucinations, compared by
 /// their words (case and punctuation ignored). Whisper produces these from
@@ -247,7 +364,7 @@ pub fn download_fits(free_bytes: u64, remaining: u64) -> bool {
 /// windows.
 pub const MAX_RECAP_TRANSCRIPT_BYTES: usize = 400_000;
 /// Longest recap summary, in words.
-pub const MAX_RECAP_SUMMARY_WORDS: usize = 120;
+pub const MAX_RECAP_SUMMARY_WORDS: usize = 400;
 
 /// A pinned model file the app may download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -506,5 +623,40 @@ mod tests {
     #[test]
     fn restart_backoff_doubles() {
         assert_eq!(RESTART_BACKOFF.map(|d| d.as_secs()), [1, 2, 4]);
+    }
+
+    #[test]
+    fn speech_analyzer_requires_macos_26() {
+        assert!(!macos_has_speech_analyzer(15, 7));
+        assert!(!macos_has_speech_analyzer(25, 9));
+        assert!(macos_has_speech_analyzer(26, 0));
+        assert!(macos_has_speech_analyzer(26, 5));
+    }
+
+    #[test]
+    fn initial_prompt_sanitizes_deduplicates_and_caps_tokens_and_chars() {
+        assert_eq!(sanitize_initial_prompt("   ", &[]), None);
+        let prompt = sanitize_initial_prompt(
+            "Q4\0 Roadmap\nSync",
+            &["Alice".into(), "alice".into(), "Bob-Smith".into()],
+        )
+        .unwrap();
+        assert_eq!(prompt, "Q4, Roadmap, Sync, Alice, Bob-Smith");
+
+        let many: Vec<String> = (0..120).map(|i| format!("Word{i}")).collect();
+        let capped = sanitize_initial_prompt("Title", &many).unwrap();
+        assert!(capped.split(", ").count() <= WHISPER_INITIAL_PROMPT_MAX_TOKENS);
+        assert!(capped.len() <= WHISPER_INITIAL_PROMPT_MAX_CHARS);
+    }
+
+    #[test]
+    fn language_codes_normalize_auto_and_reject_invalid() {
+        assert_eq!(normalize_language_code(None), None);
+        assert_eq!(normalize_language_code(Some("")), None);
+        assert_eq!(normalize_language_code(Some("Auto")), None);
+        assert_eq!(normalize_language_code(Some(" EN ")), Some("en".into()));
+        assert_eq!(normalize_language_code(Some("pt-BR")), Some("pt-br".into()));
+        assert_eq!(normalize_language_code(Some("en;rm")), None);
+        assert_eq!(normalize_language_code(Some("x")), None);
     }
 }

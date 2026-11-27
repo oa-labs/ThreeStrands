@@ -35,8 +35,11 @@ pub fn checked_segment(
     track: Track,
     number: u32,
     file: &str,
+    manifest_audio_ms: Option<u64>,
 ) -> Option<(PathBuf, u64)> {
-    if file != segments::segment_file_name(track, number) {
+    let is_wav = file == segments::segment_file_name(track, number);
+    let is_m4a = file == segments::transcoded_file_name(track, number);
+    if !is_wav && !is_m4a {
         return None;
     }
     let dir = std::fs::canonicalize(audio_dir).ok()?;
@@ -48,8 +51,12 @@ pub fn checked_segment(
     if !metadata.is_file() {
         return None;
     }
-    let samples = metadata.len().saturating_sub(44) / 2;
-    let audio_ms = samples * 1000 / crate::recording::policy::OUTPUT_SAMPLE_RATE as u64;
+    let audio_ms = if is_m4a {
+        manifest_audio_ms.or_else(|| super::transcode::m4a_duration_ms(&path))?
+    } else {
+        let samples = metadata.len().saturating_sub(44) / 2;
+        samples * 1000 / crate::recording::policy::OUTPUT_SAMPLE_RATE as u64
+    };
     (audio_ms > 0).then_some((path, audio_ms))
 }
 
@@ -75,7 +82,8 @@ fn manifest_lines(audio_dir: &Path, track: Track) -> impl Iterator<Item = Line> 
                 segment,
                 file,
                 start_ms,
-            } => match checked_segment(audio_dir, track, segment, &file) {
+                audio_ms,
+            } => match checked_segment(audio_dir, track, segment, &file, audio_ms) {
                 Some((path, audio_ms)) => Line::Usable(segment, start_ms, path, audio_ms),
                 None => Line::Skipped,
             },
@@ -198,10 +206,13 @@ pub fn is_segment_file(audio_dir: &Path, track: Track, path: &Path) -> bool {
     let number = name
         .strip_prefix(track.as_str())
         .and_then(|rest| rest.strip_prefix('-'))
-        .and_then(|rest| rest.strip_suffix(".wav"))
+        .and_then(|rest| {
+            rest.strip_suffix(".wav")
+                .or_else(|| rest.strip_suffix(".m4a"))
+        })
         .and_then(|digits| digits.parse::<u32>().ok());
     number
-        .and_then(|number| checked_segment(audio_dir, track, number, name))
+        .and_then(|number| checked_segment(audio_dir, track, number, name, Some(1)))
         .is_some_and(|(checked, _)| checked == path)
 }
 
@@ -330,12 +341,12 @@ mod tests {
                 (Track::Mic, 3, 120_000, 60_000, false, true, true),
             ]
         );
-        assert!(checked_segment(dir.path(), Track::Mic, 1, "../mic-0001.wav").is_none());
-        assert!(checked_segment(dir.path(), Track::Mic, 1, "mic-0003.wav").is_none());
-        assert!(checked_segment(dir.path(), Track::System, 1, "mic-0001.wav").is_none());
-        assert!(checked_segment(dir.path(), Track::Mic, 1, "mic-0001.wav").is_some());
+        assert!(checked_segment(dir.path(), Track::Mic, 1, "../mic-0001.wav", None).is_none());
+        assert!(checked_segment(dir.path(), Track::Mic, 1, "mic-0003.wav", None).is_none());
+        assert!(checked_segment(dir.path(), Track::System, 1, "mic-0001.wav", None).is_none());
+        assert!(checked_segment(dir.path(), Track::Mic, 1, "mic-0001.wav", None).is_some());
         assert!(
-            checked_segment(dir.path(), Track::Mic, 9, "mic-0009.wav").is_none(),
+            checked_segment(dir.path(), Track::Mic, 9, "mic-0009.wav", None).is_none(),
             "missing"
         );
         // A manifest line pointing outside the folder is never planned.

@@ -4,7 +4,7 @@ import { IDLE_RECORDING_STATUS, UNSUPPORTED_RECORDING, type RecordingController 
 /** A recording controller with spies, for rendering a component that reads the recording context. */
 export const recordingController = (overrides: Partial<RecordingController> = {}): RecordingController => ({
   ...UNSUPPORTED_RECORDING,
-  capabilities: { supported: true, systemAudio: { kind: "available" } },
+  capabilities: { supported: true, systemAudio: { kind: "available" }, speechAnalyzer: false },
   supported: true,
   enabled: true,
   status: IDLE_RECORDING_STATUS,

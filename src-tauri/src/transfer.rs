@@ -1515,7 +1515,11 @@ mod tests {
         database
             .set_recording_settings(&RecordingSettings {
                 record_meetings: true,
+                microphone_device_uid: Some("custom-mic-uid".into()),
+                transcription_engine:
+                    crate::recording::settings::TranscriptionEngineChoice::Whisper,
                 transcription_model: TranscriptionModelChoice::Accurate,
+                transcription_language: Some("es".into()),
                 transcribe_during_meetings: false,
                 keep_audio: KeepAudio::UntilDeleted,
                 offer_to_record: false,
@@ -1532,7 +1536,8 @@ mod tests {
         let fields = serde_json::to_value(RecordingSettings::default()).unwrap();
         let keys: Vec<&String> = fields.as_object().unwrap().keys().collect();
         assert!(keys.iter().any(|key| *key == "transcribeDuringMeetings"));
-        assert_eq!(keys.len(), 10);
+        assert!(keys.iter().any(|key| *key == "transcriptionEngine"));
+        assert_eq!(keys.len(), 13);
         for key in keys {
             assert!(!after.contains(key.as_str()), "{key}");
         }

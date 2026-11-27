@@ -4412,4 +4412,8 @@ input.notes-editor-title:focus-visible { outline: none; box-shadow: var(--focus-
 .recording-indicator-dot { width: var(--dot-size); height: var(--dot-size); border-radius: var(--radius-circle); background: var(--error); }
 .recording-indicator.paused .recording-indicator-dot { background: var(--muted); }
 .recording-indicator-time { font-variant-numeric: tabular-nums; color: var(--body-text); }
+.recording-indicator-signals { display: flex; gap: var(--space-1); }
+.recording-signal-pill { padding: 0 var(--space-1); border-radius: var(--radius-sm); border: 1px solid var(--border); color: var(--muted); font-size: var(--text-meta); }
+.recording-signal-pill.active { border-color: var(--accent); color: var(--accent); }
+.recording-indicator-warning { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); text-align: center; color: var(--error); }
 .recording-indicator-stop { min-width: 0; padding-inline: var(--space-1-5); }

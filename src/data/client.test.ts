@@ -97,7 +97,7 @@ describe("native account requests", () => {
   it("reads and saves device-local recording settings through their own commands", async () => {
     await client.recordingSettings();
     expect(invoke).toHaveBeenLastCalledWith("recording_settings", undefined);
-    const settings = { recordMeetings: true, transcriptionModel: "accurate" as const, transcribeDuringMeetings: false, keepAudio: "days30" as const, offerToRecord: true, remindToTell: false, summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true };
+    const settings = { recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto" as const, transcriptionModel: "accurate" as const, transcriptionLanguage: null, transcribeDuringMeetings: false, keepAudio: "days30" as const, offerToRecord: true, remindToTell: false, summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true };
     await client.setRecordingSettings(settings);
     expect(invoke).toHaveBeenLastCalledWith("set_recording_settings", { settings });
   });
@@ -106,6 +106,8 @@ describe("native account requests", () => {
     const eventRef = { version: 1 as const, kind: "event" as const, id: "evt", account: "me@example.com", calendar: "work" };
     const calls: [() => Promise<unknown>, string, Record<string, unknown> | undefined][] = [
       [() => client.recordingCapabilities(), "recording_capabilities", undefined],
+      [() => client.recordingInputDevices(), "recording_input_devices", undefined],
+      [() => client.openSystemAudioSettings(), "open_system_audio_settings", undefined],
       [() => client.recordingStatus(), "recording_status", undefined],
       [() => client.startRecording({ eventRef, title: "Weekly Sync" }), "recording_start", { eventRef, title: "Weekly Sync" }],
       [() => client.startRecording({ eventRef: null, title: "Meeting at 3:04 PM" }), "recording_start", { eventRef: null, title: "Meeting at 3:04 PM" }],

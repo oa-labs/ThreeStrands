@@ -96,7 +96,7 @@ export function EventRecordings({ occurrence }: { occurrence: NoteReference }) {
           icon={<AttachmentIcon filename="recording.m4a" mimeType="audio/mp4" size="sm" />}
           title="Recording"
           date={formatCompactDate(new Date(row.startedAt))}
-          detail={recordingDetail(row, recording.transcriptionModel, percents[row.id] ?? null)}
+          detail={recordingDetail(row, recording.transcriptionModel, percents[row.id] ?? null, recording.usingSpeechAnalyzer)}
           actions={row.state === "recording" ? undefined : [
             ...(canShowTranscript(row) ? [
               <button key="transcript" type="button" className="btn-icon btn-icon-sm" aria-label="Show Transcript" title="Show Transcript" onClick={() => setViewing(row)}>

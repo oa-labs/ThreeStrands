@@ -1,4 +1,4 @@
-import type { MeetingRecording, MicrophonePermission, RecordingCapabilities, RecordingStatus, RecordingStartRequest, RecordingTranscript, TranscriptionModelName, TranscriptionModelStatus } from "../domain";
+import type { AudioInputDevice, MeetingRecording, MicrophonePermission, RecordingCapabilities, RecordingStatus, RecordingStartRequest, RecordingTranscript, TranscriptionModelName, TranscriptionModelStatus } from "../domain";
 import { noteReferenceKey, type NoteReference } from "../noteEntities";
 
 /** What the browser preview records into: in memory, with a fixed 1.4 MB per second of audio so Settings has sizes to show. */
@@ -29,14 +29,16 @@ function demoTranscript(recordingId: string, durationMs: number, labels: boolean
 
 const IDLE: RecordingStatus = {
   state: "idle", recordingId: null, title: null, eventRef: null, elapsedMs: 0, tracks: [],
-  systemAudio: { kind: "available" }, lastStopReason: null,
+  systemAudio: { kind: "available" }, systemAudioSilentWarning: false, lastStopReason: null,
 };
 
 /** In-memory equivalents of the native recording commands, for the browser preview and tests. */
 export function createDemoRecordings(options: {
   microphone?: MicrophonePermission;
+  speechAnalyzer?: boolean;
   /** The chosen transcription model; without it Fast is chosen. */
   chosenModel?: () => TranscriptionModelName;
+  usingSpeechAnalyzer?: () => boolean;
   /** Meetings that start with a transcribed recording and a microphone-only one. */
   seed?: NoteReference[];
 } = {}) {
@@ -65,9 +67,10 @@ export function createDemoRecordings(options: {
     transcripts.set(recording.id, demoTranscript(recording.id, recording.durationMs, labels));
     recording.state = "transcribed";
   };
-  /** A recording waiting for a model is picked up as soon as the chosen one is ready. */
+  /** A recording waiting for a model is picked up as soon as the chosen one is ready (or on-device SpeechAnalyzer). */
   const pickUp = () => {
-    if (modelStatus(options.chosenModel?.() ?? "fast").state !== "ready") return;
+    const ready = (options.usingSpeechAnalyzer?.() ?? false) || modelStatus(options.chosenModel?.() ?? "fast").state === "ready";
+    if (!ready) return;
     for (const recording of recordings) if (recording.state === "recorded" && audio.has(recording.id)) transcribe(recording);
   };
   for (const [index, eventRef] of (options.seed ?? []).entries()) {
@@ -93,11 +96,15 @@ export function createDemoRecordings(options: {
     title: active.request.title,
     eventRef: active.request.eventRef,
     elapsedMs: elapsed(),
-    tracks: [{ track: "mic", state: "active" }, { track: "system", state: "active" }],
+    tracks: [{ track: "mic", state: "active", signalActive: true }, { track: "system", state: "active", signalActive: true }],
   } : { ...IDLE };
   const durationMs = (recording: MeetingRecording) => recording.durationMs;
   const api = {
-    async recordingCapabilities(): Promise<RecordingCapabilities> { return { supported: true, systemAudio: { kind: "available" } }; },
+    async recordingCapabilities(): Promise<RecordingCapabilities> { return { supported: true, systemAudio: { kind: "available" }, speechAnalyzer: options.speechAnalyzer ?? false }; },
+    async recordingInputDevices(): Promise<AudioInputDevice[]> {
+      return [{ uid: "demo-built-in-mic", name: "MacBook Pro Microphone", isDefault: true, isBluetooth: false }];
+    },
+    async openSystemAudioSettings() {},
     async recordingStatus() { return status(); },
     async startRecording(request: RecordingStartRequest) {
       if (active) throw new Error("A recording is already in progress");

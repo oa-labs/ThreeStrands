@@ -23,6 +23,18 @@ describe("RecordMeetingButton", () => {
     expect(meetingEventReference(event)).toMatchObject({ kind: "event", id: "evt", series: "series" });
   });
 
+  it("forwards attendee hints when starting an event with attendees", () => {
+    const controller = recordingController();
+    const withAttendees: ScheduleEvent = { ...event, attendees: ["alice@example.com", "bob@example.com"] };
+    render(<RecordingContext.Provider value={controller}><RecordMeetingButton event={withAttendees} /></RecordingContext.Provider>);
+    fireEvent.click(screen.getByRole("button", { name: "Record" }));
+    expect(controller.start).toHaveBeenCalledWith({
+      eventRef: meetingEventReference(withAttendees),
+      title: "Weekly Sync",
+      attendees: ["alice@example.com", "bob@example.com"],
+    });
+  });
+
   it("reads Stop Recording while this occurrence is being recorded, and stops it", () => {
     const controller = recordingController({ status: { ...recordingController().status, state: "recording", eventRef: meetingEventReference(event) } });
     render(<RecordingContext.Provider value={controller}><RecordMeetingButton event={event} /></RecordingContext.Provider>);
