@@ -148,6 +148,15 @@ unless you mean to do that. Before running a VM-made branch on the host,
 review it, especially changes to `pnpm-lock.yaml`, `Cargo.lock`, and
 `supply-chain/`.
 
+If `tart-vm mac land` or `tart-vm mac prune` reports that the VM's `master`
+has unlanded commits and was not updated (for example after amending or
+rebasing a commit on the host), confirm the VM's primary checkout has no wanted
+work and reset it cleanly to `origin/master` from the host:
+
+```sh
+tart-vm mac ssh "git -C ~/Source/threestrands fetch origin && git -C ~/Source/threestrands reset --keep origin/master"
+```
+
 ### npm
 
 `pnpm-workspace.yaml` adds to pnpm's defaults, which already refuse dependency

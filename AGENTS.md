@@ -57,6 +57,10 @@ the VM. So, in the VM, these rules replace the merge and cleanup rules above:
   `git worktree remove` without `--force`. If it refuses because of
   uncommitted changes, keep the worktree and tell the developer. The developer
   can also run `tart-vm mac prune` from the host to do the same cleanup.
+- If `git fetch origin` shows the VM's primary `master` has diverged from
+  `origin/master` (for example after a host-side amend), mention it in the
+  final summary so the developer can reset it from the host; still never run
+  `git reset` in the primary checkout.
 - In the final summary, list each branch that's waiting to land, along with its
   `land` command.
 
