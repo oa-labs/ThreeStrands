@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentsWorkspace } from "./AgentsWorkspace";
 import { formatFullDate } from "./dateFormatting";
-import type { Account, InboxAgentsSnapshot } from "./domain";
+import type { Account, InboxAgentProposal, InboxAgentsSnapshot } from "./domain";
+import type { SenderHygieneHandlers } from "./SenderHygieneActions";
 import type { InboxAgentsController } from "./useInboxAgents";
 
 const ACCOUNTS: Account[] = [
@@ -163,6 +164,54 @@ function makeController(snapshot: InboxAgentsSnapshot): InboxAgentsController {
   };
 }
 
+function hygieneHandlers(overrides: Partial<SenderHygieneHandlers> = {}): SenderHygieneHandlers {
+  return {
+    splits: [],
+    onUnsubscribe: vi.fn(),
+    onMute: vi.fn(),
+    onNewSplit: vi.fn(),
+    onArchiveAll: vi.fn(),
+    ...overrides,
+  };
+}
+
+function hygieneProposal(overrides: Partial<InboxAgentProposal["payload"]> = {}): InboxAgentProposal {
+  return {
+    id: "h1",
+    agentId: "sender_hygiene",
+    accountId: "you@example.com",
+    threadId: "t-h1",
+    threadRevision: "2026-11-20T00:00:00Z",
+    threadSubject: "Weekend deals",
+    threadSender: "Acme Deals <deals@acme.example>",
+    threadLastReceivedAt: "2026-11-20T00:00:00Z",
+    threadSnippet: "Save big",
+    threadUnread: true,
+    threadStarred: false,
+    kind: "sender_hygiene",
+    state: "pending",
+    headline: "You usually skip Acme Deals",
+    reason: "Dismissed 6 of 7 emails within a second; 4 unread emails older than 14 days.",
+    payload: {
+      senderEmail: "deals@acme.example",
+      senderName: "Acme Deals",
+      agingUnreadCount: 4,
+      quickDismissCount: 6,
+      dismissCount: 7,
+      inboxThreadIds: ["t-h1", "t-h2", "t-h3"],
+      recommendation: "unsubscribe",
+      messageId: "m-h1",
+      ...overrides,
+    },
+    evidence: [
+      { kind: "thread", id: "t-h1", label: "Weekend deals", excerpt: "Save big" },
+      { kind: "thread", id: "t-h2", label: "Flash sale", excerpt: "Today only" },
+    ],
+    createdAt: 120,
+    updatedAt: 120,
+  };
+}
+
 describe("AgentsWorkspace", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -188,6 +237,7 @@ describe("AgentsWorkspace", () => {
         onReopenTask={vi.fn()}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
+        senderHygiene={hygieneHandlers()}
       />,
     );
 
@@ -254,6 +304,7 @@ describe("AgentsWorkspace", () => {
         onReopenTask={vi.fn()}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
+        senderHygiene={hygieneHandlers()}
       />,
     );
     expect(screen.getByText(/Inbox assistants are paused/)).toBeInTheDocument();
@@ -329,6 +380,7 @@ describe("AgentsWorkspace", () => {
         onReopenTask={vi.fn()}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
+        senderHygiene={hygieneHandlers()}
       />,
     );
 
@@ -385,6 +437,7 @@ describe("AgentsWorkspace", () => {
         onReopenTask={vi.fn()}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
+        senderHygiene={hygieneHandlers()}
       />,
     );
     expect(within(screen.getByRole("article", { name: "Engineering Weekly" })).getByText("you@example.com")).toBeInTheDocument();
@@ -403,6 +456,7 @@ describe("AgentsWorkspace", () => {
         onReopenTask={vi.fn()}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
+        senderHygiene={hygieneHandlers()}
       />,
     );
     expect(within(screen.getByRole("article", { name: "Engineering Weekly" })).queryByText("you@example.com")).not.toBeInTheDocument();
@@ -518,6 +572,7 @@ describe("AgentsWorkspace", () => {
         onReopenTask={onReopenTask}
         onReviewDraft={vi.fn()}
         onOpenAiSettings={vi.fn()}
+        senderHygiene={hygieneHandlers()}
       />,
     );
 
@@ -542,5 +597,97 @@ describe("AgentsWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Archive All 2 Safe" }));
     expect(onArchiveBatch).toHaveBeenCalledTimes(1);
     expect(onArchiveBatch.mock.calls[0][0].map((p: { id: string }) => p.id)).toEqual(["p-task", "p-expired"]);
+  });
+
+  describe("Sender Hygiene suggestions", () => {
+    function renderHygiene(proposal: InboxAgentProposal, handlers = hygieneHandlers(), extra: { onArchiveProposal?: () => void } = {}) {
+      const snapshot = makeSnapshot({ proposals: [proposal] });
+      const controller = makeController(snapshot);
+      render(
+        <AgentsWorkspace
+          controller={controller}
+          accounts={ACCOUNTS}
+          accountId={null}
+          onOpenThread={vi.fn()}
+          onOpenTask={vi.fn()}
+          onArchiveProposal={extra.onArchiveProposal ?? vi.fn()}
+          onArchiveBatch={vi.fn()}
+          onSaveToNoteAndArchive={vi.fn()}
+          onCreateTask={vi.fn()}
+          onReopenTask={vi.fn()}
+          onReviewDraft={vi.fn()}
+          onOpenAiSettings={vi.fn()}
+          senderHygiene={handlers}
+        />,
+      );
+      return { controller, card: screen.getByRole("article", { name: "Weekend deals" }) };
+    }
+
+    it("leads with Unsubscribe when the sender offers it and wires every action", () => {
+      const handlers = hygieneHandlers();
+      const proposal = hygieneProposal();
+      const { controller, card } = renderHygiene(proposal, handlers);
+      expect(within(card).getByText("Ignored Sender")).toBeInTheDocument();
+      expect(within(card).getByText(proposal.reason)).toBeInTheDocument();
+      expect(within(card).getByText("Flash sale")).toBeInTheDocument();
+      expect(within(card).getByRole("button", { name: "Unsubscribe" })).toHaveClass("btn-primary");
+      expect(within(card).getByRole("button", { name: "Mute…" })).not.toHaveClass("btn-primary");
+      fireEvent.click(within(card).getByRole("button", { name: "Unsubscribe" }));
+      fireEvent.click(within(card).getByRole("button", { name: "Mute…" }));
+      fireEvent.click(within(card).getByRole("button", { name: "New Split…" }));
+      fireEvent.click(within(card).getByRole("button", { name: "Archive 3 in Inbox" }));
+      expect(handlers.onUnsubscribe).toHaveBeenCalledWith(proposal);
+      expect(handlers.onMute).toHaveBeenCalledWith(proposal);
+      expect(handlers.onNewSplit).toHaveBeenCalledWith(proposal);
+      expect(handlers.onArchiveAll).toHaveBeenCalledWith(proposal);
+      fireEvent.click(within(card).getByRole("button", { name: "Dismiss" }));
+      expect(controller.resolveProposal).toHaveBeenCalledWith("h1", "dismissed");
+    });
+
+    it("leads with Mute and hides Unsubscribe and the bulk archive when they do not apply", () => {
+      const { card } = renderHygiene(hygieneProposal({
+        recommendation: "mute",
+        messageId: undefined,
+        inboxThreadIds: ["t-h1"],
+      }));
+      expect(within(card).queryByRole("button", { name: "Unsubscribe" })).toBeNull();
+      expect(within(card).queryByRole("button", { name: /Archive \d+ in Inbox/ })).toBeNull();
+      expect(within(card).getByRole("button", { name: "Mute…" })).toHaveClass("btn-primary");
+    });
+
+    it("shows the split that already sorts the sender instead of New Split", () => {
+      const { card } = renderHygiene(hygieneProposal(), hygieneHandlers({
+        splits: [{ id: "s1", accountId: "you@example.com", name: "Deals", matchKind: "domain", matchValue: "acme.example", sortOrder: 0, createdAt: "2026-11-01T00:00:00Z" }],
+      }));
+      expect(within(card).getByText("Sorted into Deals")).toBeInTheDocument();
+      expect(within(card).queryByRole("button", { name: "New Split…" })).toBeNull();
+    });
+
+    it("never offers the safe batch archive, and e still archives the anchor conversation", () => {
+      const first = hygieneProposal();
+      const second = { ...hygieneProposal(), id: "h2", threadId: "t-other", threadSubject: "Other deals" };
+      const onArchiveProposal = vi.fn();
+      const snapshot = makeSnapshot({ proposals: [first, second] });
+      render(
+        <AgentsWorkspace
+          controller={makeController(snapshot)}
+          accounts={ACCOUNTS}
+          accountId={null}
+          onOpenThread={vi.fn()}
+          onOpenTask={vi.fn()}
+          onArchiveProposal={onArchiveProposal}
+          onArchiveBatch={vi.fn()}
+          onSaveToNoteAndArchive={vi.fn()}
+          onCreateTask={vi.fn()}
+          onReopenTask={vi.fn()}
+          onReviewDraft={vi.fn()}
+          onOpenAiSettings={vi.fn()}
+          senderHygiene={hygieneHandlers()}
+        />,
+      );
+      expect(screen.queryByRole("button", { name: /Archive All/ })).toBeNull();
+      fireEvent.keyDown(screen.getByRole("region", { name: "Inbox Assistants" }), { key: "e" });
+      expect(onArchiveProposal).toHaveBeenCalledWith(first);
+    });
   });
 });

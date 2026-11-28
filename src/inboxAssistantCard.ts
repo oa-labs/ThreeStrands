@@ -7,6 +7,7 @@ export const ASSISTANT_KIND_LABELS: Record<InboxAgentProposal["kind"], string> =
   archive_as_resolved: "Already Handled",
   archive_as_expired: "Expired",
   draft_reply: "Suggested Reply",
+  sender_hygiene: "Ignored Sender",
 };
 
 /** Extracts a concise sender display label and exposes the raw email in tooltip only when it adds info. */

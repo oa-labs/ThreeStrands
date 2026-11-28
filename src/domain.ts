@@ -1763,9 +1763,9 @@ export type SystemContactsStatus = {
 };
 
 /** Standing, configurable Inbox Assistants backed by local SQLite state. */
-export type InboxAgentId = "stale_reads" | "resolved_and_expired" | "aging_replies";
+export type InboxAgentId = "stale_reads" | "resolved_and_expired" | "aging_replies" | "sender_hygiene";
 export type InboxAgentRunState = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
-export type ProposalKind = "archive_with_summary" | "archive_as_resolved" | "archive_as_expired" | "draft_reply";
+export type ProposalKind = "archive_with_summary" | "archive_as_resolved" | "archive_as_expired" | "draft_reply" | "sender_hygiene";
 export type ProposalState = "pending" | "accepted" | "dismissed" | "superseded";
 
 export type InboxAgentConfig = {
@@ -1837,6 +1837,15 @@ export type ProposalPayload = {
   messageId?: string;
   replyDraft?: string;
   gentleOutDraft?: string;
+  /** Sender Hygiene: the sender's normalized address and display name. */
+  senderEmail?: string;
+  senderName?: string;
+  agingUnreadCount?: number;
+  quickDismissCount?: number;
+  dismissCount?: number;
+  /** The sender's conversations still in the Inbox. */
+  inboxThreadIds?: string[];
+  recommendation?: "unsubscribe" | "mute";
 };
 
 export type InboxAgentProposal = {

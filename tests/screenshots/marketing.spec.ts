@@ -280,7 +280,7 @@ const scenes: Scene[] = [
       await page.keyboard.press("7");
       const workspace = page.getByRole("region", { name: "Inbox Assistants", exact: true });
       await expect(workspace).toBeVisible();
-      for (const name of ["Stale Reads Summarizer", "Aging Reply Drafter"]) {
+      for (const name of ["Stale Reads Summarizer", "Aging Reply Drafter", "Sender Hygiene Advisor"]) {
         const card = workspace.getByRole("article", { name, exact: true });
         await card.getByRole("button", { name: "Enable", exact: true }).click();
         await card.getByRole("button", { name: "Run Now", exact: true }).click();

@@ -293,6 +293,25 @@ fn list_proposals_conn(
            )",
         [now],
     )?;
+    // A mute or block rule that now covers the sender settles a Sender Hygiene suggestion.
+    conn.execute(
+        "UPDATE inbox_agent_proposals
+         SET state = 'superseded', updated_at = ?1
+         WHERE state = 'pending' AND agent_id = 'sender_hygiene'
+           AND EXISTS (
+               SELECT 1 FROM sender_rules r
+               WHERE lower(r.account_id) = lower(inbox_agent_proposals.account_id)
+                 AND (
+                     (r.match_kind = 'address'
+                      AND r.match_value = json_extract(inbox_agent_proposals.payload_json, '$.senderEmail'))
+                     OR (r.match_kind = 'domain'
+                      AND r.match_value = substr(
+                          json_extract(inbox_agent_proposals.payload_json, '$.senderEmail'),
+                          instr(json_extract(inbox_agent_proposals.payload_json, '$.senderEmail'), '@') + 1))
+                 )
+           )",
+        [now],
+    )?;
 
     let mut sql = String::from(
         "SELECT p.id, p.agent_id, p.account_id, p.thread_id, p.thread_revision,
@@ -893,7 +912,7 @@ mod tests {
         let db = Database::open_memory();
         let snapshot = db.inbox_agents_snapshot(None).unwrap();
         assert!(snapshot.runner_enabled);
-        assert_eq!(snapshot.agents.len(), 3);
+        assert_eq!(snapshot.agents.len(), 4);
         assert!(snapshot.agents.iter().all(|a| !a.enabled));
 
         assert!(db
@@ -1203,5 +1222,500 @@ mod tests {
             .execute("UPDATE threads SET archived = 1 WHERE id = 't2'", [])
             .unwrap();
         assert!(db.inbox_agents_snapshot(None).unwrap().proposals.is_empty());
+    }
+
+    // ---- Sender Hygiene Advisor ----
+
+    const HYGIENE_NOW: &str = "2026-11-25T10:00:00Z";
+
+    fn hygiene_now() -> i64 {
+        chrono::DateTime::parse_from_rfc3339(HYGIENE_NOW)
+            .unwrap()
+            .timestamp()
+    }
+
+    fn hygiene_db() -> Database {
+        let db = Database::open_memory();
+        db.adopt_mail_account("me@example.com", MailProviderKind::Gmail)
+            .unwrap();
+        db.connection()
+            .unwrap()
+            .execute("DELETE FROM threads WHERE id = 'welcome'", [])
+            .unwrap();
+        db
+    }
+
+    /// `count` unread Inbox conversations from `sender`, all older than the default 14 days.
+    fn seed_unread_threads(db: &Database, prefix: &str, sender: &str, count: usize, unsub: bool) {
+        for index in 0..count {
+            let id = format!("{prefix}-{index}");
+            seed_thread(
+                db,
+                &id,
+                &format!("{prefix} issue {index}"),
+                sender,
+                &format!("2026-11-0{}T10:00:00Z", index + 1),
+                "Body",
+                "[\"INBOX\"]",
+                (unsub && index == 0).then_some("{\"webUrl\":\"https://x.example/u\"}"),
+            );
+            db.connection()
+                .unwrap()
+                .execute("UPDATE threads SET unread = 1 WHERE id = ?1", [&id])
+                .unwrap();
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn triage_event(
+        db: &Database,
+        thread_id: &str,
+        email: &str,
+        kind: &str,
+        action: Option<&str>,
+        dwell_ms: Option<i64>,
+        scrolled: bool,
+        batch: bool,
+    ) {
+        db.connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO triage_events(id, account_id, thread_id, sender_email, sender_domain,
+                    event_kind, context, action, opened, dwell_ms, scrolled, batch, created_at)
+                 VALUES (?1, 'me@example.com', ?2, ?3, 'x', ?4, 'inbox', ?5, 1, ?6, ?7, ?8, '2026-11-20T10:00:00Z')",
+                params![
+                    Uuid::new_v4().to_string(),
+                    thread_id,
+                    email,
+                    kind,
+                    action,
+                    dwell_ms,
+                    scrolled,
+                    batch
+                ],
+            )
+            .unwrap();
+    }
+
+    fn quick_dismissals(db: &Database, thread_id: &str, email: &str, count: usize) {
+        for _ in 0..count {
+            triage_event(
+                db,
+                thread_id,
+                email,
+                "disposition",
+                Some("archive"),
+                Some(400),
+                false,
+                false,
+            );
+        }
+    }
+
+    fn hygiene_batch(db: &Database) -> crate::agents::candidates::CandidateBatch {
+        let cfg = db.get_inbox_agent_config(AgentId::SenderHygiene).unwrap();
+        db.with_inbox_agent_candidates(&cfg, hygiene_now()).unwrap()
+    }
+
+    fn hygiene_senders(db: &Database) -> Vec<String> {
+        hygiene_batch(db)
+            .deterministic
+            .into_iter()
+            .map(|p| p.payload.sender_email.unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn sender_hygiene_defaults_are_registered() {
+        let db = Database::open_memory();
+        let cfg = db.get_inbox_agent_config(AgentId::SenderHygiene).unwrap();
+        assert_eq!(cfg.name, "Sender Hygiene Advisor");
+        assert_eq!(
+            (cfg.age_days, cfg.max_threads_per_run, cfg.include_starred),
+            (14, 10, false)
+        );
+        assert!(!cfg.enabled);
+    }
+
+    #[test]
+    fn sender_hygiene_qualifies_on_quick_dismissals_with_concrete_numbers() {
+        let db = hygiene_db();
+        seed_thread(
+            &db,
+            "d1",
+            "Acme Deals",
+            "Acme Deals <deals@acme.example>",
+            "2026-11-24T10:00:00Z",
+            "Sale",
+            "[\"INBOX\"]",
+            Some("{\"webUrl\":\"https://acme.example/u\"}"),
+        );
+        quick_dismissals(&db, "d1", "deals@acme.example", 6);
+        triage_event(
+            &db,
+            "d1",
+            "deals@acme.example",
+            "disposition",
+            Some("archive"),
+            Some(5000),
+            false,
+            false,
+        );
+
+        let batch = hygiene_batch(&db);
+        assert!(batch.ai_candidates.is_empty());
+        assert_eq!(batch.deterministic.len(), 1);
+        let proposal = &batch.deterministic[0];
+        assert_eq!(proposal.kind, ProposalKind::SenderHygiene);
+        assert_eq!(proposal.thread_id, "d1");
+        assert_eq!(proposal.thread_revision, "2026-11-24T10:00:00Z");
+        assert_eq!(proposal.headline, "You usually skip Acme Deals");
+        assert_eq!(proposal.reason, "Dismissed 6 of 7 emails within a second.");
+        let payload = &proposal.payload;
+        assert_eq!(payload.sender_email.as_deref(), Some("deals@acme.example"));
+        assert_eq!(payload.quick_dismiss_count, Some(6));
+        assert_eq!(payload.dismiss_count, Some(7));
+        assert_eq!(payload.recommendation.as_deref(), Some("unsubscribe"));
+        assert_eq!(payload.message_id.as_deref(), Some("msg-d1"));
+        assert_eq!(
+            payload.inbox_thread_ids.as_deref(),
+            Some(&["d1".to_string()][..])
+        );
+        assert_eq!(proposal.evidence.len(), 1);
+        assert_eq!(proposal.evidence[0].kind, "thread");
+    }
+
+    #[test]
+    fn sender_hygiene_qualifies_on_aging_unread_and_recommends_mute_without_unsubscribe() {
+        let db = hygiene_db();
+        seed_unread_threads(&db, "a", "Pat <pat@club.example>", 4, false);
+        seed_unread_threads(&db, "b", "news@list.example", 3, true);
+        // Two aging unread conversations is below the threshold.
+        seed_unread_threads(&db, "c", "few@list.example", 2, false);
+
+        let batch = hygiene_batch(&db);
+        let by_sender: HashMap<_, _> = batch
+            .deterministic
+            .iter()
+            .map(|p| (p.payload.sender_email.clone().unwrap(), p))
+            .collect();
+        assert_eq!(by_sender.len(), 2);
+        let pat = by_sender["pat@club.example"];
+        assert_eq!(pat.payload.recommendation.as_deref(), Some("mute"));
+        assert_eq!(pat.payload.message_id, None);
+        assert_eq!(pat.payload.aging_unread_count, Some(4));
+        assert_eq!(pat.reason, "4 unread emails older than 14 days.");
+        assert_eq!(pat.headline, "You usually skip Pat");
+        assert_eq!(pat.payload.inbox_thread_ids.as_ref().unwrap().len(), 4);
+        assert_eq!(pat.evidence.len(), 3);
+        // Anchor is the sender's newest Inbox conversation.
+        assert_eq!(pat.thread_id, "a-3");
+        assert_eq!(
+            by_sender["news@list.example"]
+                .payload
+                .recommendation
+                .as_deref(),
+            Some("unsubscribe")
+        );
+    }
+
+    #[test]
+    fn sender_hygiene_ignores_batch_scrolled_slow_and_read_mail() {
+        let db = hygiene_db();
+        seed_thread(
+            &db,
+            "x1",
+            "X",
+            "x@x.example",
+            "2026-11-24T10:00:00Z",
+            "B",
+            "[\"INBOX\"]",
+            None,
+        );
+        for _ in 0..3 {
+            triage_event(
+                &db,
+                "x1",
+                "x@x.example",
+                "disposition",
+                Some("archive"),
+                Some(300),
+                false,
+                true,
+            );
+            triage_event(
+                &db,
+                "x1",
+                "x@x.example",
+                "disposition",
+                Some("archive"),
+                Some(300),
+                true,
+                false,
+            );
+            triage_event(
+                &db,
+                "x1",
+                "x@x.example",
+                "disposition",
+                Some("archive"),
+                Some(1500),
+                false,
+                false,
+            );
+        }
+        // Aging but already read: not counted.
+        seed_unread_threads(&db, "r", "read@x.example", 3, false);
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET unread = 0", [])
+            .unwrap();
+        // Quick rate below 60%: 3 quick of 6.
+        seed_thread(
+            &db,
+            "y1",
+            "Y",
+            "y@x.example",
+            "2026-11-24T10:00:00Z",
+            "B",
+            "[\"INBOX\"]",
+            None,
+        );
+        quick_dismissals(&db, "y1", "y@x.example", 3);
+        for _ in 0..3 {
+            triage_event(
+                &db,
+                "y1",
+                "y@x.example",
+                "disposition",
+                Some("trash"),
+                Some(9000),
+                false,
+                false,
+            );
+        }
+        assert!(hygiene_senders(&db).is_empty());
+    }
+
+    #[test]
+    fn sender_hygiene_applies_exclusions() {
+        let db = hygiene_db();
+        for (prefix, sender) in [
+            ("own", "me@example.com"),
+            ("resp", "resp@x.example"),
+            ("rest", "rest@x.example"),
+            ("wrote", "wrote@x.example"),
+            ("mute", "mute@x.example"),
+            ("dom", "anyone@muted.example"),
+            ("blk", "blk@x.example"),
+            ("ok", "ok@x.example"),
+        ] {
+            seed_unread_threads(&db, prefix, sender, 3, false);
+        }
+        triage_event(
+            &db,
+            "resp-0",
+            "resp@x.example",
+            "response",
+            None,
+            None,
+            false,
+            false,
+        );
+        triage_event(
+            &db,
+            "rest-0",
+            "rest@x.example",
+            "restore",
+            Some("archive"),
+            None,
+            false,
+            false,
+        );
+        db.connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO contact_interactions(message_id, thread_id, account_id, email, direction, sent_at)
+                 VALUES ('msg-wrote-0', 'wrote-0', 'me@example.com', 'wrote@x.example', 'sent', '2026-10-01T10:00:00Z')",
+                [],
+            )
+            .unwrap();
+        for (kind, value, action) in [
+            ("address", "mute@x.example", "mute"),
+            ("domain", "muted.example", "mute"),
+            ("address", "blk@x.example", "block"),
+        ] {
+            db.connection()
+                .unwrap()
+                .execute(
+                    "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at)
+                     VALUES (?1, 'me@example.com', ?2, ?3, ?4, '2026-10-01T00:00:00Z')",
+                    params![Uuid::new_v4().to_string(), kind, value, action],
+                )
+                .unwrap();
+        }
+        assert_eq!(hygiene_senders(&db), vec!["ok@x.example".to_string()]);
+    }
+
+    #[test]
+    fn sender_hygiene_skips_recently_dismissed_and_already_pending_senders() {
+        let db = hygiene_db();
+        seed_unread_threads(&db, "ok", "ok@x.example", 3, false);
+        let run = |now: i64| {
+            let cfg = db.get_inbox_agent_config(AgentId::SenderHygiene).unwrap();
+            let batch = db.with_inbox_agent_candidates(&cfg, now).unwrap();
+            for p in &batch.deterministic {
+                db.save_inbox_agent_proposal(
+                    AgentId::SenderHygiene,
+                    &p.account_id,
+                    &p.thread_id,
+                    &p.thread_revision,
+                    p.kind,
+                    &p.headline,
+                    &p.reason,
+                    &p.payload,
+                    &p.evidence,
+                    now,
+                )
+                .unwrap();
+            }
+            batch.deterministic.len()
+        };
+        let now = hygiene_now();
+        assert_eq!(run(now), 1);
+        // Pending already: a second run proposes nothing new.
+        assert_eq!(run(now), 0);
+        let id = db.inbox_agents_snapshot(None).unwrap().proposals[0]
+            .id
+            .clone();
+        db.resolve_inbox_agent_proposal(&id, ProposalState::Dismissed, now - 10 * 86_400)
+            .unwrap();
+        assert_eq!(run(now), 0, "dismissed 10 days ago");
+        db.resolve_inbox_agent_proposal(&id, ProposalState::Dismissed, now - 40 * 86_400)
+            .unwrap();
+        assert_eq!(run(now + 100), 0, "same anchor revision stays dismissed");
+        // New mail changes the anchor revision; after the cooldown the sender can return.
+        seed_thread(
+            &db,
+            "more-0",
+            "newer",
+            "ok@x.example",
+            "2026-11-10T10:00:00Z",
+            "Body",
+            "[\"INBOX\"]",
+            None,
+        );
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET unread = 1 WHERE id = 'more-0'", [])
+            .unwrap();
+        assert_eq!(run(now), 1);
+    }
+
+    #[test]
+    fn sender_hygiene_respects_account_scope_and_max_per_run() {
+        let db = hygiene_db();
+        db.adopt_mail_account("other@example.com", MailProviderKind::Gmail)
+            .unwrap();
+        db.connection()
+            .unwrap()
+            .execute(
+                "DELETE FROM threads WHERE id <> ''  AND account_id = 'other@example.com'",
+                [],
+            )
+            .unwrap();
+        seed_unread_threads(&db, "p", "p@x.example", 3, false);
+        seed_unread_threads(&db, "q", "q@x.example", 3, false);
+        seed_unread_threads(&db, "o", "o@x.example", 3, false);
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE threads SET account_id = 'other@example.com' WHERE id LIKE 'o-%'",
+                [],
+            )
+            .unwrap();
+        quick_dismissals(&db, "q-0", "q@x.example", 2);
+
+        let mut cfg = db.get_inbox_agent_config(AgentId::SenderHygiene).unwrap();
+        cfg.account_id = Some("me@example.com".into());
+        let batch = db.with_inbox_agent_candidates(&cfg, hygiene_now()).unwrap();
+        let senders: Vec<_> = batch
+            .deterministic
+            .iter()
+            .map(|p| p.payload.sender_email.clone().unwrap())
+            .collect();
+        assert_eq!(senders.len(), 2);
+        assert!(!senders.contains(&"o@x.example".to_string()));
+
+        cfg.account_id = None;
+        assert_eq!(
+            db.with_inbox_agent_candidates(&cfg, hygiene_now())
+                .unwrap()
+                .deterministic
+                .len(),
+            3
+        );
+
+        // More quick dismissals rank first when the cap bites.
+        cfg.max_threads_per_run = 1;
+        triage_event(
+            &db,
+            "q-0",
+            "q@x.example",
+            "disposition",
+            Some("trash"),
+            Some(100),
+            false,
+            false,
+        );
+        let capped = db.with_inbox_agent_candidates(&cfg, hygiene_now()).unwrap();
+        assert_eq!(capped.deterministic.len(), 1);
+        assert_eq!(
+            capped.deterministic[0].payload.sender_email.as_deref(),
+            Some("q@x.example")
+        );
+    }
+
+    #[test]
+    fn a_new_mute_rule_supersedes_a_pending_sender_hygiene_proposal() {
+        let db = hygiene_db();
+        seed_unread_threads(&db, "ok", "ok@x.example", 3, false);
+        seed_unread_threads(&db, "ot", "other@kept.example", 3, false);
+        let now = hygiene_now();
+        let cfg = db.get_inbox_agent_config(AgentId::SenderHygiene).unwrap();
+        for p in db
+            .with_inbox_agent_candidates(&cfg, now)
+            .unwrap()
+            .deterministic
+        {
+            db.save_inbox_agent_proposal(
+                AgentId::SenderHygiene,
+                &p.account_id,
+                &p.thread_id,
+                &p.thread_revision,
+                p.kind,
+                &p.headline,
+                &p.reason,
+                &p.payload,
+                &p.evidence,
+                now,
+            )
+            .unwrap();
+        }
+        assert_eq!(db.inbox_agents_snapshot(None).unwrap().proposals.len(), 2);
+        db.connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at)
+                 VALUES ('r1', 'me@example.com', 'domain', 'x.example', 'mute', '2026-11-25T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        let remaining = db.inbox_agents_snapshot(None).unwrap().proposals;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(
+            remaining[0].payload.sender_email.as_deref(),
+            Some("other@kept.example")
+        );
     }
 }

@@ -352,4 +352,46 @@ mod tests {
         assert_eq!(cfg.last_run_status.as_deref(), Some("completed"));
         assert_eq!(cfg.last_run_proposed, 1);
     }
+
+    #[tokio::test]
+    async fn sender_hygiene_runs_and_saves_proposals_without_an_ai_provider() {
+        let db = Arc::new(Database::open_memory());
+        db.adopt_mail_account("me@example.com", MailProviderKind::Gmail)
+            .unwrap();
+        let conn = db.test_connection().unwrap();
+        for index in 0..3 {
+            conn.execute(
+                "INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json, last_message_at, labels_json, account_id, last_received_at, unread)
+                 VALUES (?1, ?1, 'Deals', 'Sale', '[\"deals@shop.example\"]', '2026-11-01T00:00:00Z', '[\"INBOX\"]', 'me@example.com', '2026-11-01T00:00:00Z', 1)",
+                [format!("h{index}")],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages(id, thread_id, sender, recipients_json, sent_at, body_html, body_text, unread)
+                 VALUES (?1, ?2, 'deals@shop.example', '[\"me@example.com\"]', '2026-11-01T00:00:00Z', '', 'Sale', 1)",
+                [format!("hm{index}"), format!("h{index}")],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-25T10:00:00Z")
+            .unwrap()
+            .timestamp();
+        // No AI configuration is passed or saved.
+        db.enqueue_inbox_agent_run(AgentId::SenderHygiene, None, None, now)
+            .unwrap();
+        let runner = Runner::new(db.clone());
+        assert!(runner.tick(&ProductionExecutor, || now).await.unwrap());
+
+        let snapshot = db.inbox_agents_snapshot(None).unwrap();
+        assert_eq!(snapshot.proposals.len(), 1);
+        assert_eq!(snapshot.proposals[0].kind, ProposalKind::SenderHygiene);
+        let cfg = snapshot
+            .agents
+            .iter()
+            .find(|a| a.agent_id == AgentId::SenderHygiene)
+            .unwrap();
+        assert_eq!(cfg.last_run_status.as_deref(), Some("completed"));
+        assert_eq!(cfg.last_run_proposed, 1);
+    }
 }

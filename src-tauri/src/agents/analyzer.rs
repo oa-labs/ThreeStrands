@@ -440,6 +440,10 @@ pub(crate) async fn analyze_candidate(
     api_key: &str,
     current_date: &str,
 ) -> Result<Option<AnalyzedProposal>, String> {
+    if agent_id == AgentId::SenderHygiene {
+        // Local and deterministic: this assistant never reaches the AI provider.
+        return Ok(None);
+    }
     let prompt = build_prompt_json(candidate, current_date);
     let msg_count = sent_message_count(candidate.messages.len());
     let (feature, system_prompt, schema, (model, reasoning)) = match agent_id {
@@ -461,6 +465,7 @@ pub(crate) async fn analyze_candidate(
             aging_replies_schema(),
             ai.fast_or_main_model(),
         ),
+        AgentId::SenderHygiene => return Ok(None),
     };
 
     let mut purpose = RequestPurpose::about(feature.id(), &candidate.subject, Some(msg_count));
@@ -494,6 +499,7 @@ pub(crate) async fn analyze_candidate(
             validate_resolved_response(candidate, &reply.content, current_date)
         }
         AgentId::AgingReplies => validate_aging_reply_response(candidate, &reply.content),
+        AgentId::SenderHygiene => None,
     };
     Ok(validated)
 }

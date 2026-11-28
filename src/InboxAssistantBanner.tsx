@@ -2,6 +2,7 @@ import { Bot } from "lucide-react";
 import type { InboxAgentProposal } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { ASSISTANT_KIND_LABELS, proposalTakeaways } from "./inboxAssistantCard";
+import { SenderHygieneActions, type SenderHygieneHandlers } from "./SenderHygieneActions";
 
 export function InboxAssistantBanner({
   proposals,
@@ -14,6 +15,7 @@ export function InboxAssistantBanner({
   onOpenEvidenceThread,
   onOpenEvidenceTask,
   onDismiss,
+  senderHygiene,
 }: {
   proposals: InboxAgentProposal[];
   busy: boolean;
@@ -25,6 +27,7 @@ export function InboxAssistantBanner({
   onOpenEvidenceThread(threadId: string): void;
   onOpenEvidenceTask(taskId: string): void;
   onDismiss(proposal: InboxAgentProposal): void;
+  senderHygiene: SenderHygieneHandlers;
 }) {
   if (proposals.length === 0) return null;
 
@@ -125,6 +128,9 @@ export function InboxAssistantBanner({
                     </button>
                   ) : null}
                 </>
+              ) : null}
+              {proposal.kind === "sender_hygiene" ? (
+                <SenderHygieneActions proposal={proposal} busy={busy} handlers={senderHygiene} />
               ) : null}
               <button type="button" className="btn-link assistant-dismiss-btn" disabled={busy} onClick={() => onDismiss(proposal)}>
                 Dismiss

@@ -1893,7 +1893,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         errors: [],
       };
     },
-    ...createDemoInboxAgents(() => ({ accounts, threads, tasks })),
+    ...createDemoInboxAgents(() => ({ accounts, threads, tasks, messagesFor })),
     async listTasks(accountId, status) {
       return structuredClone(tasks
         .filter((task) => !accountId || accountId === "all" || task.accountId === accountId)
