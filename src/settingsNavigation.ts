@@ -17,6 +17,8 @@ const sections: Record<SettingsSection, true> = {
   writingProfile: true,
   notes: true,
   meetingRecording: true,
+  meetingTranscription: true,
+  meetingSummaries: true,
   ai: true,
   replicatedSync: true,
   privacy: true,

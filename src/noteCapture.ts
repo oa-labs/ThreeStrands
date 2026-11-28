@@ -195,23 +195,27 @@ export async function saveFollowThrough(
   } };
 }
 
-/** Saves an ad-hoc recording's follow-through section under `## Meetings` in `date`'s daily note. */
+/** Saves an ad-hoc recording's follow-through section under `## Meetings` in `date`'s daily note (or in a dedicated backlinked meeting note). */
 export async function saveAdhocFollowThrough(
   date: string,
   timeLabel: string,
   expectedRevision: string | null,
   operationId: string,
   accepted: import("./domain").AcceptedFollowThrough,
+  linkNote = false,
 ) {
-  const key = noteTargetKey({ kind: "daily", date });
-  const prepared = await prepareNoteMutation(key);
+  const dailyKey = noteTargetKey({ kind: "daily", date });
+  const prepared = await prepareNoteMutation(dailyKey);
   const expected = prepared.before === expectedRevision ? prepared.after ?? expectedRevision : expectedRevision;
-  const saved = await mailClient.saveAdhocFollowThrough(date, timeLabel, expected, operationId, accepted);
-  await notesChanged(key);
+  const saved = await mailClient.saveAdhocFollowThrough(date, timeLabel, expected, operationId, accepted, linkNote);
+  await notesChanged(dailyKey);
+  if (saved.note.id !== dailyKey) await notesChanged(saved.note.id);
   return { ...saved, async undo() {
-    await prepareNoteMutation(key);
+    await prepareNoteMutation(dailyKey);
+    if (saved.note.id !== dailyKey) await prepareNoteMutation(saved.note.id);
     await mailClient.undoMeetingFollowThrough(operationId);
-    await notesChanged(key);
+    await notesChanged(dailyKey);
+    if (saved.note.id !== dailyKey) await notesChanged(saved.note.id);
   } };
 }
 

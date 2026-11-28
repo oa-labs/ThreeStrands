@@ -225,6 +225,11 @@ pub struct TransferPreferences {
     // still imports into earlier builds.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub writing_profiles: WritingProfiles,
+    // Added under format version 5; earlier exports import with no custom
+    // meeting summary instructions. Omitted when empty so an export without
+    // instructions still imports into earlier builds.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub meeting_summary_instructions: String,
     // Added in 0.182 under format version 5; earlier exports import with only
     // the Default profile. Omitted when that is all there is, so such an
     // export still imports into earlier builds.
@@ -343,8 +348,21 @@ impl TransferPreferences {
             .map_err(|_| "The transfer contains invalid availability preferences".to_string())?;
         validate_calendar_colors(&self.calendar_colors)?;
         validate_writing_profiles(&self.writing_profiles)?;
+        validate_meeting_summary_instructions(&self.meeting_summary_instructions)?;
         validate_availability_profiles(&self.availability_profiles, &self.availability_preferences)
     }
+}
+
+fn validate_meeting_summary_instructions(instructions: &str) -> Result<(), String> {
+    let invalid = || "The transfer contains invalid meeting summary instructions".to_string();
+    if instructions.chars().count() > crate::recording::policy::MAX_RECAP_INSTRUCTIONS_CHARS
+        || instructions
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t')
+    {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 fn validate_availability_profiles(
@@ -1643,6 +1661,7 @@ mod tests {
                 availability_preferences: default_availability_preferences(),
                 calendar_colors: CalendarColors::new(),
                 writing_profiles: WritingProfiles::new(),
+                meeting_summary_instructions: String::new(),
                 availability_profiles: AvailabilityProfiles::default(),
             },
             accounts: vec![TransferAccount {
@@ -2934,6 +2953,7 @@ mod tests {
                         review_instructions: "Push for one specific next step.".to_string(),
                     },
                 )]),
+                meeting_summary_instructions: String::new(),
                 availability_profiles: AvailabilityProfiles {
                     default_profile: AvailabilityProfileName {
                         id: "default".to_string(),
@@ -4044,6 +4064,43 @@ mod tests {
         unknown["preferences"]["writingProfiles"]["current@example.com"]["persona"] =
             serde_json::json!("x");
         assert!(serde_json::from_value::<TransferPayload>(unknown).is_err());
+    }
+
+    #[test]
+    fn transfer_omits_empty_meeting_summary_instructions_and_bounds_non_empty() {
+        let mut payload = current_fixture_payload();
+        payload.preferences.meeting_summary_instructions.clear();
+        let serialized = serde_json::to_value(&payload).unwrap();
+        assert!(serialized["preferences"]
+            .get("meetingSummaryInstructions")
+            .is_none());
+
+        // Preceding exports without meetingSummaryInstructions deserialize cleanly.
+        let (_, imported_legacy) = import_fixture(fixtures::V5_0_181);
+        imported_legacy.preferences.validate().unwrap();
+        assert_eq!(imported_legacy.preferences.meeting_summary_instructions, "");
+
+        let limit = crate::recording::policy::MAX_RECAP_INSTRUCTIONS_CHARS;
+        for (length, ok) in [(limit - 1, true), (limit, true), (limit + 1, false)] {
+            let mut candidate = current_fixture_payload();
+            candidate.preferences.meeting_summary_instructions = "é".repeat(length);
+            assert_eq!(candidate.preferences.validate().is_ok(), ok, "len {length}");
+        }
+
+        let mut with_control = current_fixture_payload();
+        with_control.preferences.meeting_summary_instructions = "Good\n\tBad\u{0}".into();
+        assert!(with_control.preferences.validate().is_err());
+
+        let mut multiline = current_fixture_payload();
+        multiline.preferences.meeting_summary_instructions =
+            "Overview first.\n\n**Topics**\n- Key risks".into();
+        multiline.preferences.validate().unwrap();
+        let roundtrip: TransferPayload =
+            serde_json::from_value(serde_json::to_value(&multiline).unwrap()).unwrap();
+        assert_eq!(
+            roundtrip.preferences.meeting_summary_instructions,
+            "Overview first.\n\n**Topics**\n- Key risks"
+        );
     }
 
     #[test]

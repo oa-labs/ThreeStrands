@@ -92,7 +92,7 @@ describe("App meeting recording wiring", () => {
     await screen.findByRole("button", { name: "Command Palette (Ctrl+K)" });
     await fire("recording-tray-command", { command: "openSettings" });
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
-    expect(await within(dialog).findByRole("region", { name: "Meeting Recording" })).toBeInTheDocument();
+    expect(await within(dialog).findByRole("region", { name: "Recording & Menu Bar" })).toBeInTheDocument();
   });
 
   it("asks before quitting while recording, and stops only when confirmed", async () => {
@@ -141,7 +141,7 @@ describe("App meeting recording wiring", () => {
     await screen.findByRole("button", { name: "Command Palette (Ctrl+K)" });
     await fire("recording-tray-command", { command: "review", recordingId: "rec-latest" });
     const trayDialog = await screen.findByRole("dialog", { name: "Review Follow-through" });
-    expect(within(trayDialog).getByText(/Quick Chat/)).toBeInTheDocument();
+    expect(within(trayDialog).getByText(/Quick Chat ·/)).toBeInTheDocument();
     fireEvent.click(within(trayDialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review Follow-through" })).not.toBeInTheDocument());
 

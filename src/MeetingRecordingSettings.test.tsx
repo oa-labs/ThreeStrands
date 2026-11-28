@@ -2,8 +2,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
 import type { AudioInputDevice, RecordingCapabilities, RecordingSettings, TranscriptionModelStatus } from "./domain";
+import { MAX_MEETING_SUMMARY_INSTRUCTIONS_CHARS, readMeetingSummaryInstructions, resetMeetingSummaryInstructionsForTests } from "./meetingSummaryInstructions";
 import type { RecordingEvents } from "./recordingEvents";
-import { MeetingRecordingSettings } from "./MeetingRecordingSettings";
+import { MeetingRecordingSettings, MeetingSummarySettings, MeetingTranscriptionSettings } from "./MeetingRecordingSettings";
 
 const bus = vi.hoisted(() => {
   const handlers = new Map<string, Set<(payload: unknown) => void>>();
@@ -39,15 +40,24 @@ function setup(
   usage = { recordings: 3, audioBytes: 5 * 1024 * 1024 },
   models = [model("fast"), model("accurate")],
   devices: AudioInputDevice[] = [builtInMic],
+  section: "recording" | "transcription" | "summaries" = "recording",
 ) {
   vi.spyOn(mailClient, "transcriptionModels").mockResolvedValue(models);
   vi.spyOn(mailClient, "recordingSettings").mockResolvedValue(saved);
   vi.spyOn(mailClient, "recordingsUsage").mockResolvedValue(usage);
   vi.spyOn(mailClient, "recordingInputDevices").mockResolvedValue(devices);
   const save = vi.spyOn(mailClient, "setRecordingSettings").mockResolvedValue(undefined);
-  render(<MeetingRecordingSettings capabilities={capabilities} />);
+  if (section === "transcription") render(<MeetingTranscriptionSettings capabilities={capabilities} />);
+  else if (section === "summaries") render(<MeetingSummarySettings />);
+  else render(<MeetingRecordingSettings capabilities={capabilities} />);
   return { save };
 }
+
+const setupTranscription = (
+  capabilities = available,
+  saved = defaults,
+  models = [model("fast"), model("accurate")],
+) => setup(capabilities, saved, undefined, models, undefined, "transcription");
 
 describe("MeetingRecordingSettings", () => {
   beforeEach(() => vi.restoreAllMocks());
@@ -192,7 +202,7 @@ describe("Transcription Model", () => {
   const group = async (name: string) => within(await screen.findByRole("group", { name }));
 
   it("chooses Fast or Accurate, saves the choice, and describes the field", async () => {
-    const { save } = setup();
+    const { save } = setupTranscription();
     const field = await screen.findByRole("combobox", { name: "Transcription Model" });
     expect(field).toHaveValue("fast");
     expect(field).toHaveAccessibleDescription();
@@ -202,7 +212,7 @@ describe("Transcription Model", () => {
   });
 
   it("turns Transcribe During Meetings off and on, describing what it costs", async () => {
-    const { save } = setup();
+    const { save } = setupTranscription();
     const toggle = await screen.findByRole("checkbox", { name: "Transcribe During Meetings" });
     await waitFor(() => expect(toggle).toBeEnabled());
     expect(toggle).toBeChecked();
@@ -215,14 +225,14 @@ describe("Transcription Model", () => {
   });
 
   it("shows Transcribe During Meetings off when it was saved off", async () => {
-    setup(available, { ...defaults, transcribeDuringMeetings: false });
+    setupTranscription(available, { ...defaults, transcribeDuringMeetings: false });
     const toggle = await screen.findByRole("checkbox", { name: "Transcribe During Meetings" });
     await waitFor(() => expect(toggle).toBeEnabled());
     expect(toggle).not.toBeChecked();
   });
 
   it("shows each model's size, language note and state, and downloads nothing until Download is pressed", async () => {
-    setup();
+    setupTranscription();
     const download = vi.spyOn(mailClient, "downloadTranscriptionModel").mockResolvedValue(undefined);
     const fast = await group("Fast model");
     await waitFor(() => expect(fast.getByText("190 MB, English only")).toBeInTheDocument());
@@ -238,14 +248,14 @@ describe("Transcription Model", () => {
   });
 
   it("offers Download for a partial download and says how far it got", async () => {
-    setup(available, defaults, undefined, [model("fast", { receivedBytes: 95_000_000 }), model("accurate")]);
+    setupTranscription(available, defaults, [model("fast", { receivedBytes: 95_000_000 }), model("accurate")]);
     const fast = await group("Fast model");
     await waitFor(() => expect(fast.getByText("Partly downloaded, 50%")).toBeInTheDocument());
     expect(fast.getByRole("button", { name: "Download" })).toBeInTheDocument();
   });
 
   it("shows progress with Cancel while downloading, updating from the event", async () => {
-    setup(available, defaults, undefined, [model("fast", { state: "downloading", receivedBytes: 19_000_000 }), model("accurate")]);
+    setupTranscription(available, defaults, [model("fast", { state: "downloading", receivedBytes: 19_000_000 }), model("accurate")]);
     const cancel = vi.spyOn(mailClient, "cancelTranscriptionModelDownload").mockResolvedValue(undefined);
     const fast = await group("Fast model");
     await waitFor(() => expect(fast.getByText("Downloading… 10%")).toBeInTheDocument());
@@ -259,14 +269,14 @@ describe("Transcription Model", () => {
   });
 
   it("shows checking while verifying, with no way to cancel", async () => {
-    setup(available, defaults, undefined, [model("fast", { state: "verifying", receivedBytes: 190_000_000 }), model("accurate")]);
+    setupTranscription(available, defaults, [model("fast", { state: "verifying", receivedBytes: 190_000_000 }), model("accurate")]);
     const fast = await group("Fast model");
     await waitFor(() => expect(fast.getByText("Checking the download…")).toBeInTheDocument());
     expect(fast.queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("shows the failure with Try Again, which downloads again", async () => {
-    setup(available, defaults, undefined, [model("fast", { state: "failed", error: "Not enough free disk space to download the model." }), model("accurate")]);
+    setupTranscription(available, defaults, [model("fast", { state: "failed", error: "Not enough free disk space to download the model." }), model("accurate")]);
     const download = vi.spyOn(mailClient, "downloadTranscriptionModel").mockResolvedValue(undefined);
     const fast = await group("Fast model");
     expect(await fast.findByRole("alert")).toHaveTextContent("Not enough free disk space to download the model.");
@@ -275,7 +285,7 @@ describe("Transcription Model", () => {
   });
 
   it("asks before deleting a downloaded model, and deletes only when confirmed", async () => {
-    setup(available, defaults, undefined, [model("fast", { state: "ready", receivedBytes: 190_000_000 }), model("accurate")]);
+    setupTranscription(available, defaults, [model("fast", { state: "ready", receivedBytes: 190_000_000 }), model("accurate")]);
     const remove = vi.spyOn(mailClient, "deleteTranscriptionModel").mockResolvedValue(undefined);
     const fast = await group("Fast model");
     await waitFor(() => expect(fast.getByText("Downloaded")).toBeInTheDocument());
@@ -292,7 +302,7 @@ describe("Transcription Model", () => {
   });
 
   it("says why a command failed", async () => {
-    setup();
+    setupTranscription();
     vi.spyOn(mailClient, "downloadTranscriptionModel").mockRejectedValue(new Error("This model is already downloading."));
     const fast = await group("Fast model");
     fireEvent.click(await fast.findByRole("button", { name: "Download" }));
@@ -315,7 +325,7 @@ describe("Transcription Model", () => {
   });
 
   it("offers Apple On-Device first when SpeechAnalyzer is available, and lets the user switch to Whisper", async () => {
-    const { save } = setup({ ...available, speechAnalyzer: true });
+    const { save } = setupTranscription({ ...available, speechAnalyzer: true });
     const field = await screen.findByRole("combobox", { name: "Transcription Model" });
     await waitFor(() => expect(field).toBeEnabled());
     expect(field).toHaveValue("apple");
@@ -328,7 +338,7 @@ describe("Transcription Model", () => {
   });
 
   it("saves Transcription Language and returns null for Auto", async () => {
-    const { save } = setup();
+    const { save } = setupTranscription();
     const field = await screen.findByRole("combobox", { name: "Transcription Language" });
     await waitFor(() => expect(field).toBeEnabled());
     expect(field).toHaveValue("");
@@ -337,17 +347,6 @@ describe("Transcription Model", () => {
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, transcriptionLanguage: "es" }));
     fireEvent.change(field, { target: { value: "" } });
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, transcriptionLanguage: null }));
-  });
-
-  it("saves Summarize with AI as it changes and attaches its help text", async () => {
-    const { save } = setup();
-    const toggle = await screen.findByRole("checkbox", { name: "Summarize with AI" });
-    await waitFor(() => expect(toggle).toBeEnabled());
-    expect(toggle).not.toBeChecked();
-    expect(toggle).toHaveAccessibleDescription();
-    fireEvent.click(toggle);
-    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, summarizeWithAi: true }));
-    expect(toggle).toBeChecked();
   });
 
   it("saves Offer to Record Meetings when toggled and attaches its help text", async () => {
@@ -384,8 +383,8 @@ describe("Transcription Model", () => {
     expect(countdownSelect).toBeDisabled();
   });
 
-  it("lets the user add, review Sent-mail suggestions, and remove Custom Vocabulary without auto-saving suggestions", async () => {
-    const { save } = setup();
+  it("defaults Sent-mail vocabulary suggestions to unselected and lets the user choose, select all, or clear", async () => {
+    const { save } = setupTranscription();
     const suggest = vi.spyOn(mailClient, "suggestRecordingVocabulary").mockResolvedValue([
       { term: "ThreeStrands", threadCount: 5 },
       { term: "QBR", threadCount: 3 },
@@ -402,9 +401,25 @@ describe("Transcription Model", () => {
     expect(suggest).toHaveBeenCalledOnce();
     expect(save).toHaveBeenCalledTimes(1);
 
-    // Uncheck QBR and confirm only ThreeStrands is added alongside CoreAudio.
-    fireEvent.click(within(panel).getByRole("checkbox", { name: /QBR/ }));
-    fireEvent.click(within(panel).getByRole("button", { name: "Add Selected" }));
+    // Suggestions start unchecked and Add Selected starts disabled.
+    const threeStrandsBox = within(panel).getByRole("checkbox", { name: /ThreeStrands/ });
+    const qbrBox = within(panel).getByRole("checkbox", { name: /QBR/ });
+    expect(threeStrandsBox).not.toBeChecked();
+    expect(qbrBox).not.toBeChecked();
+    expect(within(panel).getByRole("button", { name: "Add Selected" })).toBeDisabled();
+
+    // Select All and Clear toggle all boxes.
+    fireEvent.click(within(panel).getByRole("button", { name: "Select All" }));
+    expect(threeStrandsBox).toBeChecked();
+    expect(qbrBox).toBeChecked();
+    expect(within(panel).getByRole("button", { name: "Add Selected (2)" })).toBeEnabled();
+    fireEvent.click(within(panel).getByRole("button", { name: "Clear" }));
+    expect(threeStrandsBox).not.toBeChecked();
+    expect(qbrBox).not.toBeChecked();
+
+    // Check only ThreeStrands and submit.
+    fireEvent.click(threeStrandsBox);
+    fireEvent.click(within(panel).getByRole("button", { name: "Add Selected (1)" }));
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({
       ...defaults,
       customVocabulary: ["CoreAudio", "ThreeStrands"],
@@ -420,7 +435,7 @@ describe("Transcription Model", () => {
   it("requires privacy disclosure confirmation before enabling Cloud Transcription", async () => {
     localStorage.setItem("threestrands.settings.ai.provider", "openrouter");
     try {
-      const { save } = setup();
+      const { save } = setupTranscription();
       const toggle = await screen.findByRole("checkbox", { name: "Cloud Transcription" });
       await waitFor(() => expect(toggle).toBeEnabled());
       expect(toggle).not.toBeChecked();
@@ -448,5 +463,53 @@ describe("Transcription Model", () => {
     } finally {
       localStorage.removeItem("threestrands.settings.ai.provider");
     }
+  });
+});
+
+describe("MeetingSummarySettings", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    resetMeetingSummaryInstructionsForTests();
+  });
+  afterEach(cleanup);
+
+  it("saves Summarize with AI, applies presets, and saves custom instructions on blur", async () => {
+    vi.spyOn(mailClient, "recordingSettings").mockResolvedValue(defaults);
+    vi.spyOn(mailClient, "recordingInputDevices").mockResolvedValue([builtInMic]);
+    vi.spyOn(mailClient, "recordingsUsage").mockResolvedValue({ recordings: 0, audioBytes: 0 });
+    vi.spyOn(mailClient, "transcriptionModels").mockResolvedValue([]);
+    const save = vi.spyOn(mailClient, "setRecordingSettings").mockResolvedValue(undefined);
+    const onChange = vi.fn();
+    const onOpenAiSettings = vi.fn();
+
+    render(<MeetingSummarySettings aiConfigured={false} onOpenAiSettings={onOpenAiSettings} onChange={onChange} />);
+
+    expect(screen.getByRole("note")).toHaveTextContent("Configure an AI provider");
+    fireEvent.click(screen.getByRole("button", { name: "AI Provider" }));
+    expect(onOpenAiSettings).toHaveBeenCalledOnce();
+
+    const toggle = await screen.findByRole("checkbox", { name: "Summarize with AI" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toHaveAccessibleDescription();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, summarizeWithAi: true }));
+
+    const field = screen.getByRole("textbox", { name: "Custom Summary Instructions" });
+    expect(field).toHaveAttribute("maxlength", String(MAX_MEETING_SUMMARY_INSTRUCTIONS_CHARS));
+    expect(field).toHaveAccessibleDescription();
+
+    fireEvent.click(screen.getByRole("button", { name: "Executive Brief" }));
+    expect(field).not.toHaveValue("");
+    expect(readMeetingSummaryInstructions()).toContain("bottom-line outcome");
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(field, { target: { value: "Focus on owners and risks." } });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    fireEvent.blur(field);
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect(readMeetingSummaryInstructions()).toBe("Focus on owners and risks.");
+    expect(screen.getByText(`26 / ${MAX_MEETING_SUMMARY_INSTRUCTIONS_CHARS.toLocaleString()}`)).toBeInTheDocument();
   });
 });

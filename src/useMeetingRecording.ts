@@ -3,6 +3,7 @@ import { readAiProvider, readAiRequestConfig } from "./aiSettings";
 import { mailClient } from "./data/client";
 import type { MeetingRecording, RecordingCapabilities, RecordingSettings, RecordingStartRequest, RecordingStatus, ScheduleEvent, TranscriptionModelStatus } from "./domain";
 import { errorMessage, logBackgroundFailure } from "./errors";
+import { readMeetingSummaryInstructions } from "./meetingSummaryInstructions";
 import { adHocRecordingTitle, RECORDING_REMINDER, stopReasonNotice } from "./recordingPolicy";
 import { announceRecordingSettingsChanged, listenForRecordingEvent, listenForRecordingSettingsChanged } from "./recordingEvents";
 import type { Notice } from "./useNotice";
@@ -195,7 +196,8 @@ export function useMeetingRecording({ onNotice, onOpenSettings, onOpenMeeting }:
       if (ctx.recording.state !== "transcribed" || ctx.recap || ctx.recording.reviewedOperationId || ctx.overBudget) return;
       autoSummarized.current.add(recordingId);
       const cfg = readAiRequestConfig("summarizing a meeting recording", "meetingRecap");
-      await mailClient.summarizeRecording(recordingId, cfg.provider, cfg.model, cfg.endpoint, cfg.reasoning, false, null);
+      const instructions = readMeetingSummaryInstructions();
+      await mailClient.summarizeRecording(recordingId, cfg.provider, cfg.model, cfg.endpoint, cfg.reasoning, false, null, instructions || null);
     } catch (reason) {
       logBackgroundFailure("Summarizing meeting recording")(reason);
     }

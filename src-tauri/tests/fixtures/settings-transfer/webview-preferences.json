@@ -83,5 +83,6 @@
       "reviewInstructions": "Push for one specific next step."
     }
   },
+  "meetingSummaryInstructions": "Group notes by topic with clear takeaways.",
   "showStarredInbox": false
 }

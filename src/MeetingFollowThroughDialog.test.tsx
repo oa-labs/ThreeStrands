@@ -5,6 +5,7 @@ import { saveAiModel, saveAiProvider } from "./aiSettings";
 import type { DraftHandoff, FollowThroughSave, MeetingContext, MeetingRecap, MeetingRecording, MeetingSection, RecordingReviewContext, RecordingSettings, ScheduleEvent } from "./domain";
 import { MeetingFollowThroughDialog, MeetingFollowUpDialog } from "./MeetingFollowThroughDialog";
 import { readFollowThroughRecovery, readFollowUpHandoff, rememberFollowUpHandoff, saveFollowThroughRecovery } from "./meetingFollowThrough";
+import { resetMeetingSummaryInstructionsForTests, saveMeetingSummaryInstructions } from "./meetingSummaryInstructions";
 import { meetingEventReference } from "./meetingNoteEntry";
 import { expectPrimaryActionLast } from "./test/sharedButtons";
 
@@ -38,7 +39,7 @@ const saved = (operationId: string): FollowThroughSave => ({
   section: "- Follow-through", start: 0, end: 10, taskIds: ["note:daily:2026-11-16:m"], checklistIds: [], replayed: false,
 });
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); resetMeetingSummaryInstructionsForTests(); });
 
 function renderReview(overrides: Partial<Parameters<typeof MeetingFollowThroughDialog>[0]> = {}) {
   const handlers = { onClose: vi.fn(), onSaved: vi.fn(), onAddNote: vi.fn() };
@@ -109,12 +110,36 @@ describe("MeetingFollowThroughDialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("offers Add Note when the meeting has no note to save into", () => {
-    const { dialog, onAddNote, onClose } = renderReview({ context: context({ thisMeeting: section([]) }) });
-    expect(dialog.queryByRole("combobox", { name: "Save To" })).not.toBeInTheDocument();
-    fireEvent.click(dialog.getByRole("button", { name: "Add Note" }));
-    expect(onClose).toHaveBeenCalled();
-    expect(onAddNote).toHaveBeenCalled();
+  it("defaults to creating a backlinked meeting note when no note exists yet, and also keeps Add Note", async () => {
+    const meetingNote = { id: "n-created", title: "Sync", body: "", dailyDate: null, createdAt: "", updatedAt: "m1", trashed: false, trashedAt: null };
+    const dailyNote = { id: "daily:2026-11-16", title: "2026-11-16", body: "", dailyDate: "2026-11-16", createdAt: "", updatedAt: "d1", trashed: false, trashedAt: null };
+    vi.spyOn(mailClient, "getDailyNote").mockResolvedValue(null);
+    const addMeeting = vi.spyOn(mailClient, "addMeetingToDailyNote").mockResolvedValue({
+      note: dailyNote,
+      added: true,
+      previousBody: "",
+      meetingNote,
+      createdMeetingNote: true,
+    });
+    const save = vi.spyOn(mailClient, "saveMeetingFollowThrough").mockImplementation(async (_ref, _dest, _rev, operationId) => saved(operationId));
+
+    const { dialog, onAddNote, onClose, onSaved } = renderReview({ context: context({ thisMeeting: section([]) }) });
+    const saveTo = dialog.getByRole("combobox", { name: "Save To" });
+    expect(saveTo).toHaveValue("newLinkedNote");
+    fireEvent.change(dialog.getByRole("textbox", { name: "Summary" }), { target: { value: "Aligned on scope." } });
+    fireEvent.click(dialog.getByRole("button", { name: "Save Follow-through" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+    expect(addMeeting).toHaveBeenCalledWith("2026-11-16", null, expect.objectContaining({ linkNote: true, name: "Sync" }));
+    expect(save).toHaveBeenCalledWith(reference, { noteId: "n-created" }, "m1", expect.any(String), expect.objectContaining({ summary: "Aligned on scope." }));
+    cleanup();
+
+    const manual = renderReview({ context: context({ thisMeeting: section([]) }) });
+    fireEvent.click(manual.dialog.getByRole("button", { name: "Add Note" }));
+    expect(manual.onClose).toHaveBeenCalled();
+    expect(manual.onAddNote).toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onAddNote).not.toHaveBeenCalled();
   });
 
   const recSettings = (overrides: Partial<RecordingSettings> = {}): RecordingSettings => ({
@@ -175,7 +200,7 @@ describe("MeetingFollowThroughDialog", () => {
     expect(dialog.getByRole("textbox", { name: "Summary" })).toHaveValue("");
 
     fireEvent.click(dialog.getByRole("button", { name: "Summarize" }));
-    await waitFor(() => expect(summarize).toHaveBeenCalledWith("rec-1", "openai", "gpt-4o", null, "default", false, null));
+    await waitFor(() => expect(summarize).toHaveBeenCalledWith("rec-1", "openai", "gpt-4o", null, "default", false, null, null));
 
     expect(await dialog.findByRole("textbox", { name: "Summary" })).toHaveValue("Confirmed Friday launch and assigned deck follow-up.");
     expect(dialog.getByText(/1 suggestion was withheld/)).toBeInTheDocument();
@@ -186,11 +211,12 @@ describe("MeetingFollowThroughDialog", () => {
     expect(dialog.getByRole("textbox", { name: "Item 3" })).toHaveValue("Dana: Check pricing");
     expect(dialog.getByRole("combobox", { name: "Kind of Item 4" })).toHaveValue("question");
 
-    // Re-summarize with Include My Notes checked passes includeMyNotes: true.
+    // Re-summarize with Include My Notes checked and custom synced instructions forwards both.
+    saveMeetingSummaryInstructions("Lead with decisions.");
     fireEvent.click(includeNotes);
     expect(includeNotes).toBeChecked();
     fireEvent.click(dialog.getByRole("button", { name: "Re-summarize" }));
-    await waitFor(() => expect(summarize).toHaveBeenLastCalledWith("rec-1", "openai", "gpt-4o", null, "default", true, null));
+    await waitFor(() => expect(summarize).toHaveBeenLastCalledWith("rec-1", "openai", "gpt-4o", null, "default", true, null, "Lead with decisions."));
 
     const attach = dialog.getByRole("checkbox", { name: "Attach Transcript" });
     expect(attach).not.toBeChecked();
@@ -216,7 +242,7 @@ describe("MeetingFollowThroughDialog", () => {
     expect(dialog.queryByRole("checkbox", { name: "Include My Notes" })).not.toBeInTheDocument();
   });
 
-  it("saves an ad-hoc recording under None to the daily note and lets the user match it to today's meetings", async () => {
+  it("defaults an ad-hoc recording to creating a backlinked meeting note, supports daily-note mode, and lets the user match to today's meetings", async () => {
     const adhocRec = recording({ id: "rec-adhoc", eventRef: null, title: "Ad-hoc Chat" });
     vi.spyOn(mailClient, "recordingReviewContext").mockResolvedValue(reviewContext({ recording: adhocRec, hasUserNotes: false }));
     vi.spyOn(mailClient, "recordingSettings").mockResolvedValue(recSettings());
@@ -233,6 +259,8 @@ describe("MeetingFollowThroughDialog", () => {
     });
     const meetingPicker = dialog.getByRole("combobox", { name: "Meeting" });
     expect(meetingPicker).toHaveValue("");
+    const saveTo = dialog.getByRole("combobox", { name: "Save To" });
+    expect(saveTo).toHaveValue("newLinkedNote");
     const titleInput = dialog.getByRole("textbox", { name: "Title" });
     expect(titleInput).toHaveValue("Ad-hoc Chat");
     fireEvent.change(titleInput, { target: { value: "Design Review" } });
@@ -243,7 +271,7 @@ describe("MeetingFollowThroughDialog", () => {
       meeting: "Design Review",
       summary: "Finalized color palette.",
       recordingId: "rec-adhoc",
-    }));
+    }), true);
 
     fireEvent.change(meetingPicker, { target: { value: event.id } });
     expect(onSelectEvent).toHaveBeenCalledWith(event);

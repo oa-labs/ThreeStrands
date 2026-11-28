@@ -474,25 +474,206 @@ const COMMON_STOP_WORDS: &[&str] = &[
     "zero",
 ];
 
-fn strip_quoted_and_signatures(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
+#[derive(Debug, Clone, Default)]
+pub struct VocabularyExclusions {
+    pub own_names: Vec<String>,
+    pub signatures: Vec<String>,
+}
+
+const SIGNOFF_PREFIXES: &[&str] = &[
+    "best",
+    "best regards",
+    "thanks",
+    "thank you",
+    "many thanks",
+    "thanks again",
+    "cheers",
+    "regards",
+    "warm regards",
+    "kind regards",
+    "sincerely",
+    "talk soon",
+    "all the best",
+    "yours truly",
+    "warmly",
+];
+
+const MOBILE_FOOTERS: &[&str] = &[
+    "sent from my iphone",
+    "sent from my ipad",
+    "sent from my android",
+    "sent from mail for windows",
+    "get outlook for ",
+];
+
+fn normalize_line(line: &str) -> String {
+    line.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+fn is_divider_line(trimmed: &str) -> bool {
+    trimmed.len() >= 3 && (trimmed.bytes().all(|b| b == b'-') || trimmed.bytes().all(|b| b == b'_'))
+}
+
+fn is_signoff_line(trimmed: &str) -> bool {
+    let clean = trimmed
+        .trim_end_matches([',', '.', '!', ':'])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    SIGNOFF_PREFIXES.contains(&clean.as_str())
+}
+
+fn is_mobile_footer(trimmed: &str) -> bool {
+    let lower = trimmed.to_ascii_lowercase();
+    MOBILE_FOOTERS
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+fn strip_quoted_and_signatures(
+    text: &str,
+    sig_blocks: &[Vec<String>],
+    sig_lines: &HashSet<String>,
+) -> Vec<String> {
+    let mut lines_out = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed == "--" || trimmed.starts_with("-- ") {
+        if trimmed == "--" || trimmed.starts_with("-- ") || is_divider_line(trimmed) {
             break;
         }
         if trimmed.eq_ignore_ascii_case("-----Original Message-----")
             || (trimmed.starts_with("On ") && trimmed.ends_with("wrote:"))
+            || is_mobile_footer(trimmed)
         {
             break;
         }
         if trimmed.starts_with('>') {
             continue;
         }
-        out.push_str(trimmed);
-        out.push('\n');
+        lines_out.push(trimmed.to_string());
     }
-    out
+
+    // Remove contiguous multi-line configured signature blocks wherever they appear.
+    for block in sig_blocks {
+        if block.len() < 2 {
+            continue;
+        }
+        let mut i = 0;
+        while i + block.len() <= lines_out.len() {
+            let matches = (0..block.len()).all(|j| normalize_line(&lines_out[i + j]) == block[j]);
+            if matches {
+                lines_out.drain(i..i + block.len());
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    // Strip a trailing sign-off block within the last ~10 non-empty lines.
+    let non_empty_positions: Vec<usize> = lines_out
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, line)| (!line.is_empty()).then_some(idx))
+        .collect();
+    let tail_start = non_empty_positions.len().saturating_sub(10);
+    if let Some(&cut_idx) = non_empty_positions[tail_start..]
+        .iter()
+        .find(|&&idx| is_signoff_line(&lines_out[idx]))
+    {
+        lines_out.truncate(cut_idx);
+    }
+
+    // Strip individual configured signature lines in the trailing window.
+    if !sig_lines.is_empty() {
+        let non_empty_after: Vec<usize> = lines_out
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, line)| (!line.is_empty()).then_some(idx))
+            .collect();
+        let sig_tail_start = non_empty_after
+            .get(non_empty_after.len().saturating_sub(12))
+            .copied()
+            .unwrap_or(0);
+        for line in lines_out.iter_mut().skip(sig_tail_start) {
+            let norm = normalize_line(line);
+            if !norm.is_empty() && sig_lines.contains(&norm) {
+                line.clear();
+            }
+        }
+    }
+
+    lines_out
+}
+
+fn build_signature_matchers(signatures: &[String]) -> (Vec<Vec<String>>, HashSet<String>) {
+    let mut blocks = Vec::new();
+    let mut lines = HashSet::new();
+    for sig in signatures {
+        let norm_lines: Vec<String> = sig
+            .lines()
+            .map(normalize_line)
+            .filter(|l| !l.is_empty())
+            .collect();
+        if norm_lines.is_empty() {
+            continue;
+        }
+        for line in &norm_lines {
+            lines.insert(line.clone());
+        }
+        if norm_lines.len() >= 2 {
+            blocks.push(norm_lines);
+        }
+    }
+    (blocks, lines)
+}
+
+fn build_own_name_exclusions(own_names: &[String]) -> HashSet<String> {
+    let mut excluded = HashSet::new();
+    for raw in own_names {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some((local, _domain)) = trimmed.split_once('@') {
+            let local_clean = local.trim().to_ascii_lowercase();
+            if local_clean.len() >= 2 {
+                excluded.insert(local_clean.clone());
+            }
+            for part in local_clean.split(['.', '_', '-', '+']) {
+                if part.len() >= 2 && part.chars().all(|c| c.is_ascii_alphabetic()) {
+                    excluded.insert(part.to_string());
+                }
+            }
+            continue;
+        }
+        let collapsed: String = trimmed
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+        if collapsed.len() >= 2 {
+            excluded.insert(collapsed.clone());
+        }
+        let tokens: Vec<String> = collapsed
+            .split_whitespace()
+            .map(|t| {
+                t.trim_matches(|c: char| !c.is_alphabetic() && c != '-' && c != '\'')
+                    .to_string()
+            })
+            .filter(|t| t.len() >= 2)
+            .collect();
+        for token in &tokens {
+            excluded.insert(token.clone());
+        }
+        for pair in tokens.windows(2) {
+            excluded.insert(format!("{} {}", pair[0], pair[1]));
+        }
+    }
+    excluded
 }
 
 fn token_rejected(raw: &str) -> bool {
@@ -593,70 +774,168 @@ fn record_candidate(map: &mut HashMap<String, CandidateStats>, term: &str, threa
     *stats.casings.entry(trimmed.to_string()).or_insert(0) += 1;
 }
 
+fn tokenize_lines_into(
+    lines: &[String],
+    stats: &mut HashMap<String, CandidateStats>,
+    thread_id: &str,
+    first_line_starts_sentence: bool,
+) {
+    let mut prev_cap: Option<(&str, bool)> = None;
+    for (line_index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        let mut at_sentence_start =
+            (line_index == 0 && first_line_starts_sentence) || trimmed.is_empty();
+        for raw in trimmed.split_whitespace() {
+            let ends_sentence = raw.ends_with(['.', '!', '?', ':']);
+            if token_rejected(raw) {
+                prev_cap = None;
+                at_sentence_start = ends_sentence;
+                continue;
+            }
+            let term = clean_token(raw);
+            if term.len() < 2 {
+                prev_cap = None;
+                at_sentence_start = ends_sentence;
+                continue;
+            }
+
+            if is_all_caps_acronym(term)
+                || is_mixed_case_identifier(term)
+                || is_compound_technical(term)
+            {
+                record_candidate(stats, term, thread_id);
+                prev_cap = None;
+            } else if is_capitalized_proper_noun(term) {
+                if !at_sentence_start {
+                    record_candidate(stats, term, thread_id);
+                }
+                if let Some((prev_term, prev_allowed)) = prev_cap {
+                    if !at_sentence_start || prev_allowed {
+                        let phrase = format!("{prev_term} {term}");
+                        record_candidate(stats, &phrase, thread_id);
+                    }
+                }
+                prev_cap = Some((term, !at_sentence_start));
+            } else {
+                prev_cap = None;
+            }
+
+            at_sentence_start = ends_sentence;
+        }
+        prev_cap = None;
+    }
+}
+
 /// Extracts recurring distinctive vocabulary candidates from `(thread_id, text)`
 /// pairs belonging to **Sent** mail only. Requires appearance across at least
 /// [`policy::SENT_VOCAB_MIN_THREADS`] distinct threads and excludes terms already
 /// saved in `existing`.
+#[cfg(test)]
 pub fn extract_vocabulary_suggestions(
     messages: &[(String, String)],
     existing: &[String],
 ) -> Vec<VocabularySuggestion> {
-    let existing_keys: HashSet<String> = existing
+    let split: Vec<(String, String, String)> = messages
+        .iter()
+        .map(|(thread_id, text)| (thread_id.clone(), String::new(), text.clone()))
+        .collect();
+    extract_vocabulary_suggestions_with_exclusions(
+        &split,
+        existing,
+        &VocabularyExclusions::default(),
+    )
+}
+
+/// Extracts recurring distinctive vocabulary candidates from
+/// `(thread_id, subject, body)` tuples belonging to **Sent** mail only,
+/// excluding the user's own names/aliases, configured email signatures, and
+/// repeated trailing signature/footer boilerplate.
+pub fn extract_vocabulary_suggestions_with_exclusions(
+    messages: &[(String, String, String)],
+    existing: &[String],
+    exclusions: &VocabularyExclusions,
+) -> Vec<VocabularySuggestion> {
+    let mut excluded_keys: HashSet<String> = existing
         .iter()
         .map(|term| term.trim().to_ascii_lowercase())
         .collect();
-    let mut stats: HashMap<String, CandidateStats> = HashMap::new();
+    excluded_keys.extend(build_own_name_exclusions(&exclusions.own_names));
 
-    for (thread_id, raw_text) in messages {
-        let cleaned = strip_quoted_and_signatures(raw_text);
-        let mut prev_cap: Option<(&str, bool)> = None;
-        for (line_index, line) in cleaned.lines().enumerate() {
-            let mut at_sentence_start = line_index == 0 || line.trim().is_empty();
-            for raw in line.split_whitespace() {
-                let ends_sentence = raw.ends_with(['.', '!', '?', ':']);
-                if token_rejected(raw) {
-                    prev_cap = None;
-                    at_sentence_start = ends_sentence;
-                    continue;
-                }
-                let term = clean_token(raw);
-                if term.len() < 2 {
-                    prev_cap = None;
-                    at_sentence_start = ends_sentence;
-                    continue;
-                }
+    let (sig_blocks, sig_lines) = build_signature_matchers(&exclusions.signatures);
 
-                if is_all_caps_acronym(term)
-                    || is_mixed_case_identifier(term)
-                    || is_compound_technical(term)
-                {
-                    record_candidate(&mut stats, term, thread_id);
-                    prev_cap = None;
-                } else if is_capitalized_proper_noun(term) {
-                    if !at_sentence_start {
-                        record_candidate(&mut stats, term, thread_id);
-                    }
-                    if let Some((prev_term, prev_allowed)) = prev_cap {
-                        if !at_sentence_start || prev_allowed {
-                            let phrase = format!("{prev_term} {term}");
-                            record_candidate(&mut stats, &phrase, thread_id);
-                        }
-                    }
-                    prev_cap = Some((term, !at_sentence_start));
-                } else {
-                    prev_cap = None;
-                }
+    let mut stripped_bodies: Vec<(&str, &str, Vec<String>)> = Vec::with_capacity(messages.len());
+    let mut distinct_threads = HashSet::new();
+    for (thread_id, subject, body) in messages {
+        distinct_threads.insert(thread_id.as_str());
+        let cleaned_lines = strip_quoted_and_signatures(body, &sig_blocks, &sig_lines);
+        stripped_bodies.push((thread_id.as_str(), subject.as_str(), cleaned_lines));
+    }
 
-                at_sentence_start = ends_sentence;
+    // Detect repeated trailing boilerplate lines across distinct sent threads
+    // (covers web/mobile signatures that lack a `-- ` delimiter or sign-off line).
+    // Never treat the very first non-empty body line as signature boilerplate so
+    // short one-line replies retain their vocabulary.
+    let total_threads = distinct_threads.len();
+    let mut repeated_trailing: HashSet<String> = HashSet::new();
+    if total_threads >= 5 {
+        let mut trailing_counts: HashMap<String, HashSet<&str>> = HashMap::new();
+        for (thread_id, _, lines) in &stripped_bodies {
+            let non_empty: Vec<String> = lines
+                .iter()
+                .map(|l| normalize_line(l))
+                .filter(|l| !l.is_empty())
+                .collect();
+            for (pos, line) in non_empty.iter().enumerate().rev().take(8) {
+                if pos > 0 && line.len() >= 3 {
+                    trailing_counts
+                        .entry(line.clone())
+                        .or_default()
+                        .insert(*thread_id);
+                }
             }
-            prev_cap = None;
         }
+        let threshold = if total_threads < 8 {
+            total_threads.div_ceil(2)
+        } else {
+            (total_threads / 4).max(4)
+        };
+        for (line, threads) in trailing_counts {
+            if threads.len() >= threshold {
+                repeated_trailing.insert(line);
+            }
+        }
+    }
+
+    let mut stats: HashMap<String, CandidateStats> = HashMap::new();
+    for (thread_id, subject, mut body_lines) in stripped_bodies {
+        if !repeated_trailing.is_empty() {
+            let non_empty_indices: Vec<usize> = body_lines
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, l)| (!l.trim().is_empty()).then_some(idx))
+                .collect();
+            let tail_start = non_empty_indices.len().saturating_sub(8).max(1);
+            if tail_start < non_empty_indices.len() {
+                for &idx in &non_empty_indices[tail_start..] {
+                    let norm = normalize_line(&body_lines[idx]);
+                    if repeated_trailing.contains(&norm) {
+                        body_lines[idx].clear();
+                    }
+                }
+            }
+        }
+
+        if !subject.trim().is_empty() {
+            let subject_lines = vec![subject.to_string()];
+            tokenize_lines_into(&subject_lines, &mut stats, thread_id, true);
+        }
+        tokenize_lines_into(&body_lines, &mut stats, thread_id, true);
     }
 
     let mut suggestions: Vec<VocabularySuggestion> = stats
         .into_iter()
         .filter(|(key, entry)| {
-            !existing_keys.contains(key) && entry.threads.len() >= policy::SENT_VOCAB_MIN_THREADS
+            !excluded_keys.contains(key) && entry.threads.len() >= policy::SENT_VOCAB_MIN_THREADS
         })
         .filter_map(|(_, entry)| {
             let best_casing = entry
@@ -797,7 +1076,11 @@ mod tests {
             .sent_message_texts_for_vocabulary(policy::SENT_VOCAB_SCAN_LIMIT)
             .unwrap();
         assert_eq!(sent.len(), 3);
-        let suggestions = extract_vocabulary_suggestions(&sent, &[]);
+        let suggestions = extract_vocabulary_suggestions_with_exclusions(
+            &sent,
+            &[],
+            &VocabularyExclusions::default(),
+        );
         assert_eq!(
             suggestions,
             vec![VocabularySuggestion {
@@ -805,5 +1088,49 @@ mod tests {
                 thread_count: 3
             }]
         );
+    }
+
+    #[test]
+    fn excludes_own_names_configured_signatures_signoffs_and_repeated_trailing_boilerplate() {
+        let messages: Vec<(String, String, String)> = (1..=6)
+            .map(|i| {
+                (
+                    format!("th{i}"),
+                    format!("Sync on CoreAudio"),
+                    format!(
+                        "Hi team, please check CoreAudio with Jordan Vance before QBR.\n\nBest,\nJordan Vance\nAcme Signature Labs\nSan Francisco\nSent from my iPhone\n"
+                    ),
+                )
+            })
+            .collect();
+
+        let exclusions = VocabularyExclusions {
+            own_names: vec!["Jordan Vance".into(), "jordan.vance@example.com".into()],
+            signatures: vec!["Jordan Vance\nAcme Signature Labs".into()],
+        };
+        let got = extract_vocabulary_suggestions_with_exclusions(&messages, &[], &exclusions);
+        let terms: Vec<&str> = got.iter().map(|s| s.term.as_str()).collect();
+        assert_eq!(terms, vec!["CoreAudio", "QBR"]);
+
+        // Without sign-offs or configured signatures, repeated trailing lines across >=5 threads are still stripped.
+        let un_delimited: Vec<(String, String, String)> = (1..=6)
+            .map(|i| {
+                (
+                    format!("u{i}"),
+                    "Quarterly update".into(),
+                    format!(
+                        "We shipped ThreeStrands for milestone {i}.\n\nSecretFooterBrand\nPrincipal Architect\nConfidential Notice\n"
+                    ),
+                )
+            })
+            .collect();
+        let got_undelimited = extract_vocabulary_suggestions_with_exclusions(
+            &un_delimited,
+            &[],
+            &VocabularyExclusions::default(),
+        );
+        let terms_undelimited: Vec<&str> =
+            got_undelimited.iter().map(|s| s.term.as_str()).collect();
+        assert_eq!(terms_undelimited, vec!["ThreeStrands"]);
     }
 }

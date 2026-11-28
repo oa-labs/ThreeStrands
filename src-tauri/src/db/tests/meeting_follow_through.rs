@@ -700,3 +700,109 @@ fn occurrence_notes_for_recap_never_returns_exclude_from_ai_notes() {
     assert!(still_excluded);
     assert!(none_text.is_none());
 }
+
+#[test]
+fn save_adhoc_follow_through_with_link_creates_backlinked_note_and_undoes_atomically() {
+    let db = database();
+    seed_transcribed_recording(&db, "rec-linked", None, "Architecture Review");
+
+    let saved = db
+        .save_adhoc_follow_through_with_link(
+            DAY,
+            "3:30 PM",
+            None,
+            OP,
+            &AcceptedFollowThrough {
+                date: DAY.into(),
+                meeting: "Architecture Review".into(),
+                summary: Some(
+                    "Reviewed storage engine.\n\n**Next Phase**\n- Benchmark SQLite".into(),
+                ),
+                items: vec![task("Share benchmark")],
+                recording_id: Some("rec-linked".into()),
+                attach_transcript: true,
+            },
+            true,
+        )
+        .unwrap();
+
+    assert_eq!(saved.note.title, "Architecture Review");
+    assert_eq!(saved.note.daily_date, None);
+    assert!(saved.created_meeting_note);
+    assert!(saved
+        .note
+        .body
+        .contains("**Overview:** Reviewed storage engine."));
+    assert!(saved.note.body.contains("( ) Share benchmark"));
+    let att_id = saved.attachment_id.clone().unwrap();
+    assert!(saved.note.body.contains(&format!("(attachment:{att_id})")));
+
+    let daily_after = db.get_daily_note(DAY).unwrap().unwrap();
+    assert!(daily_after.body.contains("## Meetings"));
+    assert!(daily_after
+        .body
+        .contains("- 3:30 PM for [[Architecture Review]]"));
+
+    // Idempotent replay returns the saved meeting note without writing again.
+    let replayed = db
+        .save_adhoc_follow_through_with_link(
+            DAY,
+            "3:30 PM",
+            None,
+            OP,
+            &AcceptedFollowThrough {
+                date: DAY.into(),
+                meeting: "Architecture Review".into(),
+                summary: None,
+                items: vec![task("Share benchmark")],
+                recording_id: Some("rec-linked".into()),
+                attach_transcript: false,
+            },
+            true,
+        )
+        .unwrap();
+    assert!(replayed.replayed);
+    assert_eq!(replayed.note.id, saved.note.id);
+
+    // Undo restores the daily note, deletes the attachment, and trashes the newly created empty note.
+    let undone = db.undo_meeting_follow_through(OP).unwrap();
+    assert!(undone.note.trashed);
+    assert!(db.note_attachment(&att_id).unwrap().is_none());
+    let daily_restored = db.get_daily_note(DAY).unwrap().unwrap();
+    assert!(!daily_restored.body.contains("[[Architecture Review]]"));
+
+    // Reusing an existing note appends to it and does not trash it on undo.
+    let existing_note = db
+        .create_note("Existing Chat", "Pre-existing notes.")
+        .unwrap();
+    let saved_existing = db
+        .save_adhoc_follow_through_with_link(
+            DAY,
+            "4:00 PM",
+            Some(&daily_restored.updated_at),
+            OP2,
+            &AcceptedFollowThrough {
+                date: DAY.into(),
+                meeting: "Existing Chat".into(),
+                summary: Some("Follow-up.".into()),
+                items: vec![],
+                recording_id: None,
+                attach_transcript: false,
+            },
+            true,
+        )
+        .unwrap();
+    assert_eq!(saved_existing.note.id, existing_note.id);
+    assert!(!saved_existing.created_meeting_note);
+    assert!(saved_existing.note.body.starts_with("Pre-existing notes."));
+    let daily_with_existing = db.get_daily_note(DAY).unwrap().unwrap();
+    assert!(daily_with_existing
+        .body
+        .contains("- 4:00 PM for [[Existing Chat]]"));
+
+    let undone_existing = db.undo_meeting_follow_through(OP2).unwrap();
+    assert!(!undone_existing.note.trashed);
+    assert_eq!(undone_existing.note.body, "Pre-existing notes.");
+    let daily_after_existing_undo = db.get_daily_note(DAY).unwrap().unwrap();
+    assert!(!daily_after_existing_undo.body.contains("[[Existing Chat]]"));
+}

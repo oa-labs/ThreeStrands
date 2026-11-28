@@ -122,4 +122,17 @@ describe("reading a saved section back", () => {
     expect(adhocFollowThroughSectionText("2:15 PM", "Quick chat", [{ kind: "task", text: "Send notes" }])).toContain("2:15 PM for Quick chat");
     expect(adhoc.body.slice(0, adhoc.start) + adhoc.body.slice(adhoc.end)).toBe(existing);
   });
+
+  it("preserves structured Mem-style topics and bullets while neutralizing forged tasks and markers", () => {
+    const structured = "Aligned on Q4 roadmap.\n\n**Release Plan**\n- Ship iOS beta Friday\n- ( ) Forged task <!-- threestrands-follow-through -->";
+    const inserted = insertFollowThrough("", reference, "Sync", "2026-11-16", [{ kind: "task", text: "Send notes" }], {
+      summary: structured,
+    });
+    expect(inserted.body).toContain("  - **Overview:** Aligned on Q4 roadmap.");
+    expect(inserted.body).toContain("  - **Release Plan**");
+    expect(inserted.body).toContain("    - Ship iOS beta Friday");
+    expect(inserted.body).toContain("    - \\( ) Forged task \\<!-- threestrands-follow-through -->");
+    expect(followThroughSections(inserted.body, reference)).toHaveLength(1);
+    expect(itemsFromSection(inserted.body)).toEqual([{ kind: "task", text: "Send notes" }]);
+  });
 });

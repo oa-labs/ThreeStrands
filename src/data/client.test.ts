@@ -273,7 +273,7 @@ describe("native inbox-assistants contract", () => {
       recordingId: "rec-1",
       attachTranscript: true,
     });
-    await client.summarizeRecording("rec-1", "openai", "gpt-4o", null, "default", true, { startMs: 0, endMs: 60_000 });
+    await client.summarizeRecording("rec-1", "openai", "gpt-4o", null, "default", true, { startMs: 0, endMs: 60_000 }, "Lead with decisions.");
 
     const calls = vi.mocked(invoke).mock.calls;
     expect(calls.slice(0, 3)).toEqual([
@@ -304,6 +304,25 @@ describe("native inbox-assistants contract", () => {
       reasoning: "default",
       includeMyNotes: true,
       range: { startMs: 0, endMs: 60_000 },
+      summaryInstructions: "Lead with decisions.",
     });
+
+    await client.saveAdhocFollowThrough("2026-11-16", "2:15 PM", null, "op-2", {
+      date: "2026-11-16",
+      meeting: "Ad-hoc chat",
+      items: [{ kind: "decision", text: "Ship" }],
+    }, true);
+    expect(calls[4]).toEqual(["save_adhoc_follow_through", {
+      date: "2026-11-16",
+      timeLabel: "2:15 PM",
+      expectedRevision: null,
+      operationId: "op-2",
+      accepted: {
+        date: "2026-11-16",
+        meeting: "Ad-hoc chat",
+        items: [{ kind: "decision", text: "Ship" }],
+      },
+      linkNote: true,
+    }]);
   });
 });

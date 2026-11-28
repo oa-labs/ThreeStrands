@@ -20,6 +20,8 @@ export const SETTINGS_HELP: Record<SettingsSection, { slug: string; section?: st
   writingProfile: { slug: "ai", section: "features" },
   notes: { slug: "notes", section: "markdown-syntax" },
   meetingRecording: { slug: "meeting-recording" },
+  meetingTranscription: { slug: "meeting-recording" },
+  meetingSummaries: { slug: "meeting-recording" },
   ai: { slug: "ai" },
   privacy: { slug: "privacy" },
   diagnostics: { slug: "troubleshooting" },

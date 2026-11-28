@@ -375,6 +375,7 @@ export function MeetingPreparation({ event, mailAccounts, refreshKey, onOpenNote
     {reviewing && context && onFollowThroughSaved ? <MeetingFollowThroughDialog
       event={event}
       context={context}
+      ownAddresses={ownAddresses}
       today={today ?? localDay(new Date())}
       onClose={() => setReviewing(false)}
       onAddNote={onAddNote}

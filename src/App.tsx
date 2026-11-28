@@ -2482,6 +2482,7 @@ export function App() {
         <ImageLightbox src={lightboxImageSrc} onClose={() => setLightboxImageSrc(null)} />
       ) : null}
       <RecordingDialogs
+        ownAddresses={meetingOwnAddresses}
         onOpenNote={openCapturedNote}
         onAddMeetingNote={(ev) => { void openMeetingNote(ev); }}
         onNotice={setNotice}

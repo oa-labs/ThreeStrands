@@ -964,15 +964,61 @@ impl RecordingRuntime {
     }
 
     /// Scans Sent email locally for recurring domain terms, acronyms, and
-    /// proper nouns. Never saves suggestions automatically.
+    /// proper nouns. Excludes the user's own identity names and signatures, and
+    /// never saves suggestions automatically.
     pub fn suggest_vocabulary(&self) -> Result<Vec<VocabularySuggestion>, String> {
         let existing = self.settings().custom_vocabulary;
         let messages = self
             .database
             .sent_message_texts_for_vocabulary(policy::SENT_VOCAB_SCAN_LIMIT)
             .map_err(String::from)?;
-        Ok(vocabulary::extract_vocabulary_suggestions(
-            &messages, &existing,
+        let mut own_names = Vec::new();
+        for account in self.database.list_accounts().unwrap_or_default() {
+            if let Some(name) = account.display_name {
+                own_names.push(name);
+            }
+            if let Some(nick) = account.nickname {
+                own_names.push(nick);
+            }
+            own_names.push(account.email);
+        }
+        for (display_name, address) in self
+            .database
+            .cached_gmail_identity_names()
+            .unwrap_or_default()
+        {
+            if let Some(name) = display_name {
+                own_names.push(name);
+            }
+            own_names.push(address);
+        }
+        let signatures: Vec<String> = self
+            .database
+            .signature_library()
+            .map(|lib| {
+                lib.signatures
+                    .into_iter()
+                    .filter_map(|sig| {
+                        let text = sig.text.trim();
+                        if !text.is_empty() {
+                            Some(text.to_string())
+                        } else {
+                            let stripped = crate::html_plain_text::html_to_text(&sig.html);
+                            let trimmed = stripped.trim();
+                            (!trimmed.is_empty()).then(|| trimmed.to_string())
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let exclusions = vocabulary::VocabularyExclusions {
+            own_names,
+            signatures,
+        };
+        Ok(vocabulary::extract_vocabulary_suggestions_with_exclusions(
+            &messages,
+            &existing,
+            &exclusions,
         ))
     }
 

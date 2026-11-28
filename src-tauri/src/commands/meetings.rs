@@ -223,16 +223,18 @@ pub(crate) async fn save_adhoc_follow_through(
     expected_revision: Option<String>,
     operation_id: String,
     accepted: crate::db::meeting_follow_through::AcceptedFollowThrough,
+    link_note: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<crate::db::meeting_follow_through::FollowThroughSave> {
     let database = state.database.clone();
     let saved = run_database_task(move || {
-        database.save_adhoc_follow_through(
+        database.save_adhoc_follow_through_with_link(
             &date,
             &time_label,
             expected_revision.as_deref(),
             &operation_id,
             &accepted,
+            link_note.unwrap_or(false),
         )
     })
     .await?;

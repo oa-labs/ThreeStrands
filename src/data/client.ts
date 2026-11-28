@@ -510,6 +510,7 @@ export interface MailClient extends CorrespondenceClient {
     reasoning?: AiReasoning,
     includeMyNotes?: boolean,
     range?: RecapTimeRange | null,
+    summaryInstructions?: string | null,
   ): Promise<MeetingRecap>;
   /** Asks the system for microphone access now; resolves with the answer. */
   requestRecordingPermissions(): Promise<RecordingPermissions>;
@@ -548,8 +549,8 @@ export interface MailClient extends CorrespondenceClient {
   reserveMeetingPrep(date: string, expected: string | null, entry: MeetingEntry): Promise<PrepReservation>;
   /** Review Follow-through: appends the accepted items to one of the occurrence's notes, if it is still at `expectedRevision`. Retrying with the same `operationId` returns the first result without writing again. */
   saveMeetingFollowThrough(reference: NoteReference, destination: { noteId: string }, expectedRevision: string, operationId: string, accepted: AcceptedFollowThrough): Promise<FollowThroughSave>;
-  /** Saves an ad-hoc recording's follow-through section under `## Meetings` in `date`'s daily note. */
-  saveAdhocFollowThrough(date: string, timeLabel: string, expectedRevision: string | null, operationId: string, accepted: AcceptedFollowThrough): Promise<FollowThroughSave>;
+  /** Saves an ad-hoc recording's follow-through section under `## Meetings` in `date`'s daily note (or into a dedicated backlinked meeting note when `linkNote` is true). */
+  saveAdhocFollowThrough(date: string, timeLabel: string, expectedRevision: string | null, operationId: string, accepted: AcceptedFollowThrough, linkNote?: boolean): Promise<FollowThroughSave>;
   /** Removes exactly the section `operationId` saved, while its note is unchanged since. */
   undoMeetingFollowThrough(operationId: string): Promise<FollowThroughUndo>;
   /** The plan in `date`'s daily note with each item's state. */
@@ -891,8 +892,8 @@ const tauriClient: MailClient = {
     complete("cloud_transcribe_recording", { id, provider, model, endpoint, diarize }),
   latestTranscribedRecording: () => read("latest_transcribed_recording"),
   recordingReviewContext: (id) => read("recording_review_context", { id }),
-  summarizeRecording: (id, provider, model, endpoint, reasoning = "default", includeMyNotes = false, range = null) =>
-    invokeAi("summarize_recording", { id, provider, model, endpoint, reasoning, includeMyNotes, range }, id),
+  summarizeRecording: (id, provider, model, endpoint, reasoning = "default", includeMyNotes = false, range = null, summaryInstructions = null) =>
+    invokeAi("summarize_recording", { id, provider, model, endpoint, reasoning, includeMyNotes, range, summaryInstructions }, id),
   requestRecordingPermissions: () => complete("request_recording_permissions"),
   confirmRecordingQuit: () => complete("recording_confirm_quit"),
   meetingContext: (reference, mailScope = null) => read("meeting_context", { reference, mailScope }),
@@ -905,7 +906,15 @@ const tauriClient: MailClient = {
   meetingReadiness: (references, mailScope = null) => read("meeting_readiness", { references, mailScope }),
   reserveMeetingPrep: (date, expected, entry) => complete("reserve_meeting_prep", { date, expected, entry }),
   saveMeetingFollowThrough: (reference, destination, expectedRevision, operationId, accepted) => complete("save_meeting_follow_through", { reference, destination, expectedRevision, operationId, accepted }),
-  saveAdhocFollowThrough: (date, timeLabel, expectedRevision, operationId, accepted) => complete("save_adhoc_follow_through", { date, timeLabel, expectedRevision, operationId, accepted }),
+  saveAdhocFollowThrough: (date, timeLabel, expectedRevision, operationId, accepted, linkNote) =>
+    complete("save_adhoc_follow_through", {
+      date,
+      timeLabel,
+      expectedRevision,
+      operationId,
+      accepted,
+      ...(linkNote !== undefined ? { linkNote } : {}),
+    }),
   undoMeetingFollowThrough: (operationId) => complete("undo_meeting_follow_through", { operationId }),
   dailyPlan: (date) => read("daily_plan", { date, dayStart: localDayStart(date) }),
   addToDailyPlan: (date, expected, additions) => complete("add_to_daily_plan", { date, expected, additions }),

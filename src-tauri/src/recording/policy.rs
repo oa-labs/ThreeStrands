@@ -624,6 +624,8 @@ pub const MAX_RECAP_TRANSCRIPT_BYTES: usize = 400_000;
 pub const MAX_RECAP_SUMMARY_WORDS: usize = 400;
 /// Hard UTF-8 character limit for a summary stored inside a follow-through section.
 pub const MAX_FOLLOW_THROUGH_SUMMARY_CHARS: usize = 4_000;
+/// Maximum character length for user-authored meeting summary instructions.
+pub const MAX_RECAP_INSTRUCTIONS_CHARS: usize = 2_000;
 
 /// A pinned model file the app may download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

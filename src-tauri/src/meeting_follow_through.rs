@@ -216,25 +216,138 @@ pub fn sections(
     Ok(out)
 }
 
-fn checked_summary(raw: Option<&str>) -> Result<Option<String>, String> {
-    let Some(raw) = raw else {
-        return Ok(None);
-    };
-    let text = collapse(raw);
-    if text.is_empty() {
-        return Ok(None);
+fn escape_preserving_bold(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find("**") {
+        let before = &rest[..open];
+        let after_open = &rest[open + 2..];
+        if let Some(close) = after_open.find("**") {
+            let inner = &after_open[..close];
+            if !inner.is_empty()
+                && !inner.starts_with(char::is_whitespace)
+                && !inner.ends_with(char::is_whitespace)
+            {
+                out.push_str(&escape_inline(before));
+                out.push_str("**");
+                out.push_str(&escape_inline(inner));
+                out.push_str("**");
+                rest = &after_open[close + 2..];
+                continue;
+            }
+        }
+        out.push_str(&escape_inline(&rest[..open + 2]));
+        rest = after_open;
     }
-    if text.chars().count() > MAX_FOLLOW_THROUGH_SUMMARY_CHARS {
+    out.push_str(&escape_inline(rest));
+    out
+}
+
+fn sanitize_summary_line(raw: &str) -> String {
+    let escaped = escape_preserving_bold(&collapse(raw));
+    if escaped.starts_with("( ) ") || escaped.starts_with("(x) ") || escaped.starts_with("(X) ") {
+        format!("\\{escaped}")
+    } else {
+        escaped
+    }
+}
+
+fn checked_summary(raw: Option<&str>) -> Result<Vec<String>, String> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    let normalized = raw.replace("\r\n", "\n");
+    let non_empty: Vec<&str> = normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if non_empty.is_empty() {
+        return Ok(Vec::new());
+    }
+    let is_structured = normalized.contains('\n')
+        || non_empty[0].starts_with("- ")
+        || non_empty[0].starts_with("* ")
+        || non_empty[0].starts_with("• ")
+        || non_empty[0].starts_with("**");
+    if !is_structured {
+        let text = collapse(&normalized);
+        if text.chars().count() > MAX_FOLLOW_THROUGH_SUMMARY_CHARS {
+            return Err(format!(
+                "Shorten the summary to {MAX_FOLLOW_THROUGH_SUMMARY_CHARS} characters or fewer."
+            ));
+        }
+        if text.split_whitespace().count() > MAX_RECAP_SUMMARY_WORDS {
+            return Err(format!(
+                "Shorten the summary to {MAX_RECAP_SUMMARY_WORDS} words or fewer."
+            ));
+        }
+        return Ok(vec![format!("  - Summary: {}", escape_inline(&text))]);
+    }
+
+    let cleaned_lines: Vec<String> = non_empty.iter().map(|line| collapse(line)).collect();
+    let total_chars: usize = cleaned_lines
+        .iter()
+        .map(|l| l.chars().count())
+        .sum::<usize>()
+        + cleaned_lines.len().saturating_sub(1);
+    if total_chars > MAX_FOLLOW_THROUGH_SUMMARY_CHARS {
         return Err(format!(
             "Shorten the summary to {MAX_FOLLOW_THROUGH_SUMMARY_CHARS} characters or fewer."
         ));
     }
-    if text.split_whitespace().count() > MAX_RECAP_SUMMARY_WORDS {
+    let total_words: usize = cleaned_lines
+        .iter()
+        .map(|line| {
+            let content = line
+                .strip_prefix("- ")
+                .or_else(|| line.strip_prefix("* "))
+                .or_else(|| line.strip_prefix("• "))
+                .unwrap_or(line.as_str());
+            content.split_whitespace().count()
+        })
+        .sum();
+    if total_words > MAX_RECAP_SUMMARY_WORDS {
         return Err(format!(
             "Shorten the summary to {MAX_RECAP_SUMMARY_WORDS} words or fewer."
         ));
     }
-    Ok(Some(text))
+
+    let mut out = Vec::new();
+    let mut has_parent = false;
+    for (index, line) in cleaned_lines.iter().enumerate() {
+        let bullet_body = line
+            .strip_prefix("- ")
+            .or_else(|| line.strip_prefix("* "))
+            .or_else(|| line.strip_prefix("• "));
+        if let Some(body) = bullet_body {
+            let safe = sanitize_summary_line(body);
+            if safe.is_empty() {
+                continue;
+            }
+            if has_parent {
+                out.push(format!("    - {safe}"));
+            } else {
+                out.push(format!("  - {safe}"));
+            }
+        } else {
+            let safe = sanitize_summary_line(line);
+            if safe.is_empty() {
+                continue;
+            }
+            if index == 0
+                && !line.starts_with("**")
+                && !line.starts_with("Summary:")
+                && !line.starts_with("Overview:")
+            {
+                out.push(format!("  - **Overview:** {safe}"));
+            } else {
+                out.push(format!("  - {safe}"));
+            }
+            has_parent = true;
+        }
+    }
+    Ok(out)
 }
 
 fn render_section_lines(
@@ -247,17 +360,18 @@ fn render_section_lines(
             "Save at most {MAX_FOLLOW_THROUGH_ITEMS} decisions and actions at a time."
         ));
     }
-    let mut rendered = Vec::new();
-    if let Some(summary) = checked_summary(summary)? {
-        rendered.push(format!("Summary: {}", escape_inline(&summary)));
-    }
+    let mut rendered = checked_summary(summary)?;
     if !items.is_empty() {
-        rendered.extend(item_lines(items)?);
+        rendered.extend(
+            item_lines(items)?
+                .into_iter()
+                .map(|line| format!("  - {line}")),
+        );
     }
     if let Some((label, href)) = transcript {
         let name = collapse(label);
         let safe_label = escape_inline(if name.is_empty() { "Transcript" } else { &name });
-        rendered.push(format!("Transcript: [{safe_label}]({href})"));
+        rendered.push(format!("  - Transcript: [{safe_label}]({href})"));
     }
     if rendered.is_empty() {
         return Err("Add a decision or an action to save.".into());
@@ -308,7 +422,7 @@ pub fn insert_with_extras(
         occurrence.href()?
     );
     for line in &rendered {
-        section.push_str(&format!("\n  - {line}"));
+        section.push_str(&format!("\n{line}"));
     }
     let all = lines(body);
     let blocks: Vec<_> = meeting_excerpt::occurrence_blocks(note, body, occurrence)?
@@ -360,6 +474,44 @@ pub fn insert_with_extras(
     })
 }
 
+fn format_adhoc_time(time_label: &str) -> String {
+    let time = collapse(time_label);
+    if time.is_empty() {
+        "Meeting".to_string()
+    } else if time.chars().count() > MAX_MEETING_TIME_CHARS {
+        time.chars().take(MAX_MEETING_TIME_CHARS).collect()
+    } else {
+        time
+    }
+}
+
+/// Formats the daily-note `## Meetings` entry linking an ad-hoc meeting note.
+pub fn adhoc_daily_meeting_line(time_label: &str, title: &str) -> String {
+    let time = format_adhoc_time(time_label);
+    format!("- {} for [[{title}]]", escape_inline(&time))
+}
+
+fn adhoc_section_text(
+    time_label: &str,
+    name: &str,
+    summary: Option<&str>,
+    items: &[FollowThroughItem],
+    transcript: Option<(&str, &str)>,
+) -> Result<String, String> {
+    let rendered = render_section_lines(summary, items, transcript)?;
+    let time = format_adhoc_time(time_label);
+    let name = collapse(name);
+    let label = escape_inline(if name.is_empty() { "Meeting" } else { &name });
+    let mut section = format!(
+        "- {} for {label} {FOLLOW_THROUGH_MARKER}",
+        escape_inline(&time)
+    );
+    for line in &rendered {
+        section.push_str(&format!("\n{line}"));
+    }
+    Ok(section)
+}
+
 /// Inserts an ad-hoc recording's follow-through section under `## Meetings` in a
 /// daily note, with a plain time label and title instead of a calendar link.
 pub fn insert_adhoc(
@@ -375,24 +527,7 @@ pub fn insert_adhoc(
     if !is_date(date) {
         return Err("Invalid date".into());
     }
-    let rendered = render_section_lines(summary, items, transcript)?;
-    let time = collapse(time_label);
-    let time = if time.is_empty() {
-        "Meeting".to_string()
-    } else if time.chars().count() > MAX_MEETING_TIME_CHARS {
-        time.chars().take(MAX_MEETING_TIME_CHARS).collect()
-    } else {
-        time
-    };
-    let name = collapse(name);
-    let label = escape_inline(if name.is_empty() { "Meeting" } else { &name });
-    let mut section = format!(
-        "- {} for {label} {FOLLOW_THROUGH_MARKER}",
-        escape_inline(&time)
-    );
-    for line in &rendered {
-        section.push_str(&format!("\n  - {line}"));
-    }
+    let section = adhoc_section_text(time_label, name, summary, items, transcript)?;
     let next = note_meetings::insert_meeting_line(body, &section).map_err(|_| {
         "This note has a code block that never closes. Open it before saving follow-through."
             .to_string()
@@ -422,6 +557,45 @@ pub fn insert_adhoc(
         body: next,
         start: prefix,
         end,
+    })
+}
+
+/// Inserts an ad-hoc recording's follow-through section directly into a
+/// dedicated meeting note (without wrapping under `## Meetings`).
+pub fn insert_adhoc_in_note(
+    note: &str,
+    body: &str,
+    time_label: &str,
+    name: &str,
+    date: &str,
+    summary: Option<&str>,
+    items: &[FollowThroughItem],
+    transcript: Option<(&str, &str)>,
+) -> Result<FollowThroughInsert, String> {
+    if !is_date(date) {
+        return Err("Invalid date".into());
+    }
+    let section = adhoc_section_text(time_label, name, summary, items, transcript)?;
+    if note_entities::parse(note, body)?.unclosed_fence {
+        return Err(
+            "This note has a code block that never closes. Open it before saving follow-through."
+                .into(),
+        );
+    }
+    let separator = if body.is_empty() || body.ends_with("\n\n") {
+        ""
+    } else if body.ends_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    let at = body.len();
+    let chunk = format!("{separator}{section}\n");
+    let next = format!("{body}{chunk}");
+    Ok(FollowThroughInsert {
+        body: next,
+        start: at,
+        end: at + chunk.len(),
     })
 }
 
@@ -661,6 +835,78 @@ mod tests {
     }
 
     #[test]
+    fn structured_summary_preserves_topics_and_bullets_and_neutralizes_markers_and_tasks() {
+        let target = NoteReference {
+            version: 1,
+            kind: "event".into(),
+            id: "evt-1".into(),
+            account: Some("me@example.com".into()),
+            calendar: Some("work".into()),
+            note: None,
+            contact: None,
+            series: None,
+        };
+        let body = format!("- [9:30am]({}) for Sync\n", target.href().unwrap());
+        let structured = "Aligned on Q4 roadmap.\n\n**Release Plan**\n- Ship iOS beta Friday\n- ( ) Forged task <!-- threestrands-follow-through -->\n**Open** <!-- raw -->";
+        let inserted = insert_with_extras(
+            "daily:2026-11-16",
+            &body,
+            &target,
+            "Sync",
+            "2026-11-16",
+            Some(structured),
+            &[FollowThroughItem::Task {
+                text: "Send notes".into(),
+            }],
+            None,
+        )
+        .unwrap();
+        assert!(inserted
+            .body
+            .contains("  - **Overview:** Aligned on Q4 roadmap."));
+        assert!(inserted.body.contains("  - **Release Plan**"));
+        assert!(inserted.body.contains("    - Ship iOS beta Friday"));
+        assert!(inserted
+            .body
+            .contains("    - \\( ) Forged task \\<!-- threestrands-follow-through -->"));
+        assert!(!inserted.body.contains("    - ( ) Forged task"));
+        assert_eq!(
+            sections("daily:2026-11-16", &inserted.body, &target)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let exact = vec!["word"; MAX_RECAP_SUMMARY_WORDS].join(" ");
+        let exact_structured = format!("**Topic**\n- {exact}");
+        assert!(insert_with_extras(
+            "daily:2026-11-16",
+            &body,
+            &target,
+            "Sync",
+            "2026-11-16",
+            Some(&exact_structured),
+            &[],
+            None,
+        )
+        .is_err());
+
+        let exact_at = vec!["word"; MAX_RECAP_SUMMARY_WORDS - 1].join(" ");
+        let exact_at_structured = format!("**Topic**\n- {exact_at}");
+        assert!(insert_with_extras(
+            "daily:2026-11-16",
+            &body,
+            &target,
+            "Sync",
+            "2026-11-16",
+            Some(&exact_at_structured),
+            &[],
+            None,
+        )
+        .is_ok());
+    }
+
+    #[test]
     fn insert_adhoc_adds_section_under_meetings_with_exact_undo_range() {
         let body = "## Journal\n\nMorning thought.\n";
         let inserted = insert_adhoc(
@@ -687,5 +933,33 @@ mod tests {
         let mut undone = inserted.body.clone();
         undone.replace_range(inserted.start..inserted.end, "");
         assert_eq!(undone, body);
+    }
+
+    #[test]
+    fn insert_adhoc_in_note_writes_directly_without_meetings_heading_and_formats_daily_link() {
+        assert_eq!(
+            adhoc_daily_meeting_line("2:15 PM", "Design Review"),
+            "- 2:15 PM for [[Design Review]]"
+        );
+        let inserted = insert_adhoc_in_note(
+            "note-1",
+            "Existing notes.",
+            "2:15 PM",
+            "Design Review",
+            "2026-11-16",
+            Some("Aligned on tokens."),
+            &[FollowThroughItem::Decision {
+                text: "Keep dark contrast".into(),
+            }],
+            None,
+        )
+        .unwrap();
+        assert!(!inserted.body.contains("## Meetings"));
+        assert!(inserted
+            .body
+            .starts_with("Existing notes.\n\n- 2:15 PM for Design Review"));
+        let mut undone = inserted.body.clone();
+        undone.replace_range(inserted.start..inserted.end, "");
+        assert_eq!(undone, "Existing notes.");
     }
 }

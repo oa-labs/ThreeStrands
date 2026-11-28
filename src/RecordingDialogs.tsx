@@ -81,12 +81,14 @@ function syntheticEventForRecording(recording: MeetingRecording, context: Meetin
 
 function RecordingReviewHost({
   target,
+  ownAddresses = [],
   onClose,
   onOpenNote,
   onAddMeetingNote,
   onNotice,
 }: {
   target: MeetingRecording;
+  ownAddresses?: readonly string[];
   onClose(): void;
   onOpenNote?(noteId: string, href?: string): void;
   onAddMeetingNote?(event: ScheduleEvent): void;
@@ -144,6 +146,7 @@ function RecordingReviewHost({
     recording={target}
     event={effectiveEvent}
     context={context}
+    ownAddresses={ownAddresses}
     todaysEvents={todaysEvents}
     onSelectEvent={(next) => setSelectedEvent(next)}
     today={today}
@@ -163,10 +166,12 @@ function RecordingReviewHost({
 
 /** The recording dialogs App shows: first-use consent, the quit confirmation, and recording review. */
 export function RecordingDialogs({
+  ownAddresses = [],
   onOpenNote,
   onAddMeetingNote,
   onNotice,
 }: {
+  ownAddresses?: readonly string[];
   onOpenNote?(noteId: string, href?: string): void;
   onAddMeetingNote?(event: ScheduleEvent): void;
   onNotice?(notice: Notice): void;
@@ -179,6 +184,7 @@ export function RecordingDialogs({
       <RecordingReviewHost
         key={recording.reviewTarget.id}
         target={recording.reviewTarget}
+        ownAddresses={ownAddresses}
         onClose={recording.closeReview}
         onOpenNote={onOpenNote}
         onAddMeetingNote={onAddMeetingNote}

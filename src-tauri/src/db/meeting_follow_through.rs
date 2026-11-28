@@ -62,6 +62,16 @@ pub struct FollowThroughSave {
     /// nothing was written now.
     #[serde(default)]
     pub replayed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_note_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_previous_body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_updated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub created_meeting_note: bool,
 }
 
 /// The note after its follow-through was taken out.
@@ -346,6 +356,11 @@ impl Database {
                 attachment_id: attached.map(|(id, _, _)| id),
                 recording_id: accepted.recording_id.clone(),
                 replayed: false,
+                daily_note_id: None,
+                daily_date: None,
+                daily_previous_body: None,
+                daily_updated_at: None,
+                created_meeting_note: false,
             };
             receipts::record(
                 tx,
@@ -360,6 +375,7 @@ impl Database {
     }
 
     /// Saves an ad-hoc recording's follow-through section under `## Meetings` in `date`'s daily note.
+    #[cfg(test)]
     pub fn save_adhoc_follow_through(
         &self,
         date: &str,
@@ -367,6 +383,28 @@ impl Database {
         expected_revision: Option<&str>,
         operation_id: &str,
         accepted: &AcceptedFollowThrough,
+    ) -> DbResult<FollowThroughSave> {
+        self.save_adhoc_follow_through_with_link(
+            date,
+            time_label,
+            expected_revision,
+            operation_id,
+            accepted,
+            false,
+        )
+    }
+
+    /// Saves an ad-hoc recording's follow-through section either directly under
+    /// `## Meetings` in `date`'s daily note (`link_note = false`) or inside a
+    /// dedicated backlinked meeting note linked from `## Meetings` (`link_note = true`).
+    pub fn save_adhoc_follow_through_with_link(
+        &self,
+        date: &str,
+        time_label: &str,
+        expected_revision: Option<&str>,
+        operation_id: &str,
+        accepted: &AcceptedFollowThrough,
+        link_note: bool,
     ) -> DbResult<FollowThroughSave> {
         if !crate::notes::is_daily_date(date) {
             return Err(DatabaseError::invalid("That isn't a valid date"));
@@ -400,13 +438,134 @@ impl Database {
                 ));
             }
             let items = resolve_links(tx, &accepted.items)?;
+            if !link_note {
+                let attached = if accepted.attach_transcript {
+                    let rec_id = accepted.recording_id.as_deref().ok_or_else(|| {
+                        DatabaseError::invalid("Choose a recording to attach its transcript.")
+                    })?;
+                    Some(attach_transcript_in_tx(
+                        tx,
+                        &target_id,
+                        &accepted.date,
+                        &accepted.meeting,
+                        rec_id,
+                    )?)
+                } else {
+                    None
+                };
+                let transcript_arg = attached
+                    .as_ref()
+                    .map(|(_, filename, href)| (filename.as_str(), href.as_str()));
+                let raw_body = existing.as_ref().map(|n| n.body.as_str()).unwrap_or("");
+                let previous = note_entities::normalize(&target_id, raw_body)
+                    .map_err(DatabaseError::invalid)?;
+                let inserted = format::insert_adhoc(
+                    &target_id,
+                    &previous,
+                    time_label,
+                    &accepted.meeting,
+                    &accepted.date,
+                    accepted.summary.as_deref(),
+                    &items,
+                    transcript_arg,
+                )
+                .map_err(DatabaseError::invalid)?;
+                let next = note_entities::normalize(&target_id, &inserted.body)
+                    .map_err(DatabaseError::invalid)?;
+                let start = inserted.start;
+                let end = next.len() - (previous.len() - start);
+                if end < start
+                    || next.get(..start) != previous.get(..start)
+                    || next.get(end..) != previous.get(start..)
+                {
+                    return Err(DatabaseError::invalid(
+                        "This note's layout changed. Open it before saving follow-through.",
+                    ));
+                }
+                let saved = super::notes::save_daily_in(tx, date, &next)?
+                    .ok_or(DatabaseError::NotFound("Note"))?;
+                if saved.body != next {
+                    return Err(DatabaseError::invalid(
+                        "This note's layout changed. Open it before saving follow-through.",
+                    ));
+                }
+                mark_recording_reviewed(tx, accepted.recording_id.as_deref(), operation_id)?;
+                let (task_ids, checklist_ids) = collect_new_items(&saved, start, end)?;
+                let result = FollowThroughSave {
+                    operation_id: operation_id.to_string(),
+                    section: saved.body[start..end].to_string(),
+                    note: saved,
+                    start,
+                    end,
+                    task_ids,
+                    checklist_ids,
+                    attachment_id: attached.map(|(id, _, _)| id),
+                    recording_id: accepted.recording_id.clone(),
+                    replayed: false,
+                    daily_note_id: None,
+                    daily_date: None,
+                    daily_previous_body: None,
+                    daily_updated_at: None,
+                    created_meeting_note: false,
+                };
+                receipts::record(
+                    tx,
+                    operation_id,
+                    RECEIPT_KIND,
+                    &scope,
+                    Some(&result.note.id),
+                    &serde_json::to_string(&result).map_err(super::serialization_error)?,
+                )?;
+                return Ok(result);
+            }
+
+            // Dedicated backlinked meeting note + entry under ## Meetings in the daily note.
+            let title = crate::note_meetings::meeting_note_title(&accepted.meeting);
+            let existing_meeting_id: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM notes WHERE title_key=?1 AND trashed=0 AND daily_date IS NULL ORDER BY id LIMIT 1",
+                    [crate::notes::title_key(&title)],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let (meeting_note, created_meeting_note) = match existing_meeting_id {
+                Some(id) => {
+                    let note =
+                        super::notes::get(tx, &id)?.ok_or(DatabaseError::NotFound("Note"))?;
+                    (note, false)
+                }
+                None => {
+                    let now = chrono::Utc::now().to_rfc3339();
+                    let note = Note {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        title: crate::notes::clean_note_title(&title)
+                            .map_err(DatabaseError::invalid)?,
+                        body: String::new(),
+                        daily_date: None,
+                        created_at: now.clone(),
+                        updated_at: now,
+                        trashed: false,
+                        starred: false,
+                        exclude_from_ai: false,
+                        trashed_at: None,
+                        authored_title: None,
+                    };
+                    super::notes::check_title_free(tx, &note.id, &note.title)?;
+                    (super::notes::create(tx, note)?, true)
+                }
+            };
+            if conflicted(tx, &meeting_note.id)? {
+                return Err(DatabaseError::invalid(
+                    "Resolve that note's conflict before saving follow-through to it.",
+                ));
+            }
             let attached = if accepted.attach_transcript {
                 let rec_id = accepted.recording_id.as_deref().ok_or_else(|| {
                     DatabaseError::invalid("Choose a recording to attach its transcript.")
                 })?;
                 Some(attach_transcript_in_tx(
                     tx,
-                    &target_id,
+                    &meeting_note.id,
                     &accepted.date,
                     &accepted.meeting,
                     rec_id,
@@ -417,11 +576,10 @@ impl Database {
             let transcript_arg = attached
                 .as_ref()
                 .map(|(_, filename, href)| (filename.as_str(), href.as_str()));
-            let raw_body = existing.as_ref().map(|n| n.body.as_str()).unwrap_or("");
-            let previous =
-                note_entities::normalize(&target_id, raw_body).map_err(DatabaseError::invalid)?;
-            let inserted = format::insert_adhoc(
-                &target_id,
+            let previous = note_entities::normalize(&meeting_note.id, &meeting_note.body)
+                .map_err(DatabaseError::invalid)?;
+            let inserted = format::insert_adhoc_in_note(
+                &meeting_note.id,
                 &previous,
                 time_label,
                 &accepted.meeting,
@@ -431,7 +589,7 @@ impl Database {
                 transcript_arg,
             )
             .map_err(DatabaseError::invalid)?;
-            let next = note_entities::normalize(&target_id, &inserted.body)
+            let next = note_entities::normalize(&meeting_note.id, &inserted.body)
                 .map_err(DatabaseError::invalid)?;
             let start = inserted.start;
             let end = next.len() - (previous.len() - start);
@@ -443,19 +601,50 @@ impl Database {
                     "This note's layout changed. Open it before saving follow-through.",
                 ));
             }
-            let saved = super::notes::save_daily_in(tx, date, &next)?
-                .ok_or(DatabaseError::NotFound("Note"))?;
-            if saved.body != next {
+            let note_title = meeting_note.title.clone();
+            let saved_meeting = super::notes::edit(tx, meeting_note, note_title, &next)?;
+            if saved_meeting.body != next {
                 return Err(DatabaseError::invalid(
                     "This note's layout changed. Open it before saving follow-through.",
                 ));
             }
+
+            let daily_previous = existing
+                .as_ref()
+                .map(|n| n.body.clone())
+                .unwrap_or_default();
+            let link_token = format!("[[{}]]", saved_meeting.title);
+            let (daily_note_id, daily_date, daily_previous_body, daily_updated_at) =
+                if daily_previous.contains(&link_token) {
+                    (None, None, None, None)
+                } else {
+                    let daily_line =
+                        format::adhoc_daily_meeting_line(time_label, &saved_meeting.title);
+                    let daily_next = crate::note_meetings::insert_meeting_line(
+                        &daily_previous,
+                        &daily_line,
+                    )
+                    .map_err(|_| {
+                        DatabaseError::invalid(
+                            "This note has a code block that never closes. Open it before saving follow-through.",
+                        )
+                    })?;
+                    let saved_daily = super::notes::save_daily_in(tx, date, &daily_next)?
+                        .ok_or(DatabaseError::NotFound("Note"))?;
+                    (
+                        Some(saved_daily.id),
+                        Some(date.to_string()),
+                        Some(daily_previous),
+                        Some(saved_daily.updated_at),
+                    )
+                };
+
             mark_recording_reviewed(tx, accepted.recording_id.as_deref(), operation_id)?;
-            let (task_ids, checklist_ids) = collect_new_items(&saved, start, end)?;
+            let (task_ids, checklist_ids) = collect_new_items(&saved_meeting, start, end)?;
             let result = FollowThroughSave {
                 operation_id: operation_id.to_string(),
-                section: saved.body[start..end].to_string(),
-                note: saved,
+                section: saved_meeting.body[start..end].to_string(),
+                note: saved_meeting,
                 start,
                 end,
                 task_ids,
@@ -463,6 +652,11 @@ impl Database {
                 attachment_id: attached.map(|(id, _, _)| id),
                 recording_id: accepted.recording_id.clone(),
                 replayed: false,
+                daily_note_id,
+                daily_date,
+                daily_previous_body,
+                daily_updated_at,
+                created_meeting_note,
             };
             receipts::record(
                 tx,
@@ -507,7 +701,7 @@ impl Database {
             let mut body = note.body.clone();
             body.replace_range(saved.start..saved.end, "");
             let title = note.title.clone();
-            let note = super::notes::edit(tx, note, title, &body)?;
+            let mut note = super::notes::edit(tx, note, title, &body)?;
             if let Some(attachment_id) = saved.attachment_id.as_ref() {
                 super::note_attachments::delete_attachments(
                     tx,
@@ -520,6 +714,25 @@ impl Database {
                     "UPDATE meeting_recordings SET reviewed_operation_id=NULL WHERE id=?1 AND reviewed_operation_id=?2",
                     params![recording_id, operation_id],
                 )?;
+            }
+            if saved.created_meeting_note && note.body.is_empty() {
+                note = super::notes::set_trashed(tx, &note.id, true)?;
+            }
+            if let (Some(daily_id), Some(daily_date), Some(prev_body), Some(expected_daily_rev)) = (
+                saved.daily_note_id.as_deref(),
+                saved.daily_date.as_deref(),
+                saved.daily_previous_body.as_deref(),
+                saved.daily_updated_at.as_deref(),
+            ) {
+                let daily = super::notes::get(tx, daily_id)?
+                    .ok_or_else(|| DatabaseError::invalid(CHANGED))?;
+                if daily.trashed
+                    || daily.updated_at != expected_daily_rev
+                    || conflicted(tx, daily_id)?
+                {
+                    return Err(DatabaseError::invalid(CHANGED));
+                }
+                super::notes::save_daily_in(tx, daily_date, prev_body)?;
             }
             receipts::mark_undone(tx, operation_id)?;
             Ok(FollowThroughUndo { note })

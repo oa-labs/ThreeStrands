@@ -1,9 +1,15 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { readAiEndpoint, readAiProvider } from "./aiSettings";
 import { mailClient } from "./data/client";
 import type { AudioInputDevice, KeepAudio, RecordingCapabilities, RecordingSettings, RecordingsUsage, TranscriptionModelName, TranscriptionModelStatus, TrayNextMeetingTitle, VocabularySuggestion } from "./domain";
 import { errorMessage } from "./errors";
 import { InlineConfirm } from "./InlineConfirm";
+import {
+  MAX_MEETING_SUMMARY_INSTRUCTIONS_CHARS,
+  MEETING_SUMMARY_PRESETS,
+  saveMeetingSummaryInstructions,
+  useMeetingSummaryInstructions,
+} from "./meetingSummaryInstructions";
 import { defaultCloudTranscriptionModel, isCloudTranscriptionProvider } from "./recordingPolicy";
 import { announceRecordingSettingsChanged } from "./recordingEvents";
 import { formatAttachmentSize } from "./threadPresentation";
@@ -43,6 +49,7 @@ const LANGUAGES: { value: string; label: string }[] = [
   { value: "zh", label: "Chinese" },
   { value: "hi", label: "Hindi" },
 ];
+
 /** Decimal megabytes, the way the model's download size is quoted. */
 const modelSize = (bytes: number) => `${Math.round(bytes / 1_000_000)} MB`;
 const modelPercent = (model: TranscriptionModelStatus) => (model.bytes > 0 ? Math.min(100, Math.floor((model.receivedBytes / model.bytes) * 100)) : 0);
@@ -51,6 +58,34 @@ const MICROPHONE_DENIED = "Microphone access is off for ThreeStrands. Turn it on
 const MICROPHONE_RESTRICTED = "Microphone access is restricted on this Mac, so ThreeStrands can't record. Ask whoever manages this Mac to allow it in System Settings → Privacy & Security → Microphone.";
 
 type Confirming = "audio" | "recordings" | null;
+
+function useRecordingSettingsState() {
+  const [settings, setSettings] = useState<RecordingSettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void mailClient.recordingSettings().then(
+      (saved) => { if (active) setSettings(saved); },
+      (reason: unknown) => { if (active) setError(errorMessage(reason)); },
+    );
+    return () => { active = false; };
+  }, []);
+
+  const save = useCallback(async (next: RecordingSettings) => {
+    await mailClient.setRecordingSettings(next);
+    setSettings(next);
+    announceRecordingSettingsChanged();
+  }, []);
+
+  const change = useCallback(async (update: Partial<RecordingSettings>) => {
+    if (!settings) return;
+    setError(null);
+    try { await save({ ...settings, ...update }); } catch (reason) { setError(errorMessage(reason)); }
+  }, [settings, save]);
+
+  return { settings, error, setError, save, change };
+}
 
 /** One transcription model: its size, its state, and the one thing the user can do next. Nothing downloads until Download is pressed. */
 function TranscriptionModelRow({ model, label, note, onDownload, onCancel, onDelete, busy }: {
@@ -96,51 +131,34 @@ function TranscriptionModelRow({ model, label, note, onDownload, onCancel, onDel
   );
 }
 
-/** Settings → Meeting Recording. Everything saves as it changes. */
+/** Settings → Meeting Recording → Recording & Menu Bar. Everything saves as it changes. */
 export function MeetingRecordingSettings({ capabilities }: { capabilities: RecordingCapabilities }) {
-  const [settings, setSettings] = useState<RecordingSettings | null>(null);
+  const { settings, error, setError, save, change } = useRecordingSettingsState();
   const [usage, setUsage] = useState<RecordingsUsage | null>(null);
   const [devices, setDevices] = useState<AudioInputDevice[]>([]);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [permissionNote, setPermissionNote] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<Confirming>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [deletingModel, setDeletingModel] = useState<TranscriptionModelName | null>(null);
-  const [newVocabTerm, setNewVocabTerm] = useState("");
-  const [suggestions, setSuggestions] = useState<VocabularySuggestion[] | null>(null);
-  const [selectedSuggestions, setSelectedSuggestions] = useState<string[]>([]);
-  const [confirmingCloud, setConfirmingCloud] = useState(false);
-  const models = useTranscriptionModels();
   const ids = {
-    record: useId(), microphone: useId(), keep: useId(), offer: useId(), upcomingTray: useId(),
-    trayTitle: useId(), remind: useId(), summarize: useId(), usage: useId(), model: useId(),
-    language: useId(), during: useId(), vocab: useId(), cloud: useId(), cloudModel: useId(),
-    cloudDiarize: useId(), cloudDefault: useId(),
+    record: useId(), microphone: useId(), keep: useId(), offer: useId(),
+    upcomingTray: useId(), trayTitle: useId(), remind: useId(), usage: useId(),
   };
 
   const loadUsage = useCallback(async () => setUsage(await mailClient.recordingsUsage()), []);
   useEffect(() => {
     let active = true;
-    void Promise.all([mailClient.recordingSettings(), mailClient.recordingsUsage(), mailClient.recordingInputDevices()]).then(([saved, used, inputs]) => {
-      if (!active) return;
-      setSettings(saved);
-      setUsage(used);
-      setDevices(inputs);
-    }, (reason: unknown) => { if (active) setError(errorMessage(reason)); });
+    void Promise.all([mailClient.recordingsUsage(), mailClient.recordingInputDevices()]).then(
+      ([used, inputs]) => {
+        if (!active) return;
+        setUsage(used);
+        setDevices(inputs);
+      },
+      (reason: unknown) => { if (active) setError(errorMessage(reason)); },
+    );
     return () => { active = false; };
-  }, []);
+  }, [setError]);
 
-  const save = async (next: RecordingSettings) => {
-    await mailClient.setRecordingSettings(next);
-    setSettings(next);
-    announceRecordingSettingsChanged();
-  };
-  const change = async (update: Partial<RecordingSettings>) => {
-    if (!settings) return;
-    setError(null);
-    try { await save({ ...settings, ...update }); } catch (reason) { setError(errorMessage(reason)); }
-  };
   const toggleRecording = async (on: boolean) => {
     if (!settings) return;
     setError(null);
@@ -157,6 +175,7 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
       setBusy(false);
     }
   };
+
   const deleteAll = async (kind: Exclude<Confirming, null>) => {
     setBusy(true);
     setError(null);
@@ -172,83 +191,16 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
       setConfirming(null);
     }
   };
-  const modelCommand = async (run: () => Promise<void>) => {
-    setBusy(true);
-    setError(null);
-    try { await run(); } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
-  };
+
   const confirm = (kind: Confirming) => { setMessage(null); setConfirming(kind); };
-
-  const addCustomVocab = async (termsToAdd: string[]) => {
-    if (!settings) return;
-    const seen = new Set(settings.customVocabulary.map((term) => term.toLowerCase()));
-    const next = [...settings.customVocabulary];
-    for (const raw of termsToAdd) {
-      const cleaned = raw.trim();
-      if (!cleaned) continue;
-      const key = cleaned.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        next.push(cleaned);
-      }
-    }
-    await change({ customVocabulary: next });
-  };
-  const removeCustomVocab = async (term: string) => {
-    if (!settings) return;
-    await change({ customVocabulary: settings.customVocabulary.filter((item) => item !== term) });
-  };
-  const loadVocabSuggestions = async () => {
-    setBusy(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const found = await mailClient.suggestRecordingVocabulary();
-      setSuggestions(found);
-      setSelectedSuggestions(found.map((item) => item.term));
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const toggleCloudTranscription = async (on: boolean) => {
-    if (!settings) return;
-    setError(null);
-    if (!on) {
-      setConfirmingCloud(false);
-      await change({ cloudTranscriptionEnabled: false, cloudTranscriptionDefault: false });
-      return;
-    }
-    setConfirmingCloud(true);
-  };
-  const confirmEnableCloud = async () => {
-    if (!settings) return;
-    const activeProvider = readAiProvider();
-    const provider = settings.cloudTranscriptionProvider ?? (isCloudTranscriptionProvider(activeProvider) ? activeProvider : null);
-    const model = settings.cloudTranscriptionModel.trim() || defaultCloudTranscriptionModel(provider ?? "openrouter") || "microsoft/mai-transcribe-2";
-    const endpoint = settings.cloudTranscriptionEndpoint ?? (activeProvider === "custom" ? readAiEndpoint().trim() || null : null);
-    setConfirmingCloud(false);
-    await change({
-      cloudTranscriptionEnabled: true,
-      cloudTranscriptionDisclosureAcknowledged: true,
-      cloudTranscriptionProvider: provider,
-      cloudTranscriptionModel: model,
-      cloudTranscriptionEndpoint: endpoint,
-    });
-  };
-
   const system = capabilities.systemAudio;
   const activeDevice = settings?.microphoneDeviceUid
     ? devices.find((device) => device.uid === settings.microphoneDeviceUid)
     : devices.find((device) => device.isDefault);
-  const speechAnalyzerAvailable = capabilities.speechAnalyzer;
-  const selectedEngineValue = speechAnalyzerAvailable && settings?.transcriptionEngine !== "whisper"
-    ? "apple"
-    : (settings?.transcriptionModel ?? "fast");
+
   return (
-    <section className="settings-section wide-label-settings" aria-label="Meeting Recording">
-      <h3>Recording</h3>
+    <section className="settings-section wide-label-settings" aria-label="Recording & Menu Bar">
+      <h3>Capture & Audio</h3>
       {system.kind === "needsMacos" ? (
         <p className="settings-hint" role="note">
           System audio needs macOS 14.4 or later; this Mac has macOS {system.major}.{system.minor}. Recordings will have the microphone only.
@@ -299,6 +251,167 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
         How long a recording's audio stays on this Mac before ThreeStrands deletes it. Until Transcribed deletes it once its transcript exists.
       </p>
 
+      <h3>Menu Bar & Reminders</h3>
+      <label className="settings-switch">
+        <span>Show Upcoming Meetings in Menu Bar</span>
+        <input type="checkbox" checked={settings?.showUpcomingMeetingsInTray ?? true} disabled={!settings} aria-describedby={ids.upcomingTray}
+          onChange={(event) => void change({ showUpcomingMeetingsInTray: event.target.checked })} />
+      </label>
+      <p className="settings-hint" id={ids.upcomingTray}>
+        Lists today&apos;s remaining meetings (or tomorrow&apos;s first when today is free) in the menu bar so you can click to join in one click, and keeps the menu bar icon visible while meetings remain.
+      </p>
+
+      <label className="settings-field settings-field-row">
+        <span>Menu Bar Countdown</span>
+        <select value={settings?.trayNextMeetingTitle ?? "titleAndTime"} disabled={!settings || !(settings.showUpcomingMeetingsInTray)} aria-describedby={ids.trayTitle}
+          onChange={(event) => void change({ trayNextMeetingTitle: event.target.value as TrayNextMeetingTitle })}>
+          {TRAY_COUNTDOWN_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </label>
+      <p className="settings-hint settings-field-detail" id={ids.trayTitle}>
+        Shows the next meeting beside the menu bar icon while it is live or starting within two hours.
+      </p>
+
+      <label className="settings-switch">
+        <span>Offer to Record Meetings</span>
+        <input type="checkbox" checked={settings?.offerToRecord ?? true} disabled={!settings} aria-describedby={ids.offer}
+          onChange={(event) => void change({ offerToRecord: event.target.checked })} />
+      </label>
+      <p className="settings-hint" id={ids.offer}>
+        Offers the current or upcoming meeting in the menu bar and shows a badge when a conferencing app or meeting in a browser uses your microphone. Never starts or stops a recording on its own.
+      </p>
+
+      <label className="settings-switch">
+        <span>Remind Me to Tell Participants</span>
+        <input type="checkbox" checked={settings?.remindToTell ?? true} disabled={!settings} aria-describedby={ids.remind}
+          onChange={(event) => void change({ remindToTell: event.target.checked })} />
+      </label>
+      <p className="settings-hint" id={ids.remind}>
+        Shows a notice each time a recording starts. ThreeStrands never posts to a meeting's chat or invitation for you.
+      </p>
+
+      <h3>Recordings on This Mac</h3>
+      <p className="settings-hint" id={ids.usage} role="status">
+        {usage === null ? "Checking…"
+          : usage.recordings === 0 ? "No recordings."
+            : `${usage.recordings} ${usage.recordings === 1 ? "recording" : "recordings"}, ${formatAttachmentSize(usage.audioBytes)} of audio.`}
+      </p>
+      <div className="settings-section-heading-actions">
+        <button type="button" className="btn" disabled={busy || !usage?.audioBytes} aria-describedby={ids.usage} onClick={() => confirm("audio")}>Delete All Audio</button>
+        <button type="button" className="btn" disabled={busy || !usage?.recordings} aria-describedby={ids.usage} onClick={() => confirm("recordings")}>Delete All Recordings</button>
+      </div>
+      {confirming ? (
+        <InlineConfirm
+          ariaLabel={confirming === "audio" ? "Confirm Delete All Audio" : "Confirm Delete All Recordings"}
+          title={confirming === "audio" ? "Delete all recording audio?" : "Delete all recordings?"}
+          cancelLabel="Cancel"
+          onCancel={() => setConfirming(null)}
+          disabled={busy}
+          focusCancel
+          actions={[{ label: confirming === "audio" ? "Delete All Audio" : "Delete All Recordings", className: "btn-danger", onClick: () => void deleteAll(confirming) }]}
+        >
+          {confirming === "audio"
+            ? "The audio files are removed from this Mac. The recordings stay listed, and this can't be undone."
+            : "Every recording and its audio is removed from this Mac. This can't be undone."}
+        </InlineConfirm>
+      ) : null}
+      {message ? <p role="status" className="settings-hint">{message}</p> : null}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+    </section>
+  );
+}
+
+/** Settings → Meeting Recording → Transcription & Vocabulary. */
+export function MeetingTranscriptionSettings({ capabilities }: { capabilities: RecordingCapabilities }) {
+  const { settings, error, setError, change } = useRecordingSettingsState();
+  const [busy, setBusy] = useState(false);
+  const [deletingModel, setDeletingModel] = useState<TranscriptionModelName | null>(null);
+  const [newVocabTerm, setNewVocabTerm] = useState("");
+  const [suggestions, setSuggestions] = useState<VocabularySuggestion[] | null>(null);
+  const [selectedSuggestions, setSelectedSuggestions] = useState<string[]>([]);
+  const [confirmingCloud, setConfirmingCloud] = useState(false);
+  const models = useTranscriptionModels();
+  const ids = {
+    model: useId(), language: useId(), during: useId(), vocab: useId(),
+    cloud: useId(), cloudModel: useId(), cloudDiarize: useId(), cloudDefault: useId(),
+  };
+
+  const modelCommand = async (run: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try { await run(); } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+  };
+
+  const addCustomVocab = async (termsToAdd: string[]) => {
+    if (!settings) return;
+    const seen = new Set(settings.customVocabulary.map((term) => term.toLowerCase()));
+    const next = [...settings.customVocabulary];
+    for (const raw of termsToAdd) {
+      const cleaned = raw.trim();
+      if (!cleaned) continue;
+      const key = cleaned.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        next.push(cleaned);
+      }
+    }
+    await change({ customVocabulary: next });
+  };
+
+  const removeCustomVocab = async (term: string) => {
+    if (!settings) return;
+    await change({ customVocabulary: settings.customVocabulary.filter((item) => item !== term) });
+  };
+
+  const loadVocabSuggestions = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const found = await mailClient.suggestRecordingVocabulary();
+      setSuggestions(found);
+      setSelectedSuggestions([]);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleCloudTranscription = async (on: boolean) => {
+    if (!settings) return;
+    setError(null);
+    if (!on) {
+      setConfirmingCloud(false);
+      await change({ cloudTranscriptionEnabled: false, cloudTranscriptionDefault: false });
+      return;
+    }
+    setConfirmingCloud(true);
+  };
+
+  const confirmEnableCloud = async () => {
+    if (!settings) return;
+    const activeProvider = readAiProvider();
+    const provider = settings.cloudTranscriptionProvider ?? (isCloudTranscriptionProvider(activeProvider) ? activeProvider : null);
+    const model = settings.cloudTranscriptionModel.trim() || defaultCloudTranscriptionModel(provider ?? "openrouter") || "microsoft/mai-transcribe-2";
+    const endpoint = settings.cloudTranscriptionEndpoint ?? (activeProvider === "custom" ? readAiEndpoint().trim() || null : null);
+    setConfirmingCloud(false);
+    await change({
+      cloudTranscriptionEnabled: true,
+      cloudTranscriptionDisclosureAcknowledged: true,
+      cloudTranscriptionProvider: provider,
+      cloudTranscriptionModel: model,
+      cloudTranscriptionEndpoint: endpoint,
+    });
+  };
+
+  const speechAnalyzerAvailable = capabilities.speechAnalyzer;
+  const selectedEngineValue = speechAnalyzerAvailable && settings?.transcriptionEngine !== "whisper"
+    ? "apple"
+    : (settings?.transcriptionModel ?? "fast");
+
+  return (
+    <section className="settings-section wide-label-settings" aria-label="Transcription & Vocabulary">
+      <h3>On-Device Transcription</h3>
       <label className="settings-field settings-field-row">
         <span>Transcription Model</span>
         <select value={selectedEngineValue} disabled={!settings} aria-describedby={ids.model}
@@ -328,6 +441,44 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
         Auto detects the spoken language once near the start of each recording. Whisper Fast supports English only.
       </p>
 
+      <div className="settings-field-detail transcription-models">
+        {MODELS.map((option) => (
+          <TranscriptionModelRow
+            key={option.value}
+            model={models?.find((model) => model.model === option.value)}
+            label={option.label}
+            note={option.note}
+            busy={busy}
+            onDownload={() => void modelCommand(() => mailClient.downloadTranscriptionModel(option.value))}
+            onCancel={() => void modelCommand(() => mailClient.cancelTranscriptionModelDownload(option.value))}
+            onDelete={() => setDeletingModel(option.value)}
+          />
+        ))}
+      </div>
+      {deletingModel ? (
+        <InlineConfirm
+          ariaLabel="Confirm Delete Model"
+          title={`Delete the ${MODELS.find((option) => option.value === deletingModel)?.label} model?`}
+          cancelLabel="Cancel"
+          onCancel={() => setDeletingModel(null)}
+          disabled={busy}
+          focusCancel
+          actions={[{ label: "Delete Model", className: "btn-danger", onClick: () => void modelCommand(async () => { await mailClient.deleteTranscriptionModel(deletingModel); setDeletingModel(null); }) }]}
+        >
+          The model file is removed from this Mac. Recordings wait to be transcribed until a model is downloaded again.
+        </InlineConfirm>
+      ) : null}
+
+      <label className="settings-switch">
+        <span>Transcribe During Meetings</span>
+        <input type="checkbox" checked={settings?.transcribeDuringMeetings ?? true} disabled={!settings} aria-describedby={ids.during}
+          onChange={(event) => void change({ transcribeDuringMeetings: event.target.checked })} />
+      </label>
+      <p className="settings-hint" id={ids.during}>
+        Transcribes in the background while a meeting is recorded, so the transcript is ready soon after you stop. Turn off to keep your Mac's memory and processor free during meetings.
+      </p>
+
+      <h3>Custom Vocabulary</h3>
       <div className="settings-field settings-field-row">
         <span>Custom Vocabulary</span>
         <div className="recording-vocab-add">
@@ -389,10 +540,15 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
         <div className="settings-field-detail">
           <div className="recording-vocab-suggestions" role="region" aria-label="Sent Mail Vocabulary Suggestions">
             {suggestions.length === 0 ? (
-              <p className="settings-hint">No recurring vocabulary terms were found in recent Sent mail.</p>
+              <>
+                <p className="settings-hint">No recurring vocabulary terms were found in recent Sent mail.</p>
+                <div className="transcription-model-actions">
+                  <button type="button" className="btn" onClick={() => setSuggestions(null)}>Close</button>
+                </div>
+              </>
             ) : (
               <>
-                <p className="settings-hint">Review recurring terms found in your Sent mail before adding them:</p>
+                <p className="settings-hint">Select recurring terms from your Sent mail to add:</p>
                 <div className="recording-vocab-suggestion-list">
                   {suggestions.map((item) => {
                     const checked = selectedSuggestions.includes(item.term);
@@ -423,7 +579,21 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
                       setSelectedSuggestions([]);
                       void addCustomVocab(chosen);
                     }}
-                  >Add Selected</button>
+                  >{selectedSuggestions.length > 0 ? `Add Selected (${selectedSuggestions.length})` : "Add Selected"}</button>
+                  {selectedSuggestions.length < suggestions.length ? (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => setSelectedSuggestions(suggestions.map((item) => item.term))}
+                    >Select All</button>
+                  ) : null}
+                  {selectedSuggestions.length > 0 ? (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => setSelectedSuggestions([])}
+                    >Clear</button>
+                  ) : null}
                   <button
                     type="button"
                     className="btn"
@@ -432,98 +602,11 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
                 </div>
               </>
             )}
-            {suggestions.length === 0 ? (
-              <div className="transcription-model-actions">
-                <button type="button" className="btn" onClick={() => setSuggestions(null)}>Close</button>
-              </div>
-            ) : null}
           </div>
         </div>
       ) : null}
-      <div className="settings-field-detail transcription-models">
-        {MODELS.map((option) => (
-          <TranscriptionModelRow
-            key={option.value}
-            model={models?.find((model) => model.model === option.value)}
-            label={option.label}
-            note={option.note}
-            busy={busy}
-            onDownload={() => void modelCommand(() => mailClient.downloadTranscriptionModel(option.value))}
-            onCancel={() => void modelCommand(() => mailClient.cancelTranscriptionModelDownload(option.value))}
-            onDelete={() => setDeletingModel(option.value)}
-          />
-        ))}
-      </div>
-      {deletingModel ? (
-        <InlineConfirm
-          ariaLabel="Confirm Delete Model"
-          title={`Delete the ${MODELS.find((option) => option.value === deletingModel)?.label} model?`}
-          cancelLabel="Cancel"
-          onCancel={() => setDeletingModel(null)}
-          disabled={busy}
-          focusCancel
-          actions={[{ label: "Delete Model", className: "btn-danger", onClick: () => void modelCommand(async () => { await mailClient.deleteTranscriptionModel(deletingModel); setDeletingModel(null); }) }]}
-        >
-          The model file is removed from this Mac. Recordings wait to be transcribed until a model is downloaded again.
-        </InlineConfirm>
-      ) : null}
 
-      <label className="settings-switch">
-        <span>Transcribe During Meetings</span>
-        <input type="checkbox" checked={settings?.transcribeDuringMeetings ?? true} disabled={!settings} aria-describedby={ids.during}
-          onChange={(event) => void change({ transcribeDuringMeetings: event.target.checked })} />
-      </label>
-      <p className="settings-hint" id={ids.during}>
-        Transcribes in the background while a meeting is recorded, so the transcript is ready soon after you stop. Turn off to keep your Mac's memory and processor free during meetings.
-      </p>
-
-      <label className="settings-switch">
-        <span>Show Upcoming Meetings in Menu Bar</span>
-        <input type="checkbox" checked={settings?.showUpcomingMeetingsInTray ?? true} disabled={!settings} aria-describedby={ids.upcomingTray}
-          onChange={(event) => void change({ showUpcomingMeetingsInTray: event.target.checked })} />
-      </label>
-      <p className="settings-hint" id={ids.upcomingTray}>
-        Lists today&apos;s remaining meetings (or tomorrow&apos;s first when today is free) in the menu bar so you can click to join in one click, and keeps the menu bar icon visible while meetings remain.
-      </p>
-
-      <label className="settings-field settings-field-row">
-        <span>Menu Bar Countdown</span>
-        <select value={settings?.trayNextMeetingTitle ?? "titleAndTime"} disabled={!settings || !(settings.showUpcomingMeetingsInTray)} aria-describedby={ids.trayTitle}
-          onChange={(event) => void change({ trayNextMeetingTitle: event.target.value as TrayNextMeetingTitle })}>
-          {TRAY_COUNTDOWN_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-      </label>
-      <p className="settings-hint settings-field-detail" id={ids.trayTitle}>
-        Shows the next meeting beside the menu bar icon while it is live or starting within two hours.
-      </p>
-
-      <label className="settings-switch">
-        <span>Offer to Record Meetings</span>
-        <input type="checkbox" checked={settings?.offerToRecord ?? true} disabled={!settings} aria-describedby={ids.offer}
-          onChange={(event) => void change({ offerToRecord: event.target.checked })} />
-      </label>
-      <p className="settings-hint" id={ids.offer}>
-        Offers the current or upcoming meeting in the menu bar and shows a badge when a conferencing app or meeting in a browser uses your microphone. Never starts or stops a recording on its own.
-      </p>
-
-      <label className="settings-switch">
-        <span>Remind Me to Tell Participants</span>
-        <input type="checkbox" checked={settings?.remindToTell ?? true} disabled={!settings} aria-describedby={ids.remind}
-          onChange={(event) => void change({ remindToTell: event.target.checked })} />
-      </label>
-      <p className="settings-hint" id={ids.remind}>
-        Shows a notice each time a recording starts. ThreeStrands never posts to a meeting's chat or invitation for you.
-      </p>
-
-      <label className="settings-switch">
-        <span>Summarize with AI</span>
-        <input type="checkbox" checked={settings?.summarizeWithAi ?? false} disabled={!settings} aria-describedby={ids.summarize}
-          onChange={(event) => void change({ summarizeWithAi: event.target.checked })} />
-      </label>
-      <p className="settings-hint" id={ids.summarize}>
-        Uses your configured AI provider to draft a summary, decisions, actions, and open questions when a transcription finishes. When off, recordings stop at the transcript.
-      </p>
-
+      <h3>Cloud Transcription</h3>
       <label className="settings-switch">
         <span>Cloud Transcription</span>
         <input type="checkbox" checked={settings?.cloudTranscriptionEnabled ?? false} disabled={!settings || busy} aria-describedby={ids.cloud}
@@ -588,33 +671,95 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
           </p>
         </>
       ) : null}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+    </section>
+  );
+}
 
-      <h3>Recordings on This Mac</h3>
-      <p className="settings-hint" id={ids.usage} role="status">
-        {usage === null ? "Checking…"
-          : usage.recordings === 0 ? "No recordings."
-            : `${usage.recordings} ${usage.recordings === 1 ? "recording" : "recordings"}, ${formatAttachmentSize(usage.audioBytes)} of audio.`}
+/** Settings → Meeting Recording → Summaries. */
+export function MeetingSummarySettings({ aiConfigured = true, onOpenAiSettings, onChange }: {
+  aiConfigured?: boolean;
+  onOpenAiSettings?(): void;
+  onChange?(): void;
+}) {
+  const { settings, error, change } = useRecordingSettingsState();
+  const storedInstructions = useMeetingSummaryInstructions();
+  const [draft, setDraft] = useState(storedInstructions);
+  const pendingRef = useRef<string | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const ids = { summarize: useId(), instructions: useId() };
+
+  const commit = useCallback(() => {
+    const edit = pendingRef.current;
+    if (edit === null) return;
+    pendingRef.current = null;
+    saveMeetingSummaryInstructions(edit);
+    onChangeRef.current?.();
+  }, []);
+
+  useEffect(() => commit, [commit]);
+
+  useEffect(() => {
+    if (pendingRef.current === null) setDraft(storedInstructions);
+  }, [storedInstructions]);
+
+  const applyPreset = (instructions: string) => {
+    pendingRef.current = null;
+    setDraft(instructions);
+    saveMeetingSummaryInstructions(instructions);
+    onChangeRef.current?.();
+  };
+
+  return (
+    <section className="settings-section wide-label-settings writing-profile-settings" aria-label="Summaries">
+      <h3>Meeting Recaps</h3>
+      {aiConfigured ? null : (
+        <p className="settings-hint" role="note">
+          Configure an AI provider to summarize recorded meetings.
+          {onOpenAiSettings ? <> <button type="button" className="btn-link" onClick={onOpenAiSettings}>AI Provider</button></> : null}
+        </p>
+      )}
+      <label className="settings-switch">
+        <span>Summarize with AI</span>
+        <input type="checkbox" checked={settings?.summarizeWithAi ?? false} disabled={!settings} aria-describedby={ids.summarize}
+          onChange={(event) => void change({ summarizeWithAi: event.target.checked })} />
+      </label>
+      <p className="settings-hint" id={ids.summarize}>
+        Uses your configured AI provider to draft structured meeting notes, decisions, actions, and open questions when a transcription finishes. When off, recordings stop at the transcript.
       </p>
-      <div className="settings-section-heading-actions">
-        <button type="button" className="btn" disabled={busy || !usage?.audioBytes} aria-describedby={ids.usage} onClick={() => confirm("audio")}>Delete All Audio</button>
-        <button type="button" className="btn" disabled={busy || !usage?.recordings} aria-describedby={ids.usage} onClick={() => confirm("recordings")}>Delete All Recordings</button>
+
+      <h3>Summary Instructions</h3>
+      <p className="settings-hint" id={ids.instructions}>
+        Customize what AI meeting summaries emphasize and how they are organized. Leave blank for the built-in overview with bold topic headings and bullet takeaways. Instructions sync across your devices, and every fact stays grounded in the transcript.
+      </p>
+      <div className="recording-summary-presets" role="group" aria-label="Summary instruction presets">
+        {MEETING_SUMMARY_PRESETS.map((preset) => (
+          <button
+            key={preset.id}
+            type="button"
+            className="btn btn-sm"
+            onClick={() => applyPreset(preset.instructions)}
+          >{preset.label}</button>
+        ))}
       </div>
-      {confirming ? (
-        <InlineConfirm
-          ariaLabel={confirming === "audio" ? "Confirm Delete All Audio" : "Confirm Delete All Recordings"}
-          title={confirming === "audio" ? "Delete all recording audio?" : "Delete all recordings?"}
-          cancelLabel="Cancel"
-          onCancel={() => setConfirming(null)}
-          disabled={busy}
-          focusCancel
-          actions={[{ label: confirming === "audio" ? "Delete All Audio" : "Delete All Recordings", className: "btn-danger", onClick: () => void deleteAll(confirming) }]}
-        >
-          {confirming === "audio"
-            ? "The audio files are removed from this Mac. The recordings stay listed, and this can't be undone."
-            : "Every recording and its audio is removed from this Mac. This can't be undone."}
-        </InlineConfirm>
-      ) : null}
-      {message ? <p role="status" className="settings-hint">{message}</p> : null}
+      <label className="settings-field">
+        <span>Custom Summary Instructions</span>
+        <textarea
+          rows={8}
+          value={draft}
+          maxLength={MAX_MEETING_SUMMARY_INSTRUCTIONS_CHARS}
+          aria-describedby={ids.instructions}
+          placeholder="e.g. Lead with key decisions and risks, then group discussion points by topic with concise bullet takeaways."
+          onChange={(event) => {
+            const value = event.target.value;
+            setDraft(value);
+            pendingRef.current = value;
+          }}
+          onBlur={commit}
+        />
+      </label>
+      <small className="settings-hint writing-profile-count">{`${[...draft].length.toLocaleString()} / ${MAX_MEETING_SUMMARY_INSTRUCTIONS_CHARS.toLocaleString()}`}</small>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
   );

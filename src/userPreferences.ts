@@ -47,6 +47,7 @@ import {
   saveSelectedAccountId,
 } from "./settings";
 import { readTheme, saveTheme, type Theme } from "./theme";
+import { readMeetingSummaryInstructions, saveMeetingSummaryInstructions } from "./meetingSummaryInstructions";
 import { readWritingProfiles, saveWritingProfiles, type WritingProfileMap } from "./writingProfiles";
 import type { AvailabilityPreferences, AvailabilityProfiles, MailProvider } from "./domain";
 
@@ -97,6 +98,8 @@ export type ExportablePreferences = {
   calendarColors?: CalendarColorMap;
   /** Optional on the wire: exports without writing profiles omit it. */
   writingProfiles?: WritingProfileMap;
+  /** Optional on the wire: exports without custom meeting summary instructions omit it. */
+  meetingSummaryInstructions?: string;
 };
 
 /**
@@ -150,6 +153,7 @@ export function readExportablePreferences(): ExportablePreferences {
     },
     calendarColors: readCalendarColors(),
     writingProfiles: readWritingProfiles(),
+    meetingSummaryInstructions: readMeetingSummaryInstructions(),
   };
 }
 
@@ -187,6 +191,8 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveCalendarColors(preferences.calendarColors ?? {});
   // Absent from exports made before writing profiles, or with none written.
   saveWritingProfiles(preferences.writingProfiles ?? {});
+  // Absent from exports made before custom meeting summary instructions, or when empty.
+  saveMeetingSummaryInstructions(preferences.meetingSummaryInstructions ?? "");
 }
 
 export async function exportSettings(password: string): Promise<string | null> {

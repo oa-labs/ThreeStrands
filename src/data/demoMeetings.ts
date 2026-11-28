@@ -1,8 +1,8 @@
 import type { FollowThroughRecord, FollowThroughSave, MeetingAgendaSave, MeetingCommitment, MeetingContext, MeetingConversation, MeetingLimits, MeetingNoteSource, MeetingOccurrence, MeetingPrepBrief, MeetingPrepSelection, MeetingPrepSourceItem, MeetingReadiness, MeetingSection, MeetingSourcePreview, PrepReservation, ScheduleEvent, Thread, ThreadTask, Note } from "../domain";
 import { boundedText, insertPrepTask, meetingBlocks, occurrenceBlocks, PREP_TASK_PREFIX, type MeetingBlock } from "../meetingExcerpt";
-import { insertMeetingLine, meetingLine } from "../noteMeetings";
+import { insertMeetingLine, meetingLine, meetingNoteTitle } from "../noteMeetings";
 import { MAX_READINESS_EVENTS } from "../meetingReadinessPolicy";
-import { followThroughSections, insertAdhocFollowThrough, insertFollowThrough } from "../meetingFollowThrough";
+import { adhocDailyMeetingLine, followThroughSections, insertAdhocFollowThrough, insertAdhocFollowThroughInNote, insertFollowThrough } from "../meetingFollowThrough";
 import { escapeMarkdownText, extractNoteEntityLinks, normalizeContactAddress, noteReferenceKey, type NoteReference } from "../noteEntities";
 import { extractWikiLinks } from "../noteWikiLinks";
 import type { MailClient } from "./client";
@@ -18,7 +18,7 @@ type Sources = {
   ownAddresses(): string[];
   threadForMessage(id: string): string | null;
   now?(): Date;
-  notes: Pick<MailClient, "noteBacklinks" | "getNote" | "noteDocument" | "findNoteByTitle" | "getDailyNote" | "saveDailyNote" | "updateNote">;
+  notes: Pick<MailClient, "noteBacklinks" | "getNote" | "noteDocument" | "findNoteByTitle" | "getDailyNote" | "saveDailyNote" | "updateNote" | "createNote" | "trashNote">;
 };
 
 function bounded<T>(items: T[], limit: number): MeetingSection<T> {
@@ -37,7 +37,15 @@ const localDate = (time: number) => { const d = new Date(time); return `${d.getF
 /** Meeting preparation for the browser demo: the native rules over in-memory data. */
 export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingContext" | "meetingSourcePreview" | "prepareMeetingBrief" | "saveMeetingAgenda" | "undoMeetingAgenda" | "meetingReadiness" | "reserveMeetingPrep" | "saveMeetingFollowThrough" | "saveAdhocFollowThrough" | "undoMeetingFollowThrough"> {
   /** Receipts, as natively: a retry with the same operation returns its first result. */
-  const receipts = new Map<string, { scope: string; result: FollowThroughSave; undone: boolean }>();
+  const receipts = new Map<string, {
+    scope: string;
+    result: FollowThroughSave;
+    undone: boolean;
+    dailyDate?: string;
+    dailyPreviousBody?: string;
+    dailyUpdatedAt?: string;
+    createdMeetingNote?: boolean;
+  }>();
   const agendaReceipts = new Map<string, { scope: string; result: MeetingAgendaSave; undone: boolean }>();
   const cached = (reference: NoteReference) => sources.events().find((event) => event.accountId === reference.account && event.calendarId === reference.calendar && event.id === reference.id) ?? null;
   const notesLinking = async (reference: NoteReference) => {
@@ -418,7 +426,7 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
       receipts.set(operationId, { scope, result, undone: false });
       return result;
     },
-    async saveAdhocFollowThrough(date, timeLabel, expectedRevision, operationId, accepted) {
+    async saveAdhocFollowThrough(date, timeLabel, expectedRevision, operationId, accepted, linkNote = false) {
       const scope = `adhoc:${date}`;
       const receipt = receipts.get(operationId);
       if (receipt) {
@@ -436,20 +444,63 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
         if (!task) throw new Error("A linked task no longer exists. Remove it and try again.");
         return { ...item, title: task.title };
       });
-      const inserted = insertAdhocFollowThrough(existing?.body ?? "", timeLabel, accepted.meeting, accepted.date, items, { summary: accepted.summary });
-      const saved = await sources.notes.saveDailyNote(date, inserted.body, expectedRevision);
-      if (!saved.saved || !saved.note) throw new Error("That note changed since you started this review. Check the destination and save again.");
-      const end = saved.note.body.length - (inserted.body.length - inserted.end);
-      const document = await sources.notes.noteDocument(saved.note.id);
+      if (!linkNote) {
+        const inserted = insertAdhocFollowThrough(existing?.body ?? "", timeLabel, accepted.meeting, accepted.date, items, { summary: accepted.summary });
+        const saved = await sources.notes.saveDailyNote(date, inserted.body, expectedRevision);
+        if (!saved.saved || !saved.note) throw new Error("That note changed since you started this review. Check the destination and save again.");
+        const end = saved.note.body.length - (inserted.body.length - inserted.end);
+        const document = await sources.notes.noteDocument(saved.note.id);
+        const inside = document.items.filter((item) => inserted.start <= item.start && item.start < end);
+        const result: FollowThroughSave = {
+          operationId, note: saved.note, section: saved.note.body.slice(inserted.start, end), start: inserted.start, end,
+          taskIds: inside.filter((item) => item.task).map((item) => `note:${saved.note!.id}:${item.id}`),
+          checklistIds: inside.filter((item) => !item.task).map((item) => `note:${saved.note!.id}:${item.id}`),
+          recordingId: accepted.recordingId ?? null,
+          replayed: false,
+        };
+        receipts.set(operationId, { scope, result, undone: false });
+        return result;
+      }
+
+      const title = meetingNoteTitle(accepted.meeting);
+      const foundNote = await sources.notes.findNoteByTitle(title);
+      const createdMeetingNote = !foundNote;
+      const meetingNote = foundNote
+        ? await sources.notes.getNote(foundNote.id)
+        : await sources.notes.createNote(title, "");
+      if (!meetingNote) throw new Error("Note not found");
+      if (meetingNote.trashed) throw new Error("That note is in Trash. Restore it or choose another note.");
+      const inserted = insertAdhocFollowThroughInNote(meetingNote.body, timeLabel, accepted.meeting, accepted.date, items, { summary: accepted.summary });
+      const savedMeeting = await sources.notes.updateNote(meetingNote.id, meetingNote.authoredTitle ?? meetingNote.title, inserted.body, meetingNote.updatedAt);
+      if (!savedMeeting.saved || !savedMeeting.note) throw new Error("That note changed since you started this review. Check the destination and save again.");
+
+      const dailyPreviousBody = existing?.body ?? "";
+      let dailyUpdatedAt: string | undefined;
+      if (!dailyPreviousBody.includes(`[[${savedMeeting.note.title}]]`)) {
+        const dailyNext = insertMeetingLine(dailyPreviousBody, adhocDailyMeetingLine(timeLabel, savedMeeting.note.title));
+        if (dailyNext === null) throw new Error("This note has a code block that never closes. Open it before saving follow-through.");
+        const savedDaily = await sources.notes.saveDailyNote(date, dailyNext, expectedRevision);
+        if (!savedDaily.saved || !savedDaily.note) throw new Error("That note changed since you started this review. Check the destination and save again.");
+        dailyUpdatedAt = savedDaily.note.updatedAt;
+      }
+
+      const end = savedMeeting.note.body.length - (inserted.body.length - inserted.end);
+      const document = await sources.notes.noteDocument(savedMeeting.note.id);
       const inside = document.items.filter((item) => inserted.start <= item.start && item.start < end);
       const result: FollowThroughSave = {
-        operationId, note: saved.note, section: saved.note.body.slice(inserted.start, end), start: inserted.start, end,
-        taskIds: inside.filter((item) => item.task).map((item) => `note:${saved.note!.id}:${item.id}`),
-        checklistIds: inside.filter((item) => !item.task).map((item) => `note:${saved.note!.id}:${item.id}`),
+        operationId, note: savedMeeting.note, section: savedMeeting.note.body.slice(inserted.start, end), start: inserted.start, end,
+        taskIds: inside.filter((item) => item.task).map((item) => `note:${savedMeeting.note!.id}:${item.id}`),
+        checklistIds: inside.filter((item) => !item.task).map((item) => `note:${savedMeeting.note!.id}:${item.id}`),
         recordingId: accepted.recordingId ?? null,
         replayed: false,
       };
-      receipts.set(operationId, { scope, result, undone: false });
+      receipts.set(operationId, {
+        scope,
+        result,
+        undone: false,
+        ...(dailyUpdatedAt ? { dailyDate: date, dailyPreviousBody, dailyUpdatedAt } : {}),
+        createdMeetingNote,
+      });
       return result;
     },
     async undoMeetingFollowThrough(operationId) {
@@ -467,8 +518,16 @@ export function createDemoMeetings(sources: Sources): Pick<MailClient, "meetingC
         ? await sources.notes.saveDailyNote(note.dailyDate, body, note.updatedAt)
         : await sources.notes.updateNote(note.id, note.authoredTitle ?? note.title, body, note.updatedAt);
       if (!saved.saved || !saved.note) throw new Error("That note changed after the follow-through was saved. Open it to change the follow-through.");
+      let finalNote = saved.note;
+      if (receipt.createdMeetingNote && finalNote.body === "") {
+        finalNote = await sources.notes.trashNote(finalNote.id);
+      }
+      if (receipt.dailyDate && receipt.dailyUpdatedAt !== undefined) {
+        const dailySaved = await sources.notes.saveDailyNote(receipt.dailyDate, receipt.dailyPreviousBody ?? "", receipt.dailyUpdatedAt);
+        if (!dailySaved.saved) throw new Error("That note changed after the follow-through was saved. Open it to change the follow-through.");
+      }
       receipt.undone = true;
-      return { note: saved.note };
+      return { note: finalNote };
     },
     async meetingReadiness(references, mailScope = null) {
       if (references.length > MAX_READINESS_EVENTS) throw new Error(`At most ${MAX_READINESS_EVENTS} meetings can be checked at once`);

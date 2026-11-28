@@ -452,24 +452,78 @@ pub fn icon_kind(status: &RecordingStatus, transcribing: bool, offer_badged: boo
 pub const ICON_PIXELS: u32 = 36;
 
 /// A template (monochrome) icon as RGBA: black, with the shape in alpha, so
-/// macOS tints it for light and dark menu bars. Idle is a ring around a dot;
-/// IdleBadged adds a top-right dot; recording is a filled disc; transcribing is
-/// the ring around three bars, like a sound wave.
+/// macOS tints it for light and dark menu bars. Every variant draws the three
+/// wavy strands from the ThreeStrands mark: Idle shows the three strands;
+/// IdleBadged adds a top-right offer dot with a clean cutout; Recording pairs
+/// bolder strands with a bottom-right recording dot; Transcribing raises the
+/// strands slightly above three progress dots.
 pub fn icon_rgba(kind: TrayIconKind) -> Vec<u8> {
     const SUB: u32 = 4; // 4×4 samples per pixel for smooth edges
-    let center = ICON_PIXELS as f64 / 2.0;
+    const SEGMENTS: usize = 28;
+    let (y0s, amp, half_w): ([f64; 3], f64, f64) = match kind {
+        TrayIconKind::Idle | TrayIconKind::IdleBadged => ([9.5, 18.0, 26.5], 3.2, 1.65),
+        TrayIconKind::Recording => ([9.5, 18.0, 26.5], 3.2, 1.85),
+        TrayIconKind::Transcribing => ([7.5, 15.0, 22.5], 2.6, 1.5),
+    };
+    let x_start = 4.5_f64;
+    let x_end = 31.5_f64;
+    let width = x_end - x_start;
+    let strands: [Vec<(f64, f64)>; 3] = y0s.map(|y0| {
+        (0..=SEGMENTS)
+            .map(|i| {
+                let t = i as f64 / SEGMENTS as f64;
+                let x = x_start + t * width;
+                let y = y0 - amp * (std::f64::consts::TAU * t).sin();
+                (x, y)
+            })
+            .collect()
+    });
+    let dist_to_segment = |px: f64, py: f64, x0: f64, y0: f64, x1: f64, y1: f64| -> f64 {
+        let dx = x1 - x0;
+        let dy = y1 - y0;
+        let len_sq = dx * dx + dy * dy;
+        if len_sq == 0.0 {
+            return ((px - x0).powi(2) + (py - y0).powi(2)).sqrt();
+        }
+        let t = (((px - x0) * dx + (py - y0) * dy) / len_sq).clamp(0.0, 1.0);
+        let cx = x0 + t * dx;
+        let cy = y0 + t * dy;
+        ((px - cx).powi(2) + (py - cy).powi(2)).sqrt()
+    };
+    let on_strand = |x: f64, y: f64| -> bool {
+        strands.iter().any(|pts| {
+            pts.windows(2)
+                .any(|w| dist_to_segment(x, y, w[0].0, w[0].1, w[1].0, w[1].1) <= half_w)
+        })
+    };
     let inside = |x: f64, y: f64| -> bool {
-        let r = ((x - center).powi(2) + (y - center).powi(2)).sqrt();
-        let badge = ((x - 28.5).powi(2) + (y - 7.5).powi(2)).sqrt() <= 4.5;
         match kind {
-            TrayIconKind::Idle => (10.0..=13.0).contains(&r) || r <= 5.0,
-            TrayIconKind::IdleBadged => (10.0..=13.0).contains(&r) || r <= 5.0 || badge,
-            TrayIconKind::Recording => r <= 13.0,
+            TrayIconKind::Idle => on_strand(x, y),
+            TrayIconKind::IdleBadged => {
+                let d_badge = ((x - 29.5).powi(2) + (y - 7.0).powi(2)).sqrt();
+                if d_badge <= 3.8 {
+                    true
+                } else if d_badge <= 6.0 {
+                    false
+                } else {
+                    on_strand(x, y)
+                }
+            }
+            TrayIconKind::Recording => {
+                let d_rec = ((x - 28.5).powi(2) + (y - 28.5).powi(2)).sqrt();
+                if d_rec <= 5.0 {
+                    true
+                } else if d_rec <= 7.2 {
+                    false
+                } else {
+                    on_strand(x, y)
+                }
+            }
             TrayIconKind::Transcribing => {
-                let bar = |offset: f64, half_height: f64| {
-                    (x - center - offset).abs() <= 1.25 && (y - center).abs() <= half_height
-                };
-                (10.0..=13.0).contains(&r) || bar(-5.0, 3.5) || bar(0.0, 6.0) || bar(5.0, 3.5)
+                let on_dot = [11.0_f64, 18.0, 25.0]
+                    .iter()
+                    .any(|dx| ((x - dx).powi(2) + (y - 30.5).powi(2)).sqrt() <= 2.0);
+                on_dot || on_strand(x, y)
             }
         }
     };
@@ -1300,10 +1354,12 @@ mod tests {
         assert_ne!(idle_icon, live_icon);
         assert_ne!(idle_icon, badged_icon);
         let alpha_at = |icon: &[u8], x: u32, y: u32| icon[((y * ICON_PIXELS + x) * 4 + 3) as usize];
-        // Between the dot and the ring, idle is empty and recording filled.
-        assert_eq!(alpha_at(&idle_icon, 18 + 7, 18), 0);
-        assert_eq!(alpha_at(&live_icon, 18 + 7, 18), 255);
-        assert_eq!(alpha_at(&badged_icon, 28, 7), 255, "top-right offer badge");
+        // Idle has the three strands without badges; Recording adds the bottom-right dot; IdleBadged adds the top-right badge.
+        assert_eq!(alpha_at(&idle_icon, 18, 18), 255);
+        assert_eq!(alpha_at(&idle_icon, 30, 32), 0);
+        assert_eq!(alpha_at(&live_icon, 30, 32), 255);
+        assert_eq!(alpha_at(&idle_icon, 29, 7), 0);
+        assert_eq!(alpha_at(&badged_icon, 29, 7), 255, "top-right offer badge");
         assert_eq!(icon_kind(&idle(), false, false), TrayIconKind::Idle);
         assert_eq!(icon_kind(&idle(), false, true), TrayIconKind::IdleBadged);
         assert_eq!(
@@ -1495,18 +1551,42 @@ mod tests {
             TrayIconKind::Recording,
             "recording wins"
         );
-        let icon = icon_rgba(TrayIconKind::Transcribing);
-        assert_eq!(icon.len(), (ICON_PIXELS * ICON_PIXELS * 4) as usize);
-        assert!(icon
-            .chunks_exact(4)
-            .all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0));
-        assert_ne!(icon, icon_rgba(TrayIconKind::Idle));
-        assert_ne!(icon, icon_rgba(TrayIconKind::Recording));
-        let alpha_at = |icon: &[u8], x: u32, y: u32| icon[((y * ICON_PIXELS + x) * 4 + 3) as usize];
-        // Between the middle bar and the next, idle has its dot.
-        assert_eq!(alpha_at(&icon, 18 + 2, 18), 0);
-        assert_eq!(alpha_at(&icon_rgba(TrayIconKind::Idle), 18 + 2, 18), 255);
-        assert_eq!(alpha_at(&icon, 18, 18 - 5), 255, "the tall middle bar");
+        let idle_icon = icon_rgba(TrayIconKind::Idle);
+        let badged_icon = icon_rgba(TrayIconKind::IdleBadged);
+        let rec_icon = icon_rgba(TrayIconKind::Recording);
+        let transcribing_icon = icon_rgba(TrayIconKind::Transcribing);
+        for variant in [&idle_icon, &badged_icon, &rec_icon, &transcribing_icon] {
+            assert_eq!(variant.len(), (ICON_PIXELS * ICON_PIXELS * 4) as usize);
+            assert!(variant
+                .chunks_exact(4)
+                .all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0));
+        }
+        assert_ne!(idle_icon, badged_icon);
+        assert_ne!(idle_icon, rec_icon);
+        assert_ne!(idle_icon, transcribing_icon);
+        assert_ne!(badged_icon, rec_icon);
+        assert_ne!(badged_icon, transcribing_icon);
+        assert_ne!(rec_icon, transcribing_icon);
+
+        let alpha_at =
+            |bytes: &[u8], x: u32, y: u32| bytes[((y * ICON_PIXELS + x) * 4 + 3) as usize];
+        // Transparent corners and no outer circle ring at top center.
+        assert_eq!(alpha_at(&idle_icon, 1, 1), 0);
+        assert_eq!(alpha_at(&idle_icon, 18, 5), 0);
+        // Three stacked wavy strands: top crest, middle crossing, bottom trough.
+        assert_eq!(alpha_at(&idle_icon, 11, 6), 255);
+        assert_eq!(alpha_at(&idle_icon, 18, 18), 255);
+        assert_eq!(alpha_at(&idle_icon, 25, 29), 255);
+        // Offer badge dot + cutout halo.
+        assert_eq!(alpha_at(&badged_icon, 29, 7), 255);
+        assert_eq!(alpha_at(&badged_icon, 24, 7), 0);
+        // Recording dot + cutout halo.
+        assert_eq!(alpha_at(&rec_icon, 28, 28), 255);
+        assert_eq!(alpha_at(&rec_icon, 22, 28), 0);
+        // Transcribing three bottom progress dots.
+        assert_eq!(alpha_at(&transcribing_icon, 11, 30), 255);
+        assert_eq!(alpha_at(&transcribing_icon, 18, 30), 255);
+        assert_eq!(alpha_at(&transcribing_icon, 25, 30), 255);
     }
 
     #[test]

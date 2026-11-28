@@ -7,6 +7,11 @@ import { pullSyncedPreferences, queuePortablePreferences, queuePortablePreferenc
 import { DEFAULT_AI_FEATURES, readAiFeatures, saveAiFeatures } from "./aiSettings";
 import { readCalendarColors, resetCalendarColorsForTests, setCalendarColor } from "./calendarColors";
 import { readWritingProfiles, resetWritingProfilesForTests, setWritingProfile } from "./writingProfiles";
+import {
+  readMeetingSummaryInstructions,
+  resetMeetingSummaryInstructionsForTests,
+  saveMeetingSummaryInstructions,
+} from "./meetingSummaryInstructions";
 import { readAvailabilityPreferences, readAvailabilityPreferencesFor, readAvailabilityProfiles, saveAvailabilityProfiles } from "./settings";
 import type { AvailabilityProfiles } from "./domain";
 
@@ -27,6 +32,7 @@ describe("synced preferences data boundary", () => {
     localStorage.clear();
     resetCalendarColorsForTests();
     resetWritingProfilesForTests();
+    resetMeetingSummaryInstructionsForTests();
     vi.clearAllMocks();
     Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
   });
@@ -86,6 +92,7 @@ describe("synced preferences data boundary", () => {
       "markReadOnOpen",
       "markReadOnSnooze",
       "markReadOnTrash",
+      "meetingSummaryInstructions",
       "showStarredInbox",
       "snoozeReturnsUnread",
       "writingProfiles",
@@ -199,6 +206,20 @@ describe("synced preferences data boundary", () => {
     vi.mocked(invoke).mockResolvedValue({ autoReadDelaySeconds: 4 });
     await pullSyncedPreferences();
     expect(readWritingProfiles()).toEqual({ "me@example.com": { aboutYou: "Founder", reviewInstructions: "Push for a call." } });
+  });
+
+  it("queues and pulls meeting summary instructions across devices and keeps them when omitted by older replicas", async () => {
+    saveMeetingSummaryInstructions("Lead with decisions.\nGroup by topic.");
+    queuePortablePreferences();
+    expect(queuedPreferences().meetingSummaryInstructions).toBe("Lead with decisions.\nGroup by topic.");
+
+    vi.mocked(invoke).mockResolvedValue({ meetingSummaryInstructions: "Executive brief only." });
+    await pullSyncedPreferences();
+    expect(readMeetingSummaryInstructions()).toBe("Executive brief only.");
+
+    vi.mocked(invoke).mockResolvedValue({ autoReadDelaySeconds: 4 });
+    await pullSyncedPreferences();
+    expect(readMeetingSummaryInstructions()).toBe("Executive brief only.");
   });
 
   it("queues availability profiles with the default profile's hours for devices without profiles", () => {

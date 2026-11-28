@@ -37,6 +37,26 @@ pub(super) fn cached_gmail_identities(
 }
 
 impl Database {
+    /// Returns cached `(display_name, address)` pairs across all connected Gmail accounts.
+    pub(crate) fn cached_gmail_identity_names(&self) -> DbResult<Vec<(Option<String>, String)>> {
+        self.with_connection(|connection| {
+            let mut stmt =
+                connection.prepare("SELECT email FROM accounts WHERE provider='gmail'")?;
+            let accounts: Vec<String> = stmt
+                .query_map([], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut out = Vec::new();
+            for account in accounts {
+                if let Some(identities) = cached_gmail_identities(connection, &account)? {
+                    for identity in identities {
+                        out.push((identity.display_name, identity.address));
+                    }
+                }
+            }
+            Ok(out)
+        })
+    }
+
     /// Whether to ask Gmail for `account`'s sending addresses at `at`: when
     /// none are cached or the cache is old, unless a recent refresh failed,
     /// in which case the next try backs off instead of repeating every sync.

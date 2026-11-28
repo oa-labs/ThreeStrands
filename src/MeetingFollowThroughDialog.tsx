@@ -17,8 +17,11 @@ import {
   adhocFollowThroughSectionText, discardFollowThroughRecovery, followThroughSectionText, followUpBody, followUpRecipients, MAX_FOLLOW_THROUGH_ITEMS,
   readFollowThroughRecovery, readFollowUpHandoff, rememberFollowUpHandoff, saveFollowThroughRecovery, type FollowThroughRecovery, type ReviewItem,
 } from "./meetingFollowThrough";
-import { meetingEventReference } from "./meetingNoteEntry";
-import { saveAdhocFollowThrough, saveFollowThrough } from "./noteCapture";
+import { readMeetingSummaryInstructions } from "./meetingSummaryInstructions";
+import { meetingDate, meetingEventReference } from "./meetingNoteEntry";
+import { meetingNoteTitle } from "./noteMeetings";
+import { defaultMeetingEntry } from "./meetingPrep";
+import { addMeetingToDailyNote, saveAdhocFollowThrough, saveFollowThrough } from "./noteCapture";
 import { notePlainText } from "./notePreview";
 import { announceRecordingSettingsChanged } from "./recordingEvents";
 import { formatElapsed } from "./recordingPolicy";
@@ -80,6 +83,7 @@ function excerptLines(source: MeetingNoteSource | undefined): string[] {
 export function MeetingFollowThroughDialog({
   event,
   context,
+  ownAddresses = [],
   today,
   onClose,
   onSaved,
@@ -90,6 +94,7 @@ export function MeetingFollowThroughDialog({
 }: {
   event: ScheduleEvent | null;
   context: MeetingContext | null;
+  ownAddresses?: readonly string[];
   /** The review's date, written on the section. */
   today: string;
   onClose(): void;
@@ -127,6 +132,7 @@ export function MeetingFollowThroughDialog({
   const [rangeEndMin, setRangeEndMin] = useState(() => Math.min(30, Math.max(1, Math.ceil((recording?.durationMs ?? 1_800_000) / 60_000))));
   const [savedSettings, setSavedSettings] = useState<RecordingSettings | null>(null);
   const [attachTranscript, setAttachTranscript] = useState(() => restored?.attachTranscript ?? false);
+  const [newNoteMode, setNewNoteMode] = useState<"newLinkedNote" | "dailyNote">("newLinkedNote");
   const dirtyRef = useRef(Boolean(restored));
   const firstRef = useRef<HTMLButtonElement>(null);
   const lastText = useRef<HTMLInputElement>(null);
@@ -217,6 +223,7 @@ export function MeetingFollowThroughDialog({
     try {
       const cfg = readAiRequestConfig("summarizing this recording", "meetingRecap");
       const range = reviewCtx?.overBudget ? { startMs: rangeStartMin * 60_000, endMs: rangeEndMin * 60_000 } : null;
+      const instructions = readMeetingSummaryInstructions();
       const result = await mailClient.summarizeRecording(
         recording.id,
         cfg.provider,
@@ -225,6 +232,7 @@ export function MeetingFollowThroughDialog({
         cfg.reasoning,
         Boolean(reviewCtx?.hasUserNotes && includeMyNotes),
         range,
+        instructions || null,
       );
       applyRecap(result);
     } catch (reason) {
@@ -266,15 +274,21 @@ export function MeetingFollowThroughDialog({
       return "";
     }
   })();
+  const eventDay = event ? meetingDate(event) : today;
+  const linkedNoteTitle = meetingNoteTitle(meetingTitle);
   const placement = reference
     ? (destination
       ? (destination.kind === "excerpt"
         ? `Adds after this meeting's line in ${destinationLabel(destination)}.`
         : `Adds at the end of “${destination.title}”, linking this meeting.`)
-      : "")
-    : `Adds under ## Meetings in Daily note, ${dayLabel(today)}.`;
+      : (newNoteMode === "newLinkedNote"
+        ? `Creates “${linkedNoteTitle}” and links it under ## Meetings in Daily note, ${dayLabel(eventDay)}.`
+        : `Adds under ## Meetings in Daily note, ${dayLabel(eventDay)}.`))
+    : (newNoteMode === "newLinkedNote"
+      ? `Creates “${linkedNoteTitle}” and links it under ## Meetings in Daily note, ${dayLabel(today)}.`
+      : `Adds under ## Meetings in Daily note, ${dayLabel(today)}.`);
 
-  const canSave = hasContent && (reference ? Boolean(destination) : Boolean(recording));
+  const canSave = hasContent && (reference ? Boolean(destination || event) : Boolean(recording));
 
   const submit = async (submitted: FormEvent) => {
     submitted.preventDefault();
@@ -291,9 +305,37 @@ export function MeetingFollowThroughDialog({
       let saved: FollowThroughSave & { undo(): Promise<void> };
       if (reference && destination) {
         saved = await saveFollowThrough(reference, { noteId: destination.noteId, dailyDate: destination.dailyDate, revision: destination.revision }, record.operationId, accepted);
+      } else if (reference && event) {
+        const entry = { ...(await defaultMeetingEntry(event, ownAddresses)), linkNote: newNoteMode === "newLinkedNote" };
+        const created = await addMeetingToDailyNote(eventDay, entry);
+        const target = newNoteMode === "newLinkedNote" ? (created.meetingNote ?? created.note) : created.note;
+        try {
+          const inner = await saveFollowThrough(reference, { noteId: target.id, dailyDate: target.dailyDate, revision: target.updatedAt }, record.operationId, accepted);
+          saved = {
+            ...inner,
+            async undo() {
+              await inner.undo();
+              if (created.added) {
+                const afterUndo = await mailClient.getNote(target.id);
+                await created.undo({ meetingNoteVersion: afterUndo?.updatedAt });
+              }
+            },
+          };
+        } catch (saveReason) {
+          if (created.added) {
+            try {
+              await created.undo();
+            } catch (rollbackFailure) {
+              throw new AggregateError([saveReason, rollbackFailure],
+                `Save Follow-through failed (${errorMessage(saveReason)}). Could not fully undo the meeting note setup. ${errorMessage(rollbackFailure)}`,
+                { cause: rollbackFailure });
+            }
+          }
+          throw saveReason;
+        }
       } else {
         const daily = await mailClient.getDailyNote(today);
-        saved = await saveAdhocFollowThrough(today, timeLabel, daily?.updatedAt ?? null, record.operationId, accepted);
+        saved = await saveAdhocFollowThrough(today, timeLabel, daily?.updatedAt ?? null, record.operationId, accepted, newNoteMode === "newLinkedNote");
       }
       discardFollowThroughRecovery(record.reviewId);
       onSaved(saved);
@@ -431,10 +473,25 @@ export function MeetingFollowThroughDialog({
           <select value={effectiveDestinationId ?? ""} disabled={saving} onChange={(change) => edit((current) => ({ ...current, destinationNoteId: change.target.value }))}>
             {destinations.map((item) => <option key={item.noteId} value={item.noteId}>{destinationLabel(item)}</option>)}
           </select>
-        </label> : <p className="modal-form-hint">This meeting has no note yet. {onAddNote ? <><button type="button" className="btn-link" onClick={() => { onClose(); onAddNote(); }}>Add Note</button> first; your review is kept.</> : "Add a note for it first; your review is kept."}</p>
-      ) : null}
+        </label> : <>
+          <label>Save To
+            <select value={newNoteMode} disabled={saving} onChange={(change) => setNewNoteMode(change.target.value as "newLinkedNote" | "dailyNote")}>
+              <option value="newLinkedNote">New meeting note “{linkedNoteTitle}” (linked from daily note)</option>
+              <option value="dailyNote">Daily note, {dayLabel(eventDay)}</option>
+            </select>
+          </label>
+          {onAddNote ? <p className="modal-form-hint">Or <button type="button" className="btn-link" onClick={() => { onClose(); onAddNote(); }}>Add Note</button> manually to customize attendees first.</p> : null}
+        </>
+      ) : (
+        <label>Save To
+          <select value={newNoteMode} disabled={saving} onChange={(change) => setNewNoteMode(change.target.value as "newLinkedNote" | "dailyNote")}>
+            <option value="newLinkedNote">New meeting note “{linkedNoteTitle}” (linked from daily note)</option>
+            <option value="dailyNote">Daily note, {dayLabel(today)}</option>
+          </select>
+        </label>
+      )}
 
-      {(destination || !reference) && preview ? <div className="modal-form-evidence">
+      {preview ? <div className="modal-form-evidence">
         <span>{placement}</span>
         <pre className="follow-through-preview" aria-label="Insertion preview">{preview}</pre>
       </div> : null}

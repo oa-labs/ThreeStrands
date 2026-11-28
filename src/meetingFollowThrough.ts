@@ -45,24 +45,89 @@ export function itemLines(items: readonly FollowThroughItem[]): string[] {
   });
 }
 
-function checkedSummary(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const out = collapse(raw);
-  if (!out) return null;
-  if ([...out].length > MAX_FOLLOW_THROUGH_SUMMARY_CHARS) throw new Error(`Shorten the summary to ${MAX_FOLLOW_THROUGH_SUMMARY_CHARS} characters or fewer.`);
-  if (out.split(/\s+/u).filter(Boolean).length > MAX_RECAP_SUMMARY_WORDS) throw new Error(`Shorten the summary to ${MAX_RECAP_SUMMARY_WORDS} words or fewer.`);
+function escapePreservingBold(text: string): string {
+  let out = "";
+  let rest = text;
+  while (true) {
+    const open = rest.indexOf("**");
+    if (open < 0) break;
+    const before = rest.slice(0, open);
+    const afterOpen = rest.slice(open + 2);
+    const close = afterOpen.indexOf("**");
+    if (close > 0) {
+      const inner = afterOpen.slice(0, close);
+      if (!/^\s|\s$/.test(inner)) {
+        out += `${escapeMarkdownText(before)}**${escapeMarkdownText(inner)}**`;
+        rest = afterOpen.slice(close + 2);
+        continue;
+      }
+    }
+    out += escapeMarkdownText(rest.slice(0, open + 2));
+    rest = afterOpen;
+  }
+  return out + escapeMarkdownText(rest);
+}
+
+function sanitizeSummaryLine(raw: string): string {
+  const escaped = escapePreservingBold(collapse(raw));
+  return /^\([ xX]\)\s/.test(escaped) ? `\\${escaped}` : escaped;
+}
+
+function checkedSummaryLines(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const normalized = raw.replace(/\r\n/g, "\n");
+  const nonEmpty = normalized.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (!nonEmpty.length) return [];
+  const isStructured = normalized.includes("\n")
+    || nonEmpty[0].startsWith("- ")
+    || nonEmpty[0].startsWith("* ")
+    || nonEmpty[0].startsWith("• ")
+    || nonEmpty[0].startsWith("**");
+  if (!isStructured) {
+    const out = collapse(normalized);
+    if ([...out].length > MAX_FOLLOW_THROUGH_SUMMARY_CHARS) throw new Error(`Shorten the summary to ${MAX_FOLLOW_THROUGH_SUMMARY_CHARS} characters or fewer.`);
+    if (out.split(/\s+/u).filter(Boolean).length > MAX_RECAP_SUMMARY_WORDS) throw new Error(`Shorten the summary to ${MAX_RECAP_SUMMARY_WORDS} words or fewer.`);
+    return [`  - Summary: ${escapeMarkdownText(out)}`];
+  }
+
+  const cleaned = nonEmpty.map(collapse);
+  const totalChars = cleaned.reduce((sum, line) => sum + [...line].length, 0) + Math.max(0, cleaned.length - 1);
+  if (totalChars > MAX_FOLLOW_THROUGH_SUMMARY_CHARS) throw new Error(`Shorten the summary to ${MAX_FOLLOW_THROUGH_SUMMARY_CHARS} characters or fewer.`);
+  const totalWords = cleaned.reduce((sum, line) => {
+    const content = line.replace(/^(?:- |\* |• )/, "");
+    return sum + content.split(/\s+/u).filter(Boolean).length;
+  }, 0);
+  if (totalWords > MAX_RECAP_SUMMARY_WORDS) throw new Error(`Shorten the summary to ${MAX_RECAP_SUMMARY_WORDS} words or fewer.`);
+
+  const out: string[] = [];
+  let hasParent = false;
+  for (const [index, line] of cleaned.entries()) {
+    const bulletMatch = /^(?:- |\* |• )(.*)$/.exec(line);
+    if (bulletMatch) {
+      const safe = sanitizeSummaryLine(bulletMatch[1]);
+      if (!safe) continue;
+      out.push(hasParent ? `    - ${safe}` : `  - ${safe}`);
+    } else {
+      const safe = sanitizeSummaryLine(line);
+      if (!safe) continue;
+      if (index === 0 && !line.startsWith("**") && !line.startsWith("Summary:") && !line.startsWith("Overview:")) {
+        out.push(`  - **Overview:** ${safe}`);
+      } else {
+        out.push(`  - ${safe}`);
+      }
+      hasParent = true;
+    }
+  }
   return out;
 }
 
 function sectionBodyLines(summary: string | null | undefined, items: readonly FollowThroughItem[], transcript: { label: string; href: string } | null | undefined): string[] {
   if (items.length > MAX_FOLLOW_THROUGH_ITEMS) throw new Error(`Save at most ${MAX_FOLLOW_THROUGH_ITEMS} decisions and actions at a time.`);
-  const linesOut: string[] = [];
-  const cleanSummary = checkedSummary(summary);
-  if (cleanSummary) linesOut.push(`Summary: ${escapeMarkdownText(cleanSummary)}`);
-  if (items.length) linesOut.push(...itemLines(items));
+  const linesOut: string[] = checkedSummaryLines(summary);
+  if (items.length) linesOut.push(...itemLines(items).map((line) => `  - ${line}`));
   if (transcript) {
     const label = collapse(transcript.label) || "Transcript";
-    linesOut.push(`Transcript: [${escapeMarkdownText(label)}](${transcript.href})`);
+    linesOut.push(`  - Transcript: [${escapeMarkdownText(label)}](${transcript.href})`);
   }
   if (!linesOut.length) throw new Error("Add a decision or an action to save.");
   return linesOut;
@@ -121,8 +186,14 @@ export function followThroughSectionText(
   const label = escapeMarkdownText(collapse(name) || "Meeting");
   return [
     `- ${FOLLOW_THROUGH_LABEL} ${date}: [${label}](${noteReferenceHref(occurrence)}) ${FOLLOW_THROUGH_MARKER}`,
-    ...sectionBodyLines(extras?.summary, items, extras?.transcript).map((line) => `  - ${line}`),
+    ...sectionBodyLines(extras?.summary, items, extras?.transcript),
   ].join("\n");
+}
+
+/** Formats the daily-note `## Meetings` entry linking an ad-hoc meeting note. */
+export function adhocDailyMeetingLine(timeLabel: string, title: string): string {
+  const time = escapeMarkdownText(collapse(timeLabel) || "Meeting");
+  return `- ${time} for [[${title}]]`;
 }
 
 /** Formats an ad-hoc recording's follow-through section (no calendar occurrence link). */
@@ -136,7 +207,7 @@ export function adhocFollowThroughSectionText(
   const label = escapeMarkdownText(collapse(name) || "Meeting");
   return [
     `- ${time} for ${label} ${FOLLOW_THROUGH_MARKER}`,
-    ...sectionBodyLines(extras?.summary, items, extras?.transcript).map((line) => `  - ${line}`),
+    ...sectionBodyLines(extras?.summary, items, extras?.transcript),
   ].join("\n");
 }
 
@@ -204,6 +275,24 @@ export function insertAdhocFollowThrough(
     throw new Error("This note's layout changed. Open it before saving follow-through.");
   }
   return { body: next, start, end };
+}
+
+/** Inserts an ad-hoc recording's follow-through section directly into a dedicated meeting note. */
+export function insertAdhocFollowThroughInNote(
+  body: string,
+  timeLabel: string,
+  name: string,
+  date: string,
+  items: readonly FollowThroughItem[],
+  extras?: { summary?: string | null; transcript?: { label: string; href: string } | null },
+): { body: string; start: number; end: number } {
+  if (!isDate(date)) throw new Error("Invalid date");
+  const section = adhocFollowThroughSectionText(timeLabel, name, items, extras);
+  if (extractNoteEntityLinks(body).unclosedFence) throw new Error("This note has a code block that never closes. Open it before saving follow-through.");
+  const separator = !body || body.endsWith("\n\n") ? "" : body.endsWith("\n") ? "\n" : "\n\n";
+  const at = body.length;
+  const chunk = `${separator}${section}\n`;
+  return { body: `${body}${chunk}`, start: at, end: at + chunk.length };
 }
 
 /** A local date as `YYYY-MM-DD`. */

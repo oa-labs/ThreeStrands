@@ -77,22 +77,31 @@ describe("settings section navigation", () => {
     }
   });
 
-  it("lists Meeting Recording only on a device that can record, and opens its help", async () => {
+  it("lists Meeting Recording sections only on a device that can record, and opens their help", async () => {
     const dialog = await openSettings();
-    expect(within(dialog).queryByRole("button", { name: "Meeting Recording" })).not.toBeInTheDocument();
+    for (const label of ["Recording & Menu Bar", "Transcription & Vocabulary", "Summaries"]) {
+      expect(within(dialog).queryByRole("button", { name: label })).not.toBeInTheDocument();
+    }
     cleanup();
     render(<RecordingContext.Provider value={recordingController()}><SettingsHarness initialSection="meetingRecording" /></RecordingContext.Provider>);
     const supported = await screen.findByRole("dialog", { name: "Settings" });
-    expect(within(supported).getByRole("button", { name: "Meeting Recording" })).toHaveAttribute("aria-current", "true");
-    expect(await within(supported).findByRole("region", { name: "Meeting Recording" })).toBeInTheDocument();
-    fireEvent.click(within(supported).getByRole("button", { name: "Help with Meeting Recording" }));
+    expect(within(supported).getByText("Meeting Recording")).toBeInTheDocument();
+    expect(within(supported).getByRole("button", { name: "Recording & Menu Bar" })).toHaveAttribute("aria-current", "true");
+    expect(await within(supported).findByRole("region", { name: "Recording & Menu Bar" })).toBeInTheDocument();
+    fireEvent.click(within(supported).getByRole("button", { name: "Help with Recording & Menu Bar" }));
     expect(openUrl).toHaveBeenLastCalledWith("https://www.threestrands.app/docs/meeting-recording.html");
+
+    fireEvent.click(within(supported).getByRole("button", { name: "Transcription & Vocabulary" }));
+    expect(await within(supported).findByRole("region", { name: "Transcription & Vocabulary" })).toBeInTheDocument();
+
+    fireEvent.click(within(supported).getByRole("button", { name: "Summaries" }));
+    expect(await within(supported).findByRole("region", { name: "Summaries" })).toBeInTheDocument();
   });
 
   it("falls back to the first page when a saved Meeting Recording page is not available", async () => {
-    render(<SettingsHarness initialSection="meetingRecording" />);
+    render(<SettingsHarness initialSection="meetingSummaries" />);
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
-    expect(within(dialog).queryByRole("region", { name: "Meeting Recording" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("region", { name: "Summaries" })).not.toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Appearance", level: 2 })).toBeInTheDocument();
   });
 

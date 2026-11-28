@@ -87,72 +87,92 @@ Settled by the developer on 2026-11-27:
    is deferred until needed.
 9. **Custom transcription vocabulary is a user-reviewed list**, optionally
    seeded via a **Suggest from Sent Mail** action that scans local Sent mail
-   for recurring domain terms, acronyms, and proper nouns. Users review and
-   approve every term before it is saved or sent to local engines or Stage 8
-   cloud biasing.
+   for recurring domain terms, acronyms, and proper nouns while excluding the
+   user's own identity names, configured signatures, and repeated trailing
+   boilerplate. Suggestions start unselected so the user explicitly chooses
+   which terms to save.
 
 ## User experience
 
 ### Settings → Meeting Recording
 
-A new settings page, off by default:
+A dedicated **Meeting Recording** settings group split into three focused pages,
+off by default:
 
-- **Record Meetings**: the main switch. Turning it on asks for microphone
-  permission and system audio permission (on macOS) at that moment, not at
-  first launch.
-- **Microphone**: defaults to **System Default**, with an optional explicit
-  input-device override and the currently active mic shown. This prevents
-  macOS from jumping to Continuity Camera or virtual devices, and avoids forcing
-  Bluetooth headsets into low-quality HFP mode when the call app uses another
-  mic.
-- **Transcription Engine / Model**: on macOS 26+, **Apple On-Device**
-  (`SpeechAnalyzer`, default, zero download) alongside Whisper **Fast**
-  (`small.en` q5_1, 190 MB, English only) and **Accurate** (`large-v3-turbo`
-  q5_0, 574 MB, multilingual). On macOS 14.4–15 (and Windows/Linux), Whisper
-  **Fast** and **Accurate**. Downloaded Whisper models fetch only when the
-  user presses **Download**, with progress, and are checked against a SHA-256
-  hash pinned in the policy module. The spike recorded the hashes.
-- **Transcription Language**: **Auto** (default; detects the language once over
-  the first ~30 s of speech per recording and pins it for the rest of the job)
-  or an explicit language choice. Whisper **Fast** (`small.en`) is
-  English-only.
-- **Custom Vocabulary**: a user-reviewed list of domain terms, acronyms, and
-  proper nouns (capped in `policy.rs`) used to bias Whisper (`initial_prompt`,
-  after the event title and attendees) and Stage 8 cloud transcription
-  (`phraseList` / `keyterms`). Includes a **Suggest from Sent Mail** button
-  that scans local Sent mail and opens a selectable list of suggested terms —
-  never adding or uploading unreviewed email text automatically.
-- **Cloud Transcription** (Stage 8, off by default): an opt-in switch behind an
-  explicit privacy disclosure stating that meeting audio and the user's
-  reviewed custom vocabulary are sent to the chosen provider. Offers a
-  provider/model selector featuring **`microsoft/mai-transcribe-2` via
-  OpenRouter** (reusing the configured OpenRouter API key) alongside configured
-  OpenAI-compatible `/audio/transcriptions` providers, an optional **Diarize
-  Remote Speakers** toggle (`system` track only), and usage counted against the
-  daily AI spending limit.
-- **Transcribe During Meetings**: on by default. Transcribes finished minutes
-  in batches while the meeting is recorded, so the transcript is ready soon
-  after Stop. Off, nothing is transcribed until Stop, which keeps the Mac's
-  memory and processor free during the meeting. See
-  [Memory](#memory-during-long-meetings).
-- **Keep Audio**: 7 days (default), 30 days, Until Deleted, or Until Transcribed.
-- **Offer to Record Meetings**: on by default. Shows the upcoming meeting in the
-  tray menu, and adds a tray badge when a known conferencing app (or a browser
-  during a scheduled calendar meeting) starts using the microphone, covering
-  both scheduled meetings and unscheduled calls.
-- **Remind Me to Tell Participants**: on by default. Shows a notice at every
-  start.
-- **Summarize with AI**: off by default. It uses the user's AI provider and adds
-  `meetingRecap` to the per-feature model choice. When it is off, a recording
-  ends at the transcript, and the user writes the follow-through themselves.
-- **Recordings on This Mac**: used disk space, with **Delete All Audio** and
-  **Delete All Recordings**. Both ask for confirmation first.
+1. **Recording & Menu Bar**:
+   - **Record Meetings**: the main switch. Turning it on asks for microphone
+     permission and system audio permission (on macOS) at that moment, not at
+     first launch.
+   - **Microphone**: defaults to **System Default**, with an optional explicit
+     input-device override and the currently active mic shown. This prevents
+     macOS from jumping to Continuity Camera or virtual devices, and avoids
+     forcing Bluetooth headsets into low-quality HFP mode when the call app uses
+     another mic.
+   - **Keep Audio**: 7 days (default), 30 days, Until Deleted, or Until
+     Transcribed.
+   - **Show Upcoming Meetings in Menu Bar** & **Menu Bar Countdown**: lists
+     today's remaining meetings (or tomorrow's first) in the menu bar with
+     one-click join and optional countdown text beside the icon.
+   - **Offer to Record Meetings**: on by default. Shows the upcoming meeting in
+     the tray menu, and adds a tray badge when a known conferencing app (or a
+     browser during a scheduled calendar meeting) starts using the microphone,
+     covering both scheduled meetings and unscheduled calls.
+   - **Remind Me to Tell Participants**: on by default. Shows a notice at every
+     start.
+   - **Recordings on This Mac**: used disk space, with **Delete All Audio** and
+     **Delete All Recordings**. Both ask for confirmation first.
+
+2. **Transcription & Vocabulary**:
+   - **Transcription Model**: on macOS 26+, **Apple On-Device**
+     (`SpeechAnalyzer`, default, zero download) alongside Whisper **Fast**
+     (`small.en` q5_1, 190 MB, English only) and **Accurate** (`large-v3-turbo`
+     q5_0, 574 MB, multilingual). On macOS 14.4–15 (and Windows/Linux), Whisper
+     **Fast** and **Accurate**. Downloaded Whisper models fetch only when the
+     user presses **Download**, with progress, and are checked against a SHA-256
+     hash pinned in the policy module. The spike recorded the hashes.
+   - **Transcription Language**: **Auto** (default; detects the language once
+     over the first ~30 s of speech per recording and pins it for the rest of
+     the job) or an explicit language choice. Whisper **Fast** (`small.en`) is
+     English-only.
+   - **Transcribe During Meetings**: on by default. Transcribes finished minutes
+     in batches while the meeting is recorded, so the transcript is ready soon
+     after Stop. Off, nothing is transcribed until Stop, which keeps the Mac's
+     memory and processor free during the meeting. See
+     [Memory](#memory-during-long-meetings).
+   - **Custom Vocabulary**: a user-reviewed list of domain terms, acronyms, and
+     proper nouns (capped in `policy.rs`) used to bias Whisper
+     (`initial_prompt`, after the event title and attendees) and Stage 8 cloud
+     transcription (`phraseList` / `keyterms`). Includes a **Suggest from Sent
+     Mail** button that scans local Sent mail (excluding the user's own
+     names/signatures and repeated trailing boilerplate) and opens a list of
+     suggested terms defaulting to **unselected** — never adding or uploading
+     unreviewed email text automatically.
+   - **Cloud Transcription** (Stage 8, off by default): an opt-in switch behind
+     an explicit privacy disclosure stating that meeting audio and the user's
+     reviewed custom vocabulary are sent to the chosen provider. Offers a
+     provider/model selector featuring **`microsoft/mai-transcribe-2` via
+     OpenRouter** (reusing the configured OpenRouter API key) alongside
+     configured OpenAI-compatible `/audio/transcriptions` providers, an
+     optional **Diarize Remote Speakers** toggle (`system` track only), and
+     usage counted against the daily AI spending limit.
+
+3. **Summaries**:
+   - **Summarize with AI**: off by default. It uses the user's AI provider and
+     adds `meetingRecap` to the per-feature model choice. When it is off, a
+     recording ends at the transcript, and the user writes the follow-through
+     themselves.
+   - **Summary Instructions**: editable, cross-device synced instructions (with
+     starter presets like *Executive Brief*, *Detailed Discussion*, and *1:1 &
+     Coaching*) that customize what AI meeting summaries emphasize and how they
+     are organized without relaxing transcript grounding or untrusted-data
+     rules.
 
 ### The tray icon and menu
 
-The icon is a monochrome template image while idle. While recording it shows a
-filled variant, and while transcribing a third variant. Menu items are
-title-style. The state lines are disabled items:
+The icon is a monochrome template image depicting the **three wavy strands**
+from the ThreeStrands mark (with a top-right badge dot when offering to record,
+a bottom-right dot while recording, and three progress dots underneath while
+transcribing). Menu items are title-style. The state lines are disabled items:
 
 ```
 Record “Weekly Sync”            ← only when a meeting is under way or starts within 10 min
@@ -216,12 +236,15 @@ When transcription finishes, the tray offers **Review “…”**, and the Recor
 row shows **Review**. Review opens the existing **Review Follow-through** dialog
 for the occurrence with:
 
-- **Summary**: a textarea filled from the AI recap, with length scaled to
-  meeting duration up to the 400-word cap. With AI off, it starts empty.
-  **Include My Notes** can be toggled directly in the dialog (off by default)
-  with one-click re-summarizing without re-transcribing. It is saved as a
-  nested `Summary:` item under the follow-through line, as ordinary Markdown
-  that earlier versions read as plain text.
+- **Summary**: a textarea filled from the AI recap, structured as a brief
+  overview followed by bold topic headings and concise bullet takeaways (scaled
+  to meeting duration up to the 400-word cap), guided by the user's synced
+  **Summary Instructions**. With AI off, it starts empty. **Include My Notes**
+  can be toggled directly in the dialog (off by default) with one-click
+  re-summarizing without re-transcribing. Single-line summaries save as a
+  nested `Summary:` item; structured multi-line summaries preserve their
+  `**Overview:**`, `**Topic**`, and nested bullet layout as ordinary Markdown
+  inside the follow-through section.
 - **Suggested items**: decisions, tasks, and open questions from the recap. Each
   is marked **Suggested** and shows its evidence: the timestamp, the speaker
   (You or Others — mapped deterministically to the other attendee in a 1:1
@@ -234,16 +257,20 @@ for the occurrence with:
 - **Attach Transcript**: a checkbox, off by default and remembered per device.
   When it is checked, saving attaches `Transcript – <meeting> – <date>.md` to
   the destination note and adds a link to it in the section.
-- **Destination**: the same occurrence-linked note picker. If no note exists, the
-  dialog runs the existing **Add Note** flow first, as it does today.
+- **Destination**: the same occurrence-linked note picker. When no note exists
+  yet for the meeting, **Save To** defaults to creating a dedicated backlinked
+  meeting note (`[[Meeting Title]]` linked under `## Meetings` in that day's
+  daily note) in one step, with an option to save directly to the daily note or
+  run the manual **Add Note** flow first.
 
 Saving reuses the existing follow-through save: version-checked, transactional,
 receipted, and undoable. Failure keeps both the proposal and the user's edits.
 
 **Ad-hoc recordings** have no event. Their review asks which of today's meetings
-the recording belongs to, or **None**. With **None**, the section goes under
-`## Meetings` in that day's daily note, with a plain time label and the title
-the user typed.
+the recording belongs to, or **None**. With **None**, **Save To** defaults to
+creating a dedicated backlinked meeting note linked under `## Meetings` in that
+day's daily note (`- <time> for [[Title]]`), with an option to save directly
+under `## Meetings` in the daily note instead.
 
 ### The transcript view
 
@@ -378,11 +405,12 @@ Processing:
     out-of-vocabulary terms — ALL-CAPS acronyms (2–8 chars), mixed-case /
     CamelCase identifiers, capitalized proper-noun phrases, and words absent
     from a small embedded common-word stoplist — requires appearance across
-    **≥ 3 distinct sent threads**, and rejects tokens containing digits,
-    hex/base64-like strings, URLs, email addresses, or excessive length so
-    one-off typos, codes, and secrets do not surface. Suggestions are ranked by
-    distinct-thread frequency, capped, and saved only when explicitly selected
-    by the user.
+    **≥ 3 distinct sent threads**, excludes the user's own identity names,
+    configured signatures, sign-off blocks, and repeated trailing boilerplate,
+    and rejects tokens containing digits, hex/base64-like strings, URLs, email
+    addresses, or excessive length so one-off typos, codes, and secrets do not
+    surface. Suggestions are ranked by distinct-thread frequency, capped, start
+    **unselected**, and are saved only when explicitly chosen by the user.
   - **Per-engine caps** (in `policy.rs`): Whisper's `initial_prompt` stays
     capped at ~50–80 tokens (meeting title/attendees first, then top custom
     terms), applied only to spans ≥ ~1 s (with exact prompt-echo filtering) to

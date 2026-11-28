@@ -15,6 +15,11 @@ import {
 } from "./userPreferences";
 import { CALENDAR_COLORS_KEY, resetCalendarColorsForTests } from "./calendarColors";
 import { DEFAULT_AVAILABILITY_PROFILES } from "./settings";
+import {
+  MAX_MEETING_SUMMARY_INSTRUCTIONS_CHARS,
+  MEETING_SUMMARY_INSTRUCTIONS_KEY,
+  resetMeetingSummaryInstructionsForTests,
+} from "./meetingSummaryInstructions";
 import { WRITING_PROFILE_LIMITS, WRITING_PROFILES_KEY, resetWritingProfilesForTests } from "./writingProfiles";
 // Shared with the native `transfer::tests::webview_preferences_fixture_matches_the_native_transfer_preferences`
 // test, which deserializes it into `TransferPreferences` (deny_unknown_fields).
@@ -37,6 +42,7 @@ describe("exportable preferences", () => {
     localStorage.clear();
     resetCalendarColorsForTests();
     resetWritingProfilesForTests();
+    resetMeetingSummaryInstructionsForTests();
   });
 
   it("round-trips the complete allowlisted settings shape", () => {
@@ -92,6 +98,7 @@ describe("exportable preferences", () => {
       },
       calendarColors: { "person@example.com": { primary: "teal", "team@example.com": "gray" } },
       writingProfiles: { "person@example.com": { aboutYou: "CEO of a consulting firm.\nI sell to CFOs.", reviewInstructions: "" } },
+      meetingSummaryInstructions: "Lead with key decisions.\nThen cover blockers.",
     };
 
     applyExportablePreferences(preferences);
@@ -247,6 +254,27 @@ describe("exportable preferences", () => {
       "person@example.com": { aboutYou: "é".repeat(limit), reviewInstructions: "Be direct." },
       "partial@example.com": { aboutYou: "Founder", reviewInstructions: "" },
     });
+  });
+
+  it("imports the preceding preference schema with empty meeting summary instructions and enforces the limit", () => {
+    const { meetingSummaryInstructions: _instructions, ...previous } = nativeContractFixture;
+    applyExportablePreferences(nativeContractFixture);
+    expect(readExportablePreferences().meetingSummaryInstructions).toBe(nativeContractFixture.meetingSummaryInstructions);
+    applyExportablePreferences(previous as ExportablePreferences);
+    expect(readExportablePreferences().meetingSummaryInstructions).toBe("");
+    expect(localStorage.getItem(MEETING_SUMMARY_INSTRUCTIONS_KEY)).toBeNull();
+
+    applyExportablePreferences({
+      ...nativeContractFixture,
+      meetingSummaryInstructions: "é".repeat(MAX_MEETING_SUMMARY_INSTRUCTIONS_CHARS),
+    });
+    expect(readExportablePreferences().meetingSummaryInstructions).toHaveLength(MAX_MEETING_SUMMARY_INSTRUCTIONS_CHARS);
+
+    applyExportablePreferences({
+      ...nativeContractFixture,
+      meetingSummaryInstructions: "é".repeat(MAX_MEETING_SUMMARY_INSTRUCTIONS_CHARS + 1),
+    });
+    expect(readExportablePreferences().meetingSummaryInstructions).toBe("");
   });
 
   it("keeps a custom provider and its endpoint through import and re-export", () => {

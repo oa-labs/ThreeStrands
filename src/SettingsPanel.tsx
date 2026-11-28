@@ -7,10 +7,12 @@ import {
   ArrowLeftRight,
   BellOff,
   CalendarDays,
+  Captions,
   Coffee,
   Check,
   Clock,
   Inbox,
+  ListChecks,
   Mail,
   Mic,
   Network,
@@ -38,7 +40,7 @@ import { DiagnosticsSettings } from "./DiagnosticsSettings";
 import { AppearanceSettings, StartupSettings, TodayBackdropSettings } from "./AppearanceSettings";
 import { ReadingSettings } from "./ReadingSettings";
 import { NotesSettings } from "./NotesSettings";
-import { MeetingRecordingSettings } from "./MeetingRecordingSettings";
+import { MeetingRecordingSettings, MeetingSummarySettings, MeetingTranscriptionSettings } from "./MeetingRecordingSettings";
 import { useRecording } from "./recordingContext";
 import { AccountsSettings } from "./AccountsSettings";
 import { AvailabilityProfilesSettings } from "./AvailabilitySettings";
@@ -65,7 +67,7 @@ import type {
 } from "./settingsPanelTypes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
-type SettingsGroup = "General" | "Accounts" | "Workflow" | "Availability" | "Integrations" | "System";
+type SettingsGroup = "General" | "Accounts" | "Workflow" | "Availability" | "Meeting Recording" | "Integrations" | "System";
 
 type SettingsSectionDefinition = {
   id: SettingsSection;
@@ -78,7 +80,7 @@ type SettingsSectionDefinition = {
   autosaves?: boolean;
 };
 
-const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Availability", "Integrations", "System"];
+const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Availability", "Meeting Recording", "Integrations", "System"];
 
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and what it opens to.", keywords: "theme light dark accent color font size family email zoom magnification minimum email font size accessibility start startup launch open today backdrop sky sun moon evening", icon: Palette, autosaves: true },
@@ -92,11 +94,13 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
   { id: "writingProfile", label: "Writing Profile", group: "Workflow", description: "Tell Draft Review who you are and how to review your email, for each account.", keywords: "about you review instructions draft review feedback ai sales tone role company", icon: UserPen, autosaves: true },
   { id: "notes", label: "Notes", group: "Workflow", description: "Choose how the note editor shows Markdown, and import or export your notes.", keywords: "notes markdown syntax editor formatting hide hybrid show wysiwyg import export folder files backup reflect obsidian sync space storage", icon: NotebookPen, autosaves: true },
-  { id: "meetingRecording", label: "Meeting Recording", group: "Workflow", description: "Record meetings on this Mac and choose how long the audio is kept.", keywords: "record recording meeting microphone audio system sound consent keep delete retention participants remind", icon: Mic, autosaves: true },
   // Profiles define hours; accounts and meeting types choose profiles.
   { id: "availability", label: "Profiles", group: "Availability", description: "Set when you’re willing to meet, with a profile for each part of your life.", keywords: "availability profiles available working hours timezone duration slot increment drive time buffer default meetings", icon: Clock, autosaves: true },
   { id: "availabilityAccounts", label: "Account Defaults", group: "Availability", description: "Choose the profile each email account normally uses.", keywords: "availability profile mail account usual hours default", icon: UserCog, autosaves: true },
   { id: "meetingTypes", label: "Meeting Types", group: "Availability", description: "Choose the profile lunch, coffee, and other invitations use.", keywords: "availability profile breakfast lunch dinner coffee invitation meeting type hours", icon: Coffee, autosaves: true },
+  { id: "meetingRecording", label: "Recording & Menu Bar", group: "Meeting Recording", description: "Record meetings on this Mac, choose your microphone, and manage menu bar controls.", keywords: "record recording meeting microphone audio system sound consent keep delete retention participants remind menu bar tray countdown offer", icon: Mic, autosaves: true },
+  { id: "meetingTranscription", label: "Transcription & Vocabulary", group: "Meeting Recording", description: "Choose on-device or cloud transcription, custom vocabulary, and Sent-mail suggestions.", keywords: "transcribe transcription model whisper apple speech language vocabulary custom suggest sent mail cloud openrouter mai diarize", icon: Captions, autosaves: true },
+  { id: "meetingSummaries", label: "Summaries", group: "Meeting Recording", description: "Turn on AI meeting recaps and customize summary instructions across devices.", keywords: "summarize summary recap ai instructions formatting topics bullets presets sync", icon: ListChecks, autosaves: true },
   { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions", icon: Sparkles },
   { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted", icon: Network },
   { id: "privacy", label: "Privacy", group: "System", description: "Control local retention and remote message content.", keywords: "storage retention remote images cache", icon: ShieldCheck, autosaves: true },
@@ -155,7 +159,9 @@ export function Settings({
   // entry must stay visible even before that toggle is on, or there would
   // be no way to reach the toggle at all.
   const recording = useRecording();
-  const availableSections = SETTINGS_SECTIONS.filter((item) => item.id !== "meetingRecording" || recording.supported);
+  const isRecordingSection = (id: SettingsSection) =>
+    id === "meetingRecording" || id === "meetingTranscription" || id === "meetingSummaries";
+  const availableSections = SETTINGS_SECTIONS.filter((item) => !isRecordingSection(item.id) || recording.supported);
   const normalizedSettingsQuery = settingsQuery.trim().toLocaleLowerCase();
   const visibleSections = availableSections.filter((item) =>
     !normalizedSettingsQuery
@@ -413,6 +419,14 @@ export function Settings({
           ) : null}
           {section === "notes" ? <NotesSettings /> : null}
           {section === "meetingRecording" && recording.capabilities?.supported ? <MeetingRecordingSettings capabilities={recording.capabilities} /> : null}
+          {section === "meetingTranscription" && recording.capabilities?.supported ? <MeetingTranscriptionSettings capabilities={recording.capabilities} /> : null}
+          {section === "meetingSummaries" && recording.capabilities?.supported ? (
+            <MeetingSummarySettings
+              aiConfigured={readAiProvider() !== "none"}
+              onOpenAiSettings={() => onSectionChange("ai")}
+              onChange={queuePortablePreferences}
+            />
+          ) : null}
           {section === "ai" ? <AiProviderSettings onChange={() => { onAiConfigChange(); queuePortablePreferences(); }} /> : null}
           {section === "privacy" ? (
             <PrivacySettings

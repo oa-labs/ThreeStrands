@@ -664,11 +664,11 @@ impl Database {
     }
 
     /// Most recent sent messages (excluding received mail) for local custom
-    /// vocabulary suggestion extraction, returning `(thread_id, text)`.
+    /// vocabulary suggestion extraction, returning `(thread_id, subject, body)`.
     pub fn sent_message_texts_for_vocabulary(
         &self,
         limit: usize,
-    ) -> DbResult<Vec<(String, String)>> {
+    ) -> DbResult<Vec<(String, String, String)>> {
         self.with_connection(|c| {
             let mut statement = c.prepare(
                 "SELECT m.thread_id, t.subject, m.body_text, m.body_text_z
@@ -689,7 +689,7 @@ impl Database {
                 let thread_id: String = row.get(0)?;
                 let subject: String = row.get(1)?;
                 let body = super::messages::resolve_body(2, row.get(2)?, row.get(3)?)?;
-                Ok((thread_id, format!("{subject}\n{body}")))
+                Ok((thread_id, subject, body))
             })?;
             rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
         })

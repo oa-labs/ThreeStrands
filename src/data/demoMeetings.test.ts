@@ -115,4 +115,28 @@ describe("demo meeting preparation", () => {
     expect(await meetings.meetingReadiness(atLimit)).toHaveLength(MAX_READINESS_EVENTS);
     await expect(meetings.meetingReadiness([...atLimit, occurrence("more")])).rejects.toThrow();
   });
+
+  it("saves an ad-hoc follow-through into a dedicated backlinked note with daily-note entry and undoes both", async () => {
+    const demoNotes = createDemoNotes({ threads: () => [], tasks: () => [], events: () => [] }, []);
+    const meetings = createDemoMeetings({
+      events: () => [], threads: () => [], tasks: () => [], mailAccounts: () => [ME], ownAddresses: () => [ME],
+      threadForMessage: () => null, now: () => new Date("2026-11-16T12:00:00Z"), notes: demoNotes,
+    });
+    const saved = await meetings.saveAdhocFollowThrough("2026-11-16", "2:15 PM", null, "op-adhoc", {
+      date: "2026-11-16",
+      meeting: "Design Review",
+      summary: "Aligned on tokens.",
+      items: [{ kind: "decision", text: "Ship tokens" }],
+    }, true);
+    expect(saved.note.title).toBe("Design Review");
+    expect(saved.note.dailyDate).toBeNull();
+    expect(saved.note.body).toContain("Summary: Aligned on tokens.");
+    const daily = await demoNotes.getDailyNote("2026-11-16");
+    expect(daily?.body).toContain("## Meetings");
+    expect(daily?.body).toContain("- 2:15 PM for [[Design Review]]");
+
+    const undone = await meetings.undoMeetingFollowThrough("op-adhoc");
+    expect(undone.note.trashed).toBe(true);
+    expect((await demoNotes.getDailyNote("2026-11-16"))?.body).not.toContain("[[Design Review]]");
+  });
 });

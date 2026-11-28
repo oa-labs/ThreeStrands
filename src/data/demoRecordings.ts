@@ -247,6 +247,7 @@ export function createDemoRecordings(options: {
       _reasoning?: string,
       includeMyNotes = false,
       range: RecapTimeRange | null = null,
+      _summaryInstructions: string | null = null,
     ): Promise<MeetingRecap> {
       const recording = recordings.find((candidate) => candidate.id === id);
       if (!recording) throw new Error("Recording not found.");
@@ -265,7 +266,7 @@ export function createDemoRecordings(options: {
         return [{ segmentId: index, startMs: line.startMs, speaker: line.speaker, speakerLabel, text: line.text }];
       };
       const recap: MeetingRecap = {
-        summary: `Reviewed status of ${recording.title}, confirmed release readiness, and aligned on shipping Thursday with the announcement Friday.`,
+        summary: `Reviewed status of ${recording.title} and aligned on Thursday's launch timeline.\n\n**Launch Readiness**\n- Confirmed migration dry run completes today\n- Agreed to publish the announcement Friday`,
         decisions: lines.length
           ? [{ text: "Confirm Thursday launch and send the announcement tomorrow.", evidence: evidenceFor(lines.length - 1) }]
           : [],

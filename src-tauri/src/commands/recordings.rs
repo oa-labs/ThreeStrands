@@ -345,6 +345,7 @@ pub(crate) async fn recording_review_context(
                 own_addresses: Vec::new(),
                 segments,
                 user_notes: None,
+                summary_instructions: None,
                 range: None,
             };
             ai::meeting_recap::build_recap_payload(&probe).is_err()
@@ -381,6 +382,7 @@ pub(crate) async fn summarize_recording(
     reasoning: Option<ai::Reasoning>,
     include_my_notes: Option<bool>,
     range: Option<ai::RecapTimeRange>,
+    summary_instructions: Option<String>,
     control: Option<ai::requests::RequestControl>,
     state: State<'_, AppState>,
 ) -> AppResult<ai::MeetingRecap> {
@@ -444,6 +446,7 @@ pub(crate) async fn summarize_recording(
             own_addresses,
             segments,
             user_notes,
+            summary_instructions,
             range,
         })
     })

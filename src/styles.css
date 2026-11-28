@@ -3173,6 +3173,7 @@ input.sync-join-code[aria-invalid="true"] { height: var(--control-h); border-col
 .recording-vocab-suggestion-list { display: grid; gap: var(--space-1); max-height: 200px; overflow-y: auto; }
 .recording-vocab-suggestion { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--text-body); color: var(--text); }
 .recording-vocab-suggestion > span:first-of-type { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.recording-summary-presets { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1-5); margin: var(--space-1) 0; }
 .transcript-modal { width: min(var(--dialog-w-lg), calc(100vw - var(--dialog-edge))); display: flex; flex-direction: column; }
 .transcript-modal .modal-form { min-height: 0; grid-template-rows: minmax(0, 1fr) auto; }
 .transcript-lines { margin: 0; padding: 0; list-style: none; min-height: 0; max-height: 50vh; overflow-y: auto; display: grid; gap: var(--space-2); font-size: var(--text-body); }
