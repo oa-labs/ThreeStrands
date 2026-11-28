@@ -1523,6 +1523,8 @@ mod tests {
                 transcribe_during_meetings: false,
                 keep_audio: KeepAudio::UntilDeleted,
                 offer_to_record: false,
+                show_upcoming_meetings_in_tray: false,
+                tray_next_meeting_title: crate::recording::settings::TrayNextMeetingTitle::TimeOnly,
                 remind_to_tell: false,
                 summarize_with_ai: true,
                 include_my_notes: true,
@@ -1546,7 +1548,9 @@ mod tests {
         assert!(keys.iter().any(|key| *key == "transcribeDuringMeetings"));
         assert!(keys.iter().any(|key| *key == "transcriptionEngine"));
         assert!(keys.iter().any(|key| *key == "cloudTranscriptionEnabled"));
-        assert_eq!(keys.len(), 21);
+        assert!(keys.iter().any(|key| *key == "showUpcomingMeetingsInTray"));
+        assert!(keys.iter().any(|key| *key == "trayNextMeetingTitle"));
+        assert_eq!(keys.len(), 23);
         for key in keys {
             assert!(!after.contains(key.as_str()), "{key}");
         }

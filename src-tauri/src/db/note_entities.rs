@@ -578,6 +578,63 @@ pub struct OfferedMeeting {
     pub end: std::time::SystemTime,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayMeeting {
+    pub event_ref: NoteReference,
+    pub title: String,
+    pub start: std::time::SystemTime,
+    pub end: std::time::SystemTime,
+    pub attendees: Vec<String>,
+    pub join_url: Option<String>,
+    pub join_provider: Option<String>,
+    pub is_tomorrow: bool,
+}
+
+fn is_non_meeting_calendar(calendar_id: &str) -> bool {
+    let lower = calendar_id.to_ascii_lowercase();
+    lower == "tasks"
+        || lower.ends_with("#tasks@group.v.calendar.google.com")
+        || lower.ends_with("#contacts@group.v.calendar.google.com")
+        || lower.ends_with("#holiday@group.v.calendar.google.com")
+}
+
+fn is_ordinary_event_type(event: &crate::models::ScheduleEvent) -> bool {
+    event
+        .event_type
+        .as_deref()
+        .is_none_or(|kind| kind.is_empty() || kind == "default")
+}
+
+fn is_meeting_event(
+    event: &crate::models::ScheduleEvent,
+    join_link: Option<&crate::recording::meeting_links::JoinLink>,
+) -> bool {
+    !event.all_day
+        && event.response_status.as_deref() != Some("declined")
+        && is_ordinary_event_type(event)
+        && event.working_location_type.is_none()
+        && event.source_task_id.is_none()
+        && !is_non_meeting_calendar(&event.calendar_id)
+        && (!event.attendees.is_empty() || join_link.is_some())
+}
+
+fn event_reference_for(event: &crate::models::ScheduleEvent) -> NoteReference {
+    NoteReference {
+        version: 1,
+        kind: "event".into(),
+        series: event
+            .series_id
+            .as_ref()
+            .filter(|series| *series != &event.id)
+            .cloned(),
+        id: event.id.clone(),
+        account: Some(event.account_id.clone()),
+        calendar: Some(event.calendar_id.clone()),
+        note: None,
+        contact: None,
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteLinkChoice {
@@ -665,8 +722,10 @@ impl Database {
             };
             if event.all_day
                 || event.response_status.as_deref() == Some("declined")
-                || event.event_type.as_deref() == Some("workingLocation")
+                || !is_ordinary_event_type(&event)
                 || event.working_location_type.is_some()
+                || event.source_task_id.is_some()
+                || is_non_meeting_calendar(&event.calendar_id)
             {
                 continue;
             }
@@ -682,16 +741,7 @@ impl Database {
                 continue;
             }
             let candidate = OfferedMeeting {
-                event_ref: NoteReference {
-                    version: 1,
-                    kind: "event".into(),
-                    series: event.series_id.filter(|series| series != &event.id),
-                    id: event.id,
-                    account: Some(event.account_id),
-                    calendar: Some(event.calendar_id),
-                    note: None,
-                    contact: None,
-                },
+                event_ref: event_reference_for(&event),
                 title: event.title,
                 attendees: event.attendees,
                 start,
@@ -728,6 +778,91 @@ impl Database {
             }
         }
         Ok(best)
+    }
+
+    /// Remaining timed, undeclined meetings for today (capped at `max_today`),
+    /// or tomorrow's first meeting when today has none left. Excludes all-day
+    /// events, declined invites, focus/OOO/working-location blocks, tasks, and
+    /// solo events without attendees or a conferencing link.
+    pub fn upcoming_tray_meetings<Tz: chrono::TimeZone>(
+        &self,
+        now: chrono::DateTime<Tz>,
+        max_today: usize,
+    ) -> DbResult<Vec<TrayMeeting>> {
+        let bodies = self.with_connection(|c| {
+            let mut q = c.prepare(
+                "SELECT body FROM note_event_cache WHERE EXISTS(SELECT 1 FROM calendar_accounts WHERE email=account AND status='connected')",
+            )?;
+            let rows = q
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })?;
+        let now_sys = std::time::SystemTime::from(now.with_timezone(&chrono::Utc));
+        let today = now.date_naive();
+        let tomorrow = today.succ_opt();
+        let mut today_meetings = Vec::new();
+        let mut tomorrow_meetings = Vec::new();
+        for body in bodies {
+            let Ok(event) = serde_json::from_str::<crate::models::ScheduleEvent>(&body) else {
+                continue;
+            };
+            let join_link = crate::recording::meeting_links::extract_join_link(
+                event.conference_url.as_deref(),
+                event.location.as_deref(),
+                event.description.as_deref(),
+            );
+            if !is_meeting_event(&event, join_link.as_ref()) {
+                continue;
+            }
+            let (Ok(start_dt), Ok(end_dt)) = (
+                chrono::DateTime::parse_from_rfc3339(&event.start),
+                chrono::DateTime::parse_from_rfc3339(&event.end),
+            ) else {
+                continue;
+            };
+            let start = std::time::SystemTime::from(start_dt);
+            let end = std::time::SystemTime::from(end_dt);
+            if end <= now_sys {
+                continue;
+            }
+            let start_local_date = start_dt.with_timezone(&now.timezone()).date_naive();
+            let is_active = start <= now_sys;
+            let is_today = is_active || start_local_date == today;
+            let is_tomorrow = !is_today && Some(start_local_date) == tomorrow;
+            if !is_today && !is_tomorrow {
+                continue;
+            }
+            let (join_url, join_provider) = match join_link {
+                Some(link) => (Some(link.url), link.provider.map(str::to_string)),
+                None => (None, None),
+            };
+            let meeting = TrayMeeting {
+                event_ref: event_reference_for(&event),
+                title: event.title,
+                start,
+                end,
+                attendees: event.attendees,
+                join_url,
+                join_provider,
+                is_tomorrow,
+            };
+            if is_today {
+                today_meetings.push(meeting);
+            } else {
+                tomorrow_meetings.push(meeting);
+            }
+        }
+        let cmp = |a: &TrayMeeting, b: &TrayMeeting| {
+            (a.start, a.end, &a.event_ref.id).cmp(&(b.start, b.end, &b.event_ref.id))
+        };
+        today_meetings.sort_by(cmp);
+        tomorrow_meetings.sort_by(cmp);
+        if !today_meetings.is_empty() {
+            today_meetings.truncate(max_today);
+            return Ok(today_meetings);
+        }
+        Ok(tomorrow_meetings.into_iter().next().into_iter().collect())
     }
     pub fn note_link_choices(&self, kind: &str, query: &str) -> DbResult<Vec<NoteLinkChoice>> {
         // Reuse Contacts' saved and mail-derived profiles outside the connection lock.

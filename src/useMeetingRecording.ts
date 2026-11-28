@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readAiProvider, readAiRequestConfig } from "./aiSettings";
 import { mailClient } from "./data/client";
-import type { MeetingRecording, RecordingCapabilities, RecordingSettings, RecordingStartRequest, RecordingStatus, TranscriptionModelStatus } from "./domain";
+import type { MeetingRecording, RecordingCapabilities, RecordingSettings, RecordingStartRequest, RecordingStatus, ScheduleEvent, TranscriptionModelStatus } from "./domain";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { adHocRecordingTitle, RECORDING_REMINDER, stopReasonNotice } from "./recordingPolicy";
 import { announceRecordingSettingsChanged, listenForRecordingEvent, listenForRecordingSettingsChanged } from "./recordingEvents";
@@ -60,10 +60,12 @@ export const UNSUPPORTED_RECORDING: RecordingController = {
  * state (from the native events and each command's answer), the first-use
  * consent, the reminder at each start, and the quit confirmation.
  */
-export function useMeetingRecording({ onNotice, onOpenSettings }: {
+export function useMeetingRecording({ onNotice, onOpenSettings, onOpenMeeting }: {
   onNotice(notice: Notice): void;
   /** Opens Settings → Meeting Recording. */
   onOpenSettings(): void;
+  /** Opens a meeting clicked in the menu bar that has no conferencing link. */
+  onOpenMeeting?(event?: ScheduleEvent): void;
 }): RecordingController {
   const [capabilities, setCapabilities] = useState<RecordingCapabilities | null>(null);
   const [settings, setSettings] = useState<RecordingSettings | null>(null);
@@ -200,8 +202,8 @@ export function useMeetingRecording({ onNotice, onOpenSettings }: {
   }, [settings?.summarizeWithAi]);
 
   // The listeners call through a ref so they are set up once, not on each render.
-  const latest = useRef({ applyStatus, start, startAdHoc, onOpenSettings, openLatestReview, maybeAutoSummarize, onNotice });
-  latest.current = { applyStatus, start, startAdHoc, onOpenSettings, openLatestReview, maybeAutoSummarize, onNotice };
+  const latest = useRef({ applyStatus, start, startAdHoc, onOpenSettings, onOpenMeeting, openLatestReview, maybeAutoSummarize, onNotice });
+  latest.current = { applyStatus, start, startAdHoc, onOpenSettings, onOpenMeeting, openLatestReview, maybeAutoSummarize, onNotice };
   useEffect(() => {
     if (!supported) return;
     const stops = [
@@ -217,6 +219,7 @@ export function useMeetingRecording({ onNotice, onOpenSettings }: {
           else void latest.current.startAdHoc();
         }
         else if (payload.command === "openSettings") latest.current.onOpenSettings();
+        else if (payload.command === "openMeeting") latest.current.onOpenMeeting?.(payload.meetingEvent);
         else if (payload.command === "review") {
           if (payload.recordingId) {
             void mailClient.recordingReviewContext(payload.recordingId)

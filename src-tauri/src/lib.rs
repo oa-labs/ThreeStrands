@@ -1256,6 +1256,24 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     agent_runner.start();
     let recording = start_recording_runtime(&data_dir, &database, app.handle())?;
     let _recording_sleep_observer = recording::sleep::install(recording.clone());
+    let tray_auth = auth_config.clone();
+    let tray_database = database.clone();
+    let tray_recording = recording.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        loop {
+            let settings = tray_recording.settings();
+            if settings.show_upcoming_meetings_in_tray || settings.record_meetings {
+                commands::calendar::refresh_tray_schedule_cache(
+                    &tray_auth,
+                    &tray_database,
+                    &tray_recording,
+                )
+                .await;
+            }
+            tokio::time::sleep(recording::policy::TRAY_CALENDAR_REFRESH_INTERVAL).await;
+        }
+    });
     app.manage(AppState {
         agent_runner,
         database,

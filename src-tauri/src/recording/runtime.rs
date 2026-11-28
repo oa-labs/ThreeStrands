@@ -29,7 +29,7 @@ use super::transcribe::Transcriber;
 use super::vocabulary::{self, VocabularySuggestion};
 use super::{policy, DiskProbe, RecordingPhase, RecordingService, RecordingStatus};
 use crate::clock::Clock;
-use crate::db::note_entities::OfferedMeeting;
+use crate::db::note_entities::{OfferedMeeting, TrayMeeting};
 use crate::db::recordings::{MeetingRecording, RecordingState};
 use crate::db::Database;
 use crate::note_entities::NoteReference;
@@ -60,6 +60,8 @@ pub trait RecordingNotifier: Send + Sync {
         transcribing: Option<&TrayTranscription>,
         review: Option<&TrayReview>,
         offer: Option<&TrayOffer>,
+        upcoming: &[TrayMeeting],
+        now: SystemTime,
         supported: bool,
     );
     /// A transcription's whole percent changed.
@@ -148,6 +150,9 @@ pub struct RecordingRuntime {
     offers: Mutex<OfferEngine>,
     current_offer: Mutex<Option<TrayOffer>>,
     cached_meeting: Mutex<Option<(SystemTime, Option<OfferedMeeting>)>>,
+    cached_upcoming: Mutex<Option<(SystemTime, Vec<TrayMeeting>)>>,
+    last_upcoming_snapshot: Mutex<Vec<TrayMeeting>>,
+    last_tray_minute: Mutex<Option<i64>>,
     cached_event_end: Mutex<Option<(String, Option<SystemTime>)>>,
 }
 
@@ -240,6 +245,9 @@ impl RecordingRuntime {
             offers: Mutex::new(OfferEngine::default()),
             current_offer: Mutex::new(None),
             cached_meeting: Mutex::new(None),
+            cached_upcoming: Mutex::new(None),
+            last_upcoming_snapshot: Mutex::new(Vec::new()),
+            last_tray_minute: Mutex::new(None),
             cached_event_end: Mutex::new(None),
         }
     }
@@ -267,10 +275,17 @@ impl RecordingRuntime {
         lock(&self.settings).clone()
     }
 
-    /// Whether closing the window hides it (Record Meetings is on and this
-    /// platform has the tray to bring it back).
+    /// Whether closing the window hides it (Record Meetings is on or upcoming
+    /// meetings are shown in the tray, and this platform has the tray to bring
+    /// it back).
     pub fn hide_on_close(&self) -> bool {
-        self.supported && lock(&self.settings).record_meetings
+        if !self.supported {
+            return false;
+        }
+        let settings = self.settings();
+        settings.record_meetings
+            || (settings.show_upcoming_meetings_in_tray
+                && !lock(&self.last_upcoming_snapshot).is_empty())
     }
 
     pub fn is_active(&self) -> bool {
@@ -279,6 +294,38 @@ impl RecordingRuntime {
 
     pub(super) fn active_id(&self) -> Option<String> {
         lock(&self.service).status().recording_id
+    }
+
+    fn upcoming_meetings_for(
+        &self,
+        now: SystemTime,
+        settings: &RecordingSettings,
+    ) -> Vec<TrayMeeting> {
+        if !self.supported || !settings.show_upcoming_meetings_in_tray {
+            lock(&self.last_upcoming_snapshot).clear();
+            *lock(&self.cached_upcoming) = None;
+            return Vec::new();
+        }
+        if let Some((fetched_at, cached)) = lock(&self.cached_upcoming).as_ref() {
+            if now.duration_since(*fetched_at).unwrap_or_default()
+                < policy::OFFER_CALENDAR_CACHE_TTL
+            {
+                *lock(&self.last_upcoming_snapshot) = cached.clone();
+                return cached.clone();
+            }
+        }
+        let local_now = chrono::DateTime::<chrono::Local>::from(now);
+        let fresh = self
+            .database
+            .upcoming_tray_meetings(local_now, policy::MAX_TRAY_MEETINGS)
+            .unwrap_or_default();
+        *lock(&self.cached_upcoming) = Some((now, fresh.clone()));
+        *lock(&self.last_upcoming_snapshot) = fresh.clone();
+        fresh
+    }
+
+    pub fn upcoming_meeting(&self, index: usize) -> Option<TrayMeeting> {
+        lock(&self.last_upcoming_snapshot).get(index).cloned()
     }
 
     /// Sends what changed since the last publish. Returns true when it refreshed the tray.
@@ -298,14 +345,19 @@ impl RecordingRuntime {
         }
         let refreshed = changed || status.state != RecordingPhase::Idle;
         if refreshed {
+            let now = self.clock.now();
+            let settings = self.settings();
             let review = self.review_candidate();
             let offer = lock(&self.current_offer).clone();
+            let upcoming = self.upcoming_meetings_for(now, &settings);
             self.notifier.refresh_tray(
                 &status,
-                &self.settings(),
+                &settings,
                 self.scheduler.tray().as_ref(),
                 review.as_ref(),
                 offer.as_ref(),
+                &upcoming,
+                now,
                 self.supported,
             );
         }
@@ -334,7 +386,12 @@ impl RecordingRuntime {
     pub fn invalidate_calendar_offers(&self) {
         *lock(&self.cached_meeting) = None;
         *lock(&self.cached_event_end) = None;
-        if self.evaluate_offers() {
+        *lock(&self.cached_upcoming) = None;
+        let offer_changed = self.evaluate_offers();
+        let previous_upcoming = lock(&self.last_upcoming_snapshot).clone();
+        let upcoming = self.upcoming_meetings_for(self.clock.now(), &self.settings());
+        let upcoming_changed = upcoming != previous_upcoming;
+        if offer_changed || upcoming_changed {
             self.refresh_tray_now();
         }
     }
@@ -348,16 +405,21 @@ impl RecordingRuntime {
         self.refresh_tray_now();
     }
 
-    /// Refreshes the tray outside a publish (transcription progress or review change).
+    /// Refreshes the tray outside a publish (transcription progress, review, or upcoming meetings change).
     pub(super) fn refresh_tray_now(&self) {
+        let now = self.clock.now();
+        let settings = self.settings();
         let review = self.review_candidate();
         let offer = lock(&self.current_offer).clone();
+        let upcoming = self.upcoming_meetings_for(now, &settings);
         self.notifier.refresh_tray(
             &self.status(),
-            &self.settings(),
+            &settings,
             self.scheduler.tray().as_ref(),
             review.as_ref(),
             offer.as_ref(),
+            &upcoming,
+            now,
             self.supported,
         );
     }
@@ -536,16 +598,29 @@ impl RecordingRuntime {
         }
     }
 
-    /// The once-a-second work: capture health and limits, offers, then the daily
-    /// retention sweep.
+    /// The once-a-second work: capture health and limits, offers, upcoming
+    /// tray meetings countdown, then the daily retention sweep.
     pub fn tick(&self) {
         lock(&self.service).tick();
         let offer_changed = self.evaluate_offers();
+        let now = self.clock.now();
+        let settings = self.settings();
+        let previous_upcoming = lock(&self.last_upcoming_snapshot).clone();
+        let upcoming = self.upcoming_meetings_for(now, &settings);
+        let upcoming_changed = upcoming != previous_upcoming;
+        let now_minute = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+            / 60;
+        let prev_minute = lock(&self.last_tray_minute).replace(now_minute);
+        let minute_changed = prev_minute != Some(now_minute)
+            && settings.show_upcoming_meetings_in_tray
+            && !upcoming.is_empty();
         let refreshed = self.publish();
-        if !refreshed && offer_changed {
+        if !refreshed && (offer_changed || upcoming_changed || minute_changed) {
             self.refresh_tray_now();
         }
-        let now = self.clock.now();
         let due = lock(&self.last_sweep).is_none_or(|last| {
             now.duration_since(last).unwrap_or_default() >= policy::RETENTION_SWEEP_INTERVAL
         });
@@ -568,6 +643,7 @@ impl RecordingRuntime {
             .set_transcribe_during_meetings(settings.transcribe_during_meetings);
         *lock(&self.settings) = settings.clone();
         *lock(&self.cached_meeting) = None;
+        *lock(&self.cached_upcoming) = None;
         self.evaluate_offers();
         self.refresh_tray_now();
         if keep_changed {
@@ -1111,6 +1187,11 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     struct TestClock(Mutex<SystemTime>);
+    impl TestClock {
+        fn advance(&self, by: Duration) {
+            *self.0.lock().unwrap() += by;
+        }
+    }
     impl Clock for TestClock {
         fn now(&self) -> SystemTime {
             *self.0.lock().unwrap()
@@ -1150,6 +1231,8 @@ mod tests {
             _: Option<&TrayTranscription>,
             _: Option<&TrayReview>,
             _: Option<&TrayOffer>,
+            _: &[TrayMeeting],
+            _: SystemTime,
             _: bool,
         ) {
             self.0
@@ -1905,5 +1988,81 @@ mod tests {
             h.runtime.settings().custom_vocabulary.is_empty(),
             "suggestions must stay un-saved until the user selects them"
         );
+    }
+
+    #[test]
+    fn upcoming_meetings_keep_tray_hiding_refresh_on_invalidate_and_tick_per_minute() {
+        let h = Harness::new();
+        h.database
+            .adopt_calendar_account("you@example.com")
+            .unwrap();
+
+        // Recording is OFF, default settings have show_upcoming_meetings_in_tray = true.
+        assert!(!h.runtime.hide_on_close());
+        h.runtime.tick();
+        h.calls.take();
+
+        // Next tick within the same minute with no meetings does not refresh the tray.
+        h.clock.advance(Duration::from_secs(10));
+        h.runtime.tick();
+        assert!(h.calls.take().is_empty());
+
+        let event: crate::models::ScheduleEvent = serde_json::from_value(serde_json::json!({
+            "id": "m1",
+            "seriesId": null,
+            "accountId": "you@example.com",
+            "calendarId": "work",
+            "title": "Product Sync",
+            "start": "2026-11-27T10:20:00Z",
+            "end": "2026-11-27T10:50:00Z",
+            "allDay": false,
+            "attendees": ["ann@example.org"],
+            "attendeeResponses": {},
+            "responseStatus": "accepted",
+            "canRespond": true,
+            "canEdit": false,
+            "conferenceUrl": "https://meet.google.com/abc-defg-hij"
+        }))
+        .unwrap();
+        h.database
+            .cache_note_events("you@example.com", &[], "", "", &[event])
+            .unwrap();
+
+        // Invalidating calendar cache updates snapshot, hide_on_close, and refreshes tray immediately.
+        h.runtime.invalidate_calendar_offers();
+        assert_eq!(
+            h.calls.take(),
+            vec![Call::Tray(RecordingPhase::Idle, false)]
+        );
+        assert!(h.runtime.hide_on_close());
+        let first = h.runtime.upcoming_meeting(0).unwrap();
+        assert_eq!(first.title, "Product Sync");
+        assert_eq!(
+            first.join_url.as_deref(),
+            Some("https://meet.google.com/abc-defg-hij")
+        );
+
+        // Same minute: no redundant refresh.
+        h.clock.advance(Duration::from_secs(15));
+        h.runtime.tick();
+        assert!(h.calls.take().is_empty());
+
+        // Minute rollover: refreshes tray countdown.
+        h.clock.advance(Duration::from_secs(60));
+        h.runtime.tick();
+        assert_eq!(
+            h.calls.take(),
+            vec![Call::Tray(RecordingPhase::Idle, false)]
+        );
+
+        // Disabling show_upcoming_meetings_in_tray stops hide_on_close and clears snapshot.
+        h.runtime
+            .set_settings(RecordingSettings {
+                show_upcoming_meetings_in_tray: false,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!h.runtime.hide_on_close());
+        assert_eq!(h.runtime.upcoming_meeting(0), None);
     }
 }

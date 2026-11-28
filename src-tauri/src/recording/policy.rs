@@ -101,6 +101,14 @@ pub const OFFER_WINDOW: Duration = Duration::from_secs(10 * 60);
 pub const OFFER_MIC_DELAY: Duration = Duration::from_secs(3);
 /// How long an in-memory snapshot of the calendar cache is reused across ticks.
 pub const OFFER_CALENDAR_CACHE_TTL: Duration = Duration::from_secs(15);
+/// Maximum number of remaining meetings for today shown in the menu bar dropdown.
+pub const MAX_TRAY_MEETINGS: usize = 6;
+/// How far before a meeting starts its countdown may appear in the macOS menu bar.
+pub const TRAY_TITLE_WINDOW: Duration = Duration::from_secs(2 * 60 * 60);
+/// Maximum characters for a meeting title in the macOS menu bar text.
+pub const TRAY_TITLE_MAX_CHARS: usize = 22;
+/// How often background calendar sync refreshes cached events for the menu bar.
+pub const TRAY_CALENDAR_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 /// Silence across both tracks after a conferencing app releases the mic before
 /// showing a "Still recording — Stop?" nudge.
 pub const STILL_RECORDING_SILENCE: Duration = Duration::from_secs(3 * 60);

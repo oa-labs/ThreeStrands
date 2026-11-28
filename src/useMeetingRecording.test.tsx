@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
-import type { RecordingSettings, RecordingStatus } from "./domain";
+import type { RecordingSettings, RecordingStatus, ScheduleEvent } from "./domain";
 import type { RecordingEvents } from "./recordingEvents";
 import { RECORDING_REMINDER } from "./recordingPolicy";
 import { useMeetingRecording } from "./useMeetingRecording";
@@ -25,7 +25,7 @@ vi.mock("./recordingEvents", async (original) => ({
 const emit = <K extends keyof RecordingEvents>(name: K, payload: RecordingEvents[K]) => act(() => bus.emit(name, payload));
 
 const settings = (overrides: Partial<RecordingSettings> = {}): RecordingSettings => ({
-  recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast", transcriptionLanguage: null, transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
+  recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast", transcriptionLanguage: null, transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, showUpcomingMeetingsInTray: true, trayNextMeetingTitle: "titleAndTime", remindToTell: true,
   summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true,
   customVocabulary: [], cloudTranscriptionEnabled: false, cloudTranscriptionDisclosureAcknowledged: false, cloudTranscriptionDefault: false,
   cloudTranscriptionProvider: null, cloudTranscriptionModel: "microsoft/mai-transcribe-2", cloudTranscriptionEndpoint: null, cloudTranscriptionDiarize: true,
@@ -45,8 +45,9 @@ function setup(saved: RecordingSettings = settings(), supported = true) {
   const startRecording = vi.spyOn(mailClient, "startRecording").mockResolvedValue(status());
   const onNotice = vi.fn();
   const onOpenSettings = vi.fn();
-  const hook = renderHook(() => useMeetingRecording({ onNotice, onOpenSettings }));
-  return { ...hook, onNotice, onOpenSettings, setSettings, startRecording };
+  const onOpenMeeting = vi.fn();
+  const hook = renderHook(() => useMeetingRecording({ onNotice, onOpenSettings, onOpenMeeting }));
+  return { ...hook, onNotice, onOpenSettings, onOpenMeeting, setSettings, startRecording };
 }
 
 describe("useMeetingRecording", () => {
@@ -166,11 +167,37 @@ describe("useMeetingRecording", () => {
     expect(result.current.status.state).toBe("idle");
   });
 
-  it("handles menu bar commands: start runs the start flow, openSettings opens Settings", async () => {
-    const { result, startRecording, onOpenSettings } = setup(settings({ consentAcknowledged: false }));
+  it("handles menu bar commands: start runs the start flow, openSettings opens Settings, openMeeting opens the meeting", async () => {
+    const { result, startRecording, onOpenSettings, onOpenMeeting } = setup(settings({ consentAcknowledged: false }));
     await waitFor(() => expect(bus.handlers.get("recording-tray-command")?.size).toBe(1));
     emit("recording-tray-command", { command: "openSettings" });
     expect(onOpenSettings).toHaveBeenCalledOnce();
+    const meetingEvent: ScheduleEvent = {
+      id: "m1",
+      seriesId: null,
+      uid: null,
+      accountId: "me@example.com",
+      calendarId: "work",
+      title: "Coffee Chat",
+      start: "2026-11-27T15:30:00Z",
+      end: "2026-11-27T16:00:00Z",
+      allDay: false,
+      location: null,
+      description: null,
+      conferenceUrl: null,
+      attendees: ["ann@example.org"],
+      attendeeResponses: {},
+      responseStatus: "accepted",
+      canRespond: true,
+      canEdit: false,
+      sourceMessageId: null,
+      sourceTaskId: null,
+      sourcePlanKey: null,
+      eventType: null,
+      workingLocationType: null,
+    };
+    emit("recording-tray-command", { command: "openMeeting", meetingEvent });
+    expect(onOpenMeeting).toHaveBeenCalledWith(meetingEvent);
     emit("recording-tray-command", { command: "start" });
     await waitFor(() => expect(result.current.consentPending).toBe(true));
     expect(startRecording).not.toHaveBeenCalled();

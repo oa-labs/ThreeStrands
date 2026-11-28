@@ -757,36 +757,34 @@ pub(crate) async fn remove_synced_calendar_account(
     database_result(state.database.remove_calendar_account(&email))
 }
 
-#[tauri::command]
-pub(crate) async fn list_schedule_events(
-    time_min: String,
-    time_max: String,
-    time_zone: String,
-    state: State<'_, AppState>,
+async fn fetch_and_cache_schedule(
+    config: &auth::OAuthApp,
+    database: &Database,
+    recording: &crate::recording::runtime::RecordingRuntime,
+    time_min: &str,
+    time_max: &str,
+    time_zone: &str,
 ) -> AppResult<ScheduleResult> {
-    let config = state.auth_config.google()?;
-    let accounts = connected_calendar_accounts(config, &state.database)?;
+    let accounts = connected_calendar_accounts(config, database)?;
     if accounts.is_empty() {
         return Err("Connect a Google Calendar account in Settings first.".into());
     }
     let mut merged = Vec::new();
     let mut errors = Vec::new();
     for account in accounts {
-        let calendar_ids = match state.database.calendar_selection(&account.email)? {
+        let calendar_ids = match database.calendar_selection(&account.email)? {
             Some(selected) => selected,
-            None => {
-                match calendar_options_for_account(config, &state.database, &account.email).await {
-                    Ok(options) => options
-                        .into_iter()
-                        .filter(|option| option.selected)
-                        .map(|option| option.id)
-                        .collect(),
-                    Err(error) => {
-                        errors.push(format!("{}: {error}", account.email));
-                        continue;
-                    }
+            None => match calendar_options_for_account(config, database, &account.email).await {
+                Ok(options) => options
+                    .into_iter()
+                    .filter(|option| option.selected)
+                    .map(|option| option.id)
+                    .collect(),
+                Err(error) => {
+                    errors.push(format!("{}: {error}", account.email));
+                    continue;
                 }
-            }
+            },
         };
         if calendar_ids.is_empty() {
             continue;
@@ -795,21 +793,21 @@ pub(crate) async fn list_schedule_events(
             config.calendar_account(&account.email),
             &account.email,
             &calendar_ids,
-            &time_min,
-            &time_max,
-            &time_zone,
+            time_min,
+            time_max,
+            time_zone,
         )
         .await
         {
             Ok(mut events) => {
-                state.database.cache_note_events(
+                database.cache_note_events(
                     &account.email,
                     &calendar_ids,
-                    &time_min,
-                    &time_max,
+                    time_min,
+                    time_max,
                     &events,
                 )?;
-                state.recording.invalidate_calendar_offers();
+                recording.invalidate_calendar_offers();
                 merged.append(&mut events);
             }
             Err(error) => errors.push(format!("{}: {error}", account.email)),
@@ -820,6 +818,57 @@ pub(crate) async fn list_schedule_events(
         events: merged,
         errors,
     })
+}
+
+pub(crate) async fn refresh_tray_schedule_cache(
+    auth_config: &auth::AuthConfig,
+    database: &Database,
+    recording: &crate::recording::runtime::RecordingRuntime,
+) {
+    let Ok(config) = auth_config.google() else {
+        return;
+    };
+    let local_now = chrono::Local::now();
+    let Some(today_start) = local_now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|naive| naive.and_local_timezone(chrono::Local).earliest())
+    else {
+        return;
+    };
+    let tomorrow_end_date = local_now.date_naive() + chrono::Days::new(2);
+    let Some(tomorrow_end) = tomorrow_end_date
+        .and_hms_opt(0, 0, 0)
+        .and_then(|naive| naive.and_local_timezone(chrono::Local).earliest())
+    else {
+        return;
+    };
+    let time_min = today_start.to_rfc3339();
+    let time_max = tomorrow_end.to_rfc3339();
+    if let Err(error) =
+        fetch_and_cache_schedule(config, database, recording, &time_min, &time_max, "UTC").await
+    {
+        log::debug!(target: "recording", "tray calendar refresh skipped: {error}");
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn list_schedule_events(
+    time_min: String,
+    time_max: String,
+    time_zone: String,
+    state: State<'_, AppState>,
+) -> AppResult<ScheduleResult> {
+    let config = state.auth_config.google()?;
+    fetch_and_cache_schedule(
+        config,
+        &state.database,
+        &state.recording,
+        &time_min,
+        &time_max,
+        &time_zone,
+    )
+    .await
 }
 
 /// Meetings the user set up in `[created_min, created_max)`: events they

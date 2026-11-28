@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { readAiEndpoint, readAiProvider } from "./aiSettings";
 import { mailClient } from "./data/client";
-import type { AudioInputDevice, KeepAudio, RecordingCapabilities, RecordingSettings, RecordingsUsage, TranscriptionModelName, TranscriptionModelStatus, VocabularySuggestion } from "./domain";
+import type { AudioInputDevice, KeepAudio, RecordingCapabilities, RecordingSettings, RecordingsUsage, TranscriptionModelName, TranscriptionModelStatus, TrayNextMeetingTitle, VocabularySuggestion } from "./domain";
 import { errorMessage } from "./errors";
 import { InlineConfirm } from "./InlineConfirm";
 import { defaultCloudTranscriptionModel, isCloudTranscriptionProvider } from "./recordingPolicy";
@@ -14,6 +14,12 @@ const KEEP_AUDIO: { value: KeepAudio; label: string }[] = [
   { value: "days30", label: "30 Days" },
   { value: "untilDeleted", label: "Until Deleted" },
   { value: "untilTranscribed", label: "Until Transcribed" },
+];
+
+const TRAY_COUNTDOWN_OPTIONS: { value: TrayNextMeetingTitle; label: string }[] = [
+  { value: "titleAndTime", label: "Title & time" },
+  { value: "timeOnly", label: "Time only" },
+  { value: "off", label: "Icon only" },
 ];
 
 const MODELS: { value: TranscriptionModelName; label: string; note: string }[] = [
@@ -107,9 +113,10 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
   const [confirmingCloud, setConfirmingCloud] = useState(false);
   const models = useTranscriptionModels();
   const ids = {
-    record: useId(), microphone: useId(), keep: useId(), offer: useId(), remind: useId(),
-    summarize: useId(), usage: useId(), model: useId(), language: useId(), during: useId(),
-    vocab: useId(), cloud: useId(), cloudModel: useId(), cloudDiarize: useId(), cloudDefault: useId(),
+    record: useId(), microphone: useId(), keep: useId(), offer: useId(), upcomingTray: useId(),
+    trayTitle: useId(), remind: useId(), summarize: useId(), usage: useId(), model: useId(),
+    language: useId(), during: useId(), vocab: useId(), cloud: useId(), cloudModel: useId(),
+    cloudDiarize: useId(), cloudDefault: useId(),
   };
 
   const loadUsage = useCallback(async () => setUsage(await mailClient.recordingsUsage()), []);
@@ -468,6 +475,26 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
       </label>
       <p className="settings-hint" id={ids.during}>
         Transcribes in the background while a meeting is recorded, so the transcript is ready soon after you stop. Turn off to keep your Mac's memory and processor free during meetings.
+      </p>
+
+      <label className="settings-switch">
+        <span>Show Upcoming Meetings in Menu Bar</span>
+        <input type="checkbox" checked={settings?.showUpcomingMeetingsInTray ?? true} disabled={!settings} aria-describedby={ids.upcomingTray}
+          onChange={(event) => void change({ showUpcomingMeetingsInTray: event.target.checked })} />
+      </label>
+      <p className="settings-hint" id={ids.upcomingTray}>
+        Lists today&apos;s remaining meetings (or tomorrow&apos;s first when today is free) in the menu bar so you can click to join in one click, and keeps the menu bar icon visible while meetings remain.
+      </p>
+
+      <label className="settings-field settings-field-row">
+        <span>Menu Bar Countdown</span>
+        <select value={settings?.trayNextMeetingTitle ?? "titleAndTime"} disabled={!settings || !(settings.showUpcomingMeetingsInTray)} aria-describedby={ids.trayTitle}
+          onChange={(event) => void change({ trayNextMeetingTitle: event.target.value as TrayNextMeetingTitle })}>
+          {TRAY_COUNTDOWN_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </label>
+      <p className="settings-hint settings-field-detail" id={ids.trayTitle}>
+        Shows the next meeting beside the menu bar icon while it is live or starting within two hours.
       </p>
 
       <label className="settings-switch">

@@ -1872,6 +1872,7 @@ export type InboxAgentsSnapshot = {
 export type TranscriptionEngineChoice = "auto" | "speechAnalyzer" | "whisper";
 export type TranscriptionModelChoice = "fast" | "accurate";
 export type KeepAudio = "days7" | "days30" | "untilDeleted" | "untilTranscribed";
+export type TrayNextMeetingTitle = "titleAndTime" | "timeOnly" | "off";
 export type AudioInputDevice = { uid: string; name: string; isDefault: boolean; isBluetooth: boolean };
 export type RecordingSettings = {
   recordMeetings: boolean;
@@ -1883,6 +1884,8 @@ export type RecordingSettings = {
   transcribeDuringMeetings: boolean;
   keepAudio: KeepAudio;
   offerToRecord: boolean;
+  showUpcomingMeetingsInTray: boolean;
+  trayNextMeetingTitle: TrayNextMeetingTitle;
   remindToTell: boolean;
   summarizeWithAi: boolean;
   includeMyNotes: boolean;

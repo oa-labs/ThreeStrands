@@ -2781,3 +2781,195 @@ fn active_or_upcoming_meeting_and_cached_event_end_respect_lead_status_and_kind(
         ))
     );
 }
+
+#[test]
+fn upcoming_tray_meetings_filters_non_meetings_caps_today_and_falls_back_to_tomorrow() {
+    use chrono::{TimeZone, Utc};
+
+    let db = database();
+    db.adopt_calendar_account("you@example.com").unwrap();
+
+    let mut events: Vec<crate::models::ScheduleEvent> = Vec::new();
+    let push_event = |events: &mut Vec<crate::models::ScheduleEvent>,
+                      id: &str,
+                      cal: &str,
+                      title: &str,
+                      start: &str,
+                      end: &str,
+                      extra: serde_json::Value| {
+        let mut obj = serde_json::json!({
+            "id": id,
+            "seriesId": null,
+            "accountId": "you@example.com",
+            "calendarId": cal,
+            "title": title,
+            "start": start,
+            "end": end,
+            "allDay": false,
+            "attendees": ["ann@example.org"],
+            "attendeeResponses": {},
+            "responseStatus": "accepted",
+            "canRespond": true,
+            "canEdit": false,
+        });
+        if let (Some(base), Some(ext)) = (obj.as_object_mut(), extra.as_object()) {
+            for (k, v) in ext {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+        events.push(serde_json::from_value(obj).unwrap());
+    };
+
+    // Already ended
+    push_event(
+        &mut events,
+        "ended",
+        "work",
+        "Morning Standup",
+        "2026-11-27T08:00:00Z",
+        "2026-11-27T08:30:00Z",
+        serde_json::json!({}),
+    );
+    // Exclusions: focusTime, outOfOffice, workingLocation, task, tasks calendar, sourceTaskId, solo no-link
+    push_event(
+        &mut events,
+        "focus",
+        "work",
+        "Focus Time",
+        "2026-11-27T10:00:00Z",
+        "2026-11-27T11:00:00Z",
+        serde_json::json!({"eventType": "focusTime", "attendees": []}),
+    );
+    push_event(
+        &mut events,
+        "ooo",
+        "work",
+        "Out of Office",
+        "2026-11-27T10:00:00Z",
+        "2026-11-27T11:00:00Z",
+        serde_json::json!({"eventType": "outOfOffice", "attendees": []}),
+    );
+    push_event(
+        &mut events,
+        "wloc",
+        "work",
+        "Office",
+        "2026-11-27T10:00:00Z",
+        "2026-11-27T11:00:00Z",
+        serde_json::json!({"eventType": "workingLocation", "workingLocationType": "office"}),
+    );
+    push_event(
+        &mut events,
+        "gtask-type",
+        "work",
+        "Pay Invoice",
+        "2026-11-27T10:00:00Z",
+        "2026-11-27T10:30:00Z",
+        serde_json::json!({"eventType": "task", "attendees": []}),
+    );
+    push_event(
+        &mut events,
+        "gtask-cal",
+        "user#tasks@group.v.calendar.google.com",
+        "Submit Expenses",
+        "2026-11-27T10:00:00Z",
+        "2026-11-27T10:30:00Z",
+        serde_json::json!({"attendees": ["ann@example.org"]}),
+    );
+    push_event(
+        &mut events,
+        "local-task",
+        "work",
+        "Write Spec",
+        "2026-11-27T10:00:00Z",
+        "2026-11-27T10:30:00Z",
+        serde_json::json!({"sourceTaskId": "task-1"}),
+    );
+    push_event(
+        &mut events,
+        "solo",
+        "work",
+        "Lunch",
+        "2026-11-27T12:00:00Z",
+        "2026-11-27T12:30:00Z",
+        serde_json::json!({"attendees": []}),
+    );
+    // Solo event WITH a conferencing link IS treated as a meeting.
+    push_event(
+        &mut events,
+        "solo-zoom",
+        "work",
+        "Quick Webinar",
+        "2026-11-27T10:30:00Z",
+        "2026-11-27T11:00:00Z",
+        serde_json::json!({"attendees": [], "location": "https://zoom.us/j/555666"}),
+    );
+    // Active meeting now (09:45..10:15) with conferenceUrl
+    push_event(
+        &mut events,
+        "m1",
+        "work",
+        "Weekly Sync",
+        "2026-11-27T09:45:00Z",
+        "2026-11-27T10:15:00Z",
+        serde_json::json!({"conferenceUrl": "https://meet.google.com/aaa-bbbb-ccc"}),
+    );
+    // Five more meetings today (total 7 valid today so cap=6 drops the last one).
+    for (idx, hour) in [(2, 11), (3, 13), (4, 14), (5, 15), (6, 16)] {
+        push_event(
+            &mut events,
+            &format!("m{idx}"),
+            "work",
+            &format!("Meeting {idx}"),
+            &format!("2026-11-27T{hour:02}:00:00Z"),
+            &format!("2026-11-27T{hour:02}:30:00Z"),
+            serde_json::json!({}),
+        );
+    }
+    // Two tomorrow meetings
+    push_event(
+        &mut events,
+        "tmr1",
+        "work",
+        "Tomorrow Kickoff",
+        "2026-11-28T09:00:00Z",
+        "2026-11-28T09:30:00Z",
+        serde_json::json!({"description": "Join with Microsoft Teams: https://teams.microsoft.com/l/meetup-join/123"}),
+    );
+    push_event(
+        &mut events,
+        "tmr2",
+        "work",
+        "Tomorrow Later",
+        "2026-11-28T11:00:00Z",
+        "2026-11-28T11:30:00Z",
+        serde_json::json!({}),
+    );
+
+    db.cache_note_events("you@example.com", &[], "", "", &events)
+        .unwrap();
+
+    let now = Utc.with_ymd_and_hms(2026, 11, 27, 10, 0, 0).unwrap();
+    let today = db.upcoming_tray_meetings(now, 6).unwrap();
+    let ids: Vec<&str> = today.iter().map(|m| m.event_ref.id.as_str()).collect();
+    assert_eq!(ids, ["m1", "solo-zoom", "m2", "m3", "m4", "m5"]);
+    assert_eq!(
+        today[0].join_url.as_deref(),
+        Some("https://meet.google.com/aaa-bbbb-ccc")
+    );
+    assert_eq!(today[0].join_provider.as_deref(), Some("Google Meet"));
+    assert_eq!(
+        today[1].join_url.as_deref(),
+        Some("https://zoom.us/j/555666")
+    );
+    assert_eq!(today[1].join_provider.as_deref(), Some("Zoom"));
+    assert!(today.iter().all(|m| !m.is_tomorrow));
+
+    // After all today's meetings end: only tomorrow's first meeting returns.
+    let evening = Utc.with_ymd_and_hms(2026, 11, 27, 17, 0, 0).unwrap();
+    let next = db.upcoming_tray_meetings(evening, 6).unwrap();
+    assert_eq!(next.len(), 1);
+    assert_eq!(next[0].event_ref.id, "tmr1");
+    assert!(next[0].is_tomorrow);
+    assert_eq!(next[0].join_provider.as_deref(), Some("Teams"));
+}

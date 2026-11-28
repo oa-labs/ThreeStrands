@@ -12,15 +12,19 @@
 //! a new thread. Nothing on the main thread waits for the tray or for the
 //! recording service.
 
+use crate::db::note_entities::TrayMeeting;
 use crate::note_entities::NoteReference;
 use crate::recording::capture::{SystemAudioSupport, Track};
 use crate::recording::offers::TrayOffer;
+use crate::recording::policy;
 use crate::recording::runtime::{RecordingNotifier, TrayReview};
-use crate::recording::settings::RecordingSettings;
+use crate::recording::settings::{RecordingSettings, TrayNextMeetingTitle};
 use crate::recording::transcribe::models::TranscriptionModelStatus;
 use crate::recording::transcribe::scheduler::TrayTranscription;
 use crate::recording::{RecordingPhase, RecordingStatus, TrackRunState};
 use serde::Serialize;
+use std::borrow::Cow;
+use std::time::SystemTime;
 
 // ---------------------------------------------------------------------------
 // The menu model
@@ -28,6 +32,8 @@ use serde::Serialize;
 /// What a tray menu item does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayCommand {
+    JoinMeeting(usize),
+    OpenMeeting(usize),
     RecordOffer,
     Start,
     Pause,
@@ -40,7 +46,8 @@ pub enum TrayCommand {
 }
 
 impl TrayCommand {
-    const ALL: [Self; 9] = [
+    #[cfg(test)]
+    const STATIC: [Self; 9] = [
         Self::RecordOffer,
         Self::Start,
         Self::Pause,
@@ -54,22 +61,53 @@ impl TrayCommand {
 
     /// The menu item's ID. Namespaced, because tray menu events share one
     /// listener with the app menu.
-    pub fn id(self) -> &'static str {
+    pub fn id(self) -> Cow<'static, str> {
         match self {
-            Self::RecordOffer => "recording-tray-record-offer",
-            Self::Start => "recording-tray-start",
-            Self::Pause => "recording-tray-pause",
-            Self::Resume => "recording-tray-resume",
-            Self::Stop => "recording-tray-stop",
-            Self::Review => "recording-tray-review",
-            Self::Open => "recording-tray-open",
-            Self::Settings => "recording-tray-settings",
-            Self::Quit => "recording-tray-quit",
+            Self::JoinMeeting(index) => Cow::Owned(format!("recording-tray-join-{index}")),
+            Self::OpenMeeting(index) => Cow::Owned(format!("recording-tray-open-meeting-{index}")),
+            Self::RecordOffer => Cow::Borrowed("recording-tray-record-offer"),
+            Self::Start => Cow::Borrowed("recording-tray-start"),
+            Self::Pause => Cow::Borrowed("recording-tray-pause"),
+            Self::Resume => Cow::Borrowed("recording-tray-resume"),
+            Self::Stop => Cow::Borrowed("recording-tray-stop"),
+            Self::Review => Cow::Borrowed("recording-tray-review"),
+            Self::Open => Cow::Borrowed("recording-tray-open"),
+            Self::Settings => Cow::Borrowed("recording-tray-settings"),
+            Self::Quit => Cow::Borrowed("recording-tray-quit"),
         }
     }
 
     pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|command| command.id() == id)
+        if let Some(rest) = id.strip_prefix("recording-tray-join-") {
+            if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
+                let index: usize = rest.parse().ok()?;
+                if index < policy::MAX_TRAY_MEETINGS {
+                    return Some(Self::JoinMeeting(index));
+                }
+            }
+            return None;
+        }
+        if let Some(rest) = id.strip_prefix("recording-tray-open-meeting-") {
+            if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
+                let index: usize = rest.parse().ok()?;
+                if index < policy::MAX_TRAY_MEETINGS {
+                    return Some(Self::OpenMeeting(index));
+                }
+            }
+            return None;
+        }
+        match id {
+            "recording-tray-record-offer" => Some(Self::RecordOffer),
+            "recording-tray-start" => Some(Self::Start),
+            "recording-tray-pause" => Some(Self::Pause),
+            "recording-tray-resume" => Some(Self::Resume),
+            "recording-tray-stop" => Some(Self::Stop),
+            "recording-tray-review" => Some(Self::Review),
+            "recording-tray-open" => Some(Self::Open),
+            "recording-tray-settings" => Some(Self::Settings),
+            "recording-tray-quit" => Some(Self::Quit),
+            _ => None,
+        }
     }
 }
 
@@ -94,24 +132,115 @@ fn action(command: TrayCommand, label: &str) -> MenuItemModel {
 /// Longest title shown in the status line, in characters.
 const STATUS_TITLE_CHARS: usize = 40;
 
-fn short_title(title: &str) -> String {
-    if title.chars().count() <= STATUS_TITLE_CHARS {
+fn short_title_max(title: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    if title.chars().count() <= max_chars {
         return title.to_string();
     }
-    let mut kept: String = title.chars().take(STATUS_TITLE_CHARS - 1).collect();
+    if max_chars == 1 {
+        return "…".into();
+    }
+    let mut kept: String = title.chars().take(max_chars - 1).collect();
     // Cut at a word boundary when one is reasonably close.
     let next_is_space = title
         .chars()
-        .nth(STATUS_TITLE_CHARS - 1)
+        .nth(max_chars - 1)
         .is_some_and(char::is_whitespace);
     if !next_is_space {
         if let Some(space) = kept.rfind(char::is_whitespace) {
-            if space >= STATUS_TITLE_CHARS / 2 {
+            if space >= max_chars / 2 {
                 kept.truncate(space);
             }
         }
     }
     format!("{}…", kept.trim_end())
+}
+
+fn short_title(title: &str) -> String {
+    short_title_max(title, STATUS_TITLE_CHARS)
+}
+
+fn format_meeting_time<Tz: chrono::TimeZone>(start: SystemTime, tz: &Tz) -> String {
+    let dt = chrono::DateTime::<chrono::Utc>::from(start).with_timezone(tz);
+    dt.time()
+        .format("%I:%M %p")
+        .to_string()
+        .trim_start_matches('0')
+        .to_string()
+}
+
+fn format_until(minutes: u64) -> String {
+    if minutes == 0 {
+        "now".into()
+    } else if minutes < 60 {
+        format!("in {minutes}m")
+    } else {
+        let (hours, mins) = (minutes / 60, minutes % 60);
+        if mins == 0 {
+            format!("in {hours}h")
+        } else {
+            format!("in {hours}h {mins}m")
+        }
+    }
+}
+
+fn format_remaining(minutes: u64) -> String {
+    let mins = minutes.max(1);
+    if mins < 60 {
+        format!("{mins}m left")
+    } else {
+        let (hours, rem) = (mins / 60, mins % 60);
+        if rem == 0 {
+            format!("{hours}h left")
+        } else {
+            format!("{hours}h {rem}m left")
+        }
+    }
+}
+
+/// Optional status text shown next to the macOS menu bar icon for the next
+/// active or imminent meeting.
+pub fn tray_title<Tz: chrono::TimeZone>(
+    status: &RecordingStatus,
+    settings: &RecordingSettings,
+    upcoming: &[TrayMeeting],
+    now: chrono::DateTime<Tz>,
+) -> Option<String> {
+    if !settings.show_upcoming_meetings_in_tray
+        || settings.tray_next_meeting_title == TrayNextMeetingTitle::Off
+        || status.state != RecordingPhase::Idle
+    {
+        return None;
+    }
+    let next = upcoming.first()?;
+    let now_sys = SystemTime::from(now.with_timezone(&chrono::Utc));
+    let timing = if next.start <= now_sys && next.end > now_sys {
+        let mins_left = next
+            .end
+            .duration_since(now_sys)
+            .unwrap_or_default()
+            .as_secs()
+            .div_ceil(60);
+        format_remaining(mins_left)
+    } else if next.start > now_sys {
+        let until = next.start.duration_since(now_sys).unwrap_or_default();
+        if until > policy::TRAY_TITLE_WINDOW {
+            return None;
+        }
+        format_until(until.as_secs().div_ceil(60))
+    } else {
+        return None;
+    };
+    match settings.tray_next_meeting_title {
+        TrayNextMeetingTitle::Off => None,
+        TrayNextMeetingTitle::TimeOnly => Some(timing),
+        TrayNextMeetingTitle::TitleAndTime => Some(format!(
+            "{} · {timing}",
+            short_title_max(&next.title, policy::TRAY_TITLE_MAX_CHARS)
+        )),
+    }
 }
 
 /// Elapsed time as `m:ss`, or `h:mm:ss` from an hour.
@@ -138,54 +267,92 @@ fn microphone_only(status: &RecordingStatus) -> bool {
         })
 }
 
-/// The tray menu for a recording status and the transcription running after
-/// Stop, if any. `settings` will add the upcoming meeting ("Record “…”") in
-/// a later stage.
-pub fn tray_menu(
+/// The tray menu for upcoming meetings, recording state, and transcription.
+pub fn tray_menu<Tz: chrono::TimeZone>(
     status: &RecordingStatus,
     settings: &RecordingSettings,
     transcribing: Option<&TrayTranscription>,
     review: Option<&TrayReview>,
     offer: Option<&TrayOffer>,
+    upcoming: &[TrayMeeting],
+    now: chrono::DateTime<Tz>,
 ) -> Vec<MenuItemModel> {
     let mut items = Vec::new();
-    match status.state {
-        RecordingPhase::Idle => {
-            if settings.offer_to_record {
-                if let Some(target) = offer {
-                    items.push(action(
-                        TrayCommand::RecordOffer,
-                        &format!("Record “{}”", short_title(&target.title)),
-                    ));
-                }
-            }
-            items.push(action(TrayCommand::Start, "Start Recording"));
-        }
-        RecordingPhase::Recording | RecordingPhase::Paused => {
-            let paused = status.state == RecordingPhase::Paused;
-            let mut line = format!(
-                "{} “{}” · {}",
-                if paused { "Paused" } else { "Recording" },
-                short_title(status.title.as_deref().unwrap_or_default()),
-                format_elapsed(status.elapsed_ms)
-            );
-            if microphone_only(status) {
-                line.push_str(" · Microphone only");
-            }
-            items.push(MenuItemModel::Status(line));
-            if status.still_recording_nudge && !paused {
-                items.push(MenuItemModel::Status("Still recording — Stop?".into()));
-            }
-            items.push(if paused {
-                action(TrayCommand::Resume, "Resume Recording")
+    let now_sys = SystemTime::from(now.with_timezone(&chrono::Utc));
+    if settings.show_upcoming_meetings_in_tray && !upcoming.is_empty() {
+        let heading = if upcoming[0].is_tomorrow {
+            "Tomorrow"
+        } else {
+            "Upcoming Today"
+        };
+        items.push(MenuItemModel::Status(heading.into()));
+        for (index, meeting) in upcoming.iter().take(policy::MAX_TRAY_MEETINGS).enumerate() {
+            let prefix = if meeting.start <= now_sys {
+                "Now".to_string()
             } else {
-                action(TrayCommand::Pause, "Pause Recording")
-            });
-            items.push(action(TrayCommand::Stop, "Stop Recording"));
+                format_meeting_time(meeting.start, &now.timezone())
+            };
+            let suffix = if meeting.join_url.is_some() {
+                match meeting.join_provider.as_deref() {
+                    Some(provider) => format!(" · Join {provider}"),
+                    None => " · Join".into(),
+                }
+            } else {
+                String::new()
+            };
+            let label = format!("{prefix} · {}{suffix}", short_title(&meeting.title));
+            let command = if meeting.join_url.is_some() {
+                TrayCommand::JoinMeeting(index)
+            } else {
+                TrayCommand::OpenMeeting(index)
+            };
+            items.push(action(command, &label));
+        }
+    }
+    if settings.record_meetings || status.state != RecordingPhase::Idle {
+        if !items.is_empty() {
+            items.push(MenuItemModel::Separator);
+        }
+        match status.state {
+            RecordingPhase::Idle => {
+                if settings.offer_to_record {
+                    if let Some(target) = offer {
+                        items.push(action(
+                            TrayCommand::RecordOffer,
+                            &format!("Record “{}”", short_title(&target.title)),
+                        ));
+                    }
+                }
+                items.push(action(TrayCommand::Start, "Start Recording"));
+            }
+            RecordingPhase::Recording | RecordingPhase::Paused => {
+                let paused = status.state == RecordingPhase::Paused;
+                let mut line = format!(
+                    "{} “{}” · {}",
+                    if paused { "Paused" } else { "Recording" },
+                    short_title(status.title.as_deref().unwrap_or_default()),
+                    format_elapsed(status.elapsed_ms)
+                );
+                if microphone_only(status) {
+                    line.push_str(" · Microphone only");
+                }
+                items.push(MenuItemModel::Status(line));
+                if status.still_recording_nudge && !paused {
+                    items.push(MenuItemModel::Status("Still recording — Stop?".into()));
+                }
+                items.push(if paused {
+                    action(TrayCommand::Resume, "Resume Recording")
+                } else {
+                    action(TrayCommand::Pause, "Pause Recording")
+                });
+                items.push(action(TrayCommand::Stop, "Stop Recording"));
+            }
         }
     }
     if transcribing.is_some() || review.is_some() {
-        items.push(MenuItemModel::Separator);
+        if !items.is_empty() {
+            items.push(MenuItemModel::Separator);
+        }
     }
     if let Some(job) = transcribing {
         items.push(MenuItemModel::Status(format!(
@@ -200,7 +367,9 @@ pub fn tray_menu(
             &format!("Review “{}”", short_title(&target.title)),
         ));
     }
-    items.push(MenuItemModel::Separator);
+    if !items.is_empty() {
+        items.push(MenuItemModel::Separator);
+    }
     items.push(action(TrayCommand::Open, "Open ThreeStrands"));
     items.push(action(TrayCommand::Settings, "Settings…"));
     items.push(action(TrayCommand::Quit, "Quit ThreeStrands"));
@@ -232,16 +401,22 @@ fn status_line(items: &[MenuItemModel]) -> Option<&str> {
     status_lines(items).first().copied()
 }
 
-/// The icon is shown while **Record Meetings** is on, and while a recording
-/// or a transcription after Stop is in progress even if it was turned off
-/// meanwhile. Platforms that can't record never show it.
+/// The icon is shown while **Record Meetings** is on, while upcoming meetings
+/// are shown in the menu bar with at least one upcoming meeting, and while a
+/// recording or a transcription after Stop is in progress. Platforms without
+/// tray/recording support never show it.
 pub fn tray_visible(
     settings: &RecordingSettings,
     status: &RecordingStatus,
     transcribing: bool,
+    has_upcoming_meetings: bool,
     supported: bool,
 ) -> bool {
-    supported && (settings.record_meetings || status.state != RecordingPhase::Idle || transcribing)
+    supported
+        && (settings.record_meetings
+            || (settings.show_upcoming_meetings_in_tray && has_upcoming_meetings)
+            || status.state != RecordingPhase::Idle
+            || transcribing)
 }
 
 /// Whether **Start Recording** in the tray must bring the window forward:
@@ -382,6 +557,7 @@ pub enum TrayRequest {
     StartOffer,
     OpenSettings,
     Review,
+    OpenMeeting,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -400,6 +576,8 @@ pub struct TrayCommandEvent {
     pub recording_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_request: Option<TrayStartRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meeting_event: Option<crate::models::ScheduleEvent>,
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +589,8 @@ struct TrayUpdate {
     transcribing: Option<TrayTranscription>,
     review: Option<TrayReview>,
     offer: Option<TrayOffer>,
+    upcoming: Vec<TrayMeeting>,
+    now: SystemTime,
     supported: bool,
 }
 
@@ -457,6 +637,8 @@ impl RecordingNotifier for AppNotifier {
         transcribing: Option<&TrayTranscription>,
         review: Option<&TrayReview>,
         offer: Option<&TrayOffer>,
+        upcoming: &[TrayMeeting],
+        now: SystemTime,
         supported: bool,
     ) {
         let _ = self.tray.send(TrayUpdate {
@@ -465,6 +647,8 @@ impl RecordingNotifier for AppNotifier {
             transcribing: transcribing.cloned(),
             review: review.cloned(),
             offer: offer.cloned(),
+            upcoming: upcoming.to_vec(),
+            now,
             supported,
         });
     }
@@ -493,6 +677,7 @@ struct TrayWorker {
     model: Vec<MenuItemModel>,
     status_items: Vec<tauri::menu::MenuItem<tauri::Wry>>,
     kind: Option<TrayIconKind>,
+    title: Option<String>,
     shown: bool,
 }
 
@@ -505,6 +690,7 @@ impl TrayWorker {
             model: Vec::new(),
             status_items: Vec::new(),
             kind: None,
+            title: None,
             shown: false,
         };
         let spawned = std::thread::Builder::new()
@@ -540,8 +726,13 @@ impl TrayWorker {
         for item in model {
             match item {
                 MenuItemModel::Action { command, label } => {
-                    let entry =
-                        MenuItem::with_id(&self.app, command.id(), label, true, None::<&str>)?;
+                    let entry = MenuItem::with_id(
+                        &self.app,
+                        command.id().as_ref(),
+                        label,
+                        true,
+                        None::<&str>,
+                    )?;
                     menu.append(&entry)?;
                 }
                 MenuItemModel::Status(text) => {
@@ -569,9 +760,14 @@ impl TrayWorker {
             &update.settings,
             &update.status,
             transcribing.is_some(),
+            !update.upcoming.is_empty(),
             update.supported,
         ) {
             if let Some(icon) = &self.icon {
+                if self.title.is_some() {
+                    let _ = icon.set_title(None::<&str>);
+                    self.title = None;
+                }
                 if self.shown {
                     icon.set_visible(false)?;
                     self.shown = false;
@@ -579,12 +775,21 @@ impl TrayWorker {
             }
             return Ok(());
         }
+        let local_now = chrono::DateTime::<chrono::Local>::from(update.now);
         let model = tray_menu(
             &update.status,
             &update.settings,
             transcribing,
             update.review.as_ref(),
             update.offer.as_ref(),
+            &update.upcoming,
+            local_now,
+        );
+        let next_title = tray_title(
+            &update.status,
+            &update.settings,
+            &update.upcoming,
+            local_now,
         );
         let offer_badged =
             update.settings.offer_to_record && update.offer.as_ref().is_some_and(|o| o.badged);
@@ -592,14 +797,17 @@ impl TrayWorker {
         match self.icon.clone() {
             None => {
                 let menu = self.build_menu(&model)?;
-                let icon = tauri::tray::TrayIconBuilder::with_id("meeting-recording")
+                let mut builder = tauri::tray::TrayIconBuilder::with_id("meeting-recording")
                     .icon(Self::image(kind))
                     .icon_as_template(true)
                     .tooltip("ThreeStrands")
                     .menu(&menu)
                     .show_menu_on_left_click(true)
-                    .on_menu_event(|app, event| on_menu_event(app, event.id().as_ref()))
-                    .build(&self.app)?;
+                    .on_menu_event(|app, event| on_menu_event(app, event.id().as_ref()));
+                if let Some(title) = next_title.as_deref() {
+                    builder = builder.title(title);
+                }
+                let icon = builder.build(&self.app)?;
                 self.icon = Some(icon);
                 self.shown = true;
             }
@@ -620,6 +828,9 @@ impl TrayWorker {
                 if self.kind != Some(kind) {
                     icon.set_icon_with_as_template(Some(Self::image(kind)), true)?;
                 }
+                if self.title != next_title {
+                    let _ = icon.set_title(next_title.as_deref());
+                }
                 if !self.shown {
                     icon.set_visible(true)?;
                     self.shown = true;
@@ -628,6 +839,7 @@ impl TrayWorker {
         }
         self.model = model;
         self.kind = Some(kind);
+        self.title = next_title;
         Ok(())
     }
 }
@@ -651,17 +863,51 @@ fn run_command(app: &tauri::AppHandle, command: TrayCommand) {
     let runtime = &state.recording;
     let request = |request: TrayRequest,
                    recording_id: Option<String>,
-                   start_request: Option<TrayStartRequest>| {
+                   start_request: Option<TrayStartRequest>,
+                   meeting_event: Option<crate::models::ScheduleEvent>| {
         let _ = app.emit(
             "recording-tray-command",
             TrayCommandEvent {
                 command: request,
                 recording_id,
                 start_request,
+                meeting_event,
             },
         );
     };
     let result = match command {
+        TrayCommand::JoinMeeting(index) => {
+            if let Some(url) = runtime
+                .upcoming_meeting(index)
+                .and_then(|meeting| meeting.join_url)
+                .and_then(|raw| crate::recording::meeting_links::validate_join_url(&raw))
+            {
+                open::that(&url).map_err(|error| error.to_string())
+            } else {
+                crate::focus_main_window(app);
+                let meeting_event = runtime.upcoming_meeting(index).and_then(|meeting| {
+                    state
+                        .database
+                        .resolve_note_event(&meeting.event_ref)
+                        .ok()
+                        .flatten()
+                });
+                request(TrayRequest::OpenMeeting, None, None, meeting_event);
+                Ok(())
+            }
+        }
+        TrayCommand::OpenMeeting(index) => {
+            crate::focus_main_window(app);
+            let meeting_event = runtime.upcoming_meeting(index).and_then(|meeting| {
+                state
+                    .database
+                    .resolve_note_event(&meeting.event_ref)
+                    .ok()
+                    .flatten()
+            });
+            request(TrayRequest::OpenMeeting, None, None, meeting_event);
+            Ok(())
+        }
         TrayCommand::RecordOffer => {
             if start_shows_window(&runtime.settings()) {
                 crate::focus_main_window(app);
@@ -675,9 +921,10 @@ fn run_command(app: &tauri::AppHandle, command: TrayCommand) {
                         title: offer.title,
                         attendees: offer.attendees,
                     }),
+                    None,
                 );
             } else {
-                request(TrayRequest::Start, None, None);
+                request(TrayRequest::Start, None, None, None);
             }
             Ok(())
         }
@@ -685,7 +932,7 @@ fn run_command(app: &tauri::AppHandle, command: TrayCommand) {
             if start_shows_window(&runtime.settings()) {
                 crate::focus_main_window(app);
             }
-            request(TrayRequest::Start, None, None);
+            request(TrayRequest::Start, None, None, None);
             Ok(())
         }
         TrayCommand::Review => {
@@ -693,12 +940,12 @@ fn run_command(app: &tauri::AppHandle, command: TrayCommand) {
             let recording_id = runtime
                 .latest_unreviewed_review()
                 .map(|review| review.recording_id);
-            request(TrayRequest::Review, recording_id, None);
+            request(TrayRequest::Review, recording_id, None, None);
             Ok(())
         }
         TrayCommand::Settings => {
             crate::focus_main_window(app);
-            request(TrayRequest::OpenSettings, None, None);
+            request(TrayRequest::OpenSettings, None, None, None);
             Ok(())
         }
         TrayCommand::Open => {
@@ -775,9 +1022,50 @@ mod tests {
 
     const FOOTER: [&str; 4] = ["---", "Open ThreeStrands", "Settings…", "Quit ThreeStrands"];
 
+    fn fixed_now() -> chrono::DateTime<chrono::FixedOffset> {
+        chrono::DateTime::parse_from_rfc3339("2026-11-27T10:00:00-05:00").unwrap()
+    }
+
+    fn rec_on() -> RecordingSettings {
+        RecordingSettings {
+            record_meetings: true,
+            ..Default::default()
+        }
+    }
+
+    fn meeting_at(
+        id: &str,
+        title: &str,
+        start: &str,
+        end: &str,
+        join_url: Option<&str>,
+        join_provider: Option<&str>,
+        is_tomorrow: bool,
+    ) -> TrayMeeting {
+        TrayMeeting {
+            event_ref: NoteReference {
+                version: 1,
+                kind: "event".into(),
+                id: id.into(),
+                account: Some("you@example.com".into()),
+                calendar: Some("work".into()),
+                note: None,
+                contact: None,
+                series: None,
+            },
+            title: title.into(),
+            start: SystemTime::from(chrono::DateTime::parse_from_rfc3339(start).unwrap()),
+            end: SystemTime::from(chrono::DateTime::parse_from_rfc3339(end).unwrap()),
+            attendees: vec!["ann@example.org".into()],
+            join_url: join_url.map(str::to_string),
+            join_provider: join_provider.map(str::to_string),
+            is_tomorrow,
+        }
+    }
+
     #[test]
     fn idle_offers_start_and_the_app_items() {
-        let menu = tray_menu(&idle(), &RecordingSettings::default(), None, None, None);
+        let menu = tray_menu(&idle(), &rec_on(), None, None, None, &[], fixed_now());
         let mut expected = vec!["Start Recording"];
         expected.extend(FOOTER);
         assert_eq!(labels(&menu), expected);
@@ -793,7 +1081,7 @@ mod tests {
     #[test]
     fn recording_shows_a_status_line_pause_and_stop() {
         let status = recording(RecordingPhase::Recording, TrackRunState::Active);
-        let menu = tray_menu(&status, &RecordingSettings::default(), None, None, None);
+        let menu = tray_menu(&status, &rec_on(), None, None, None, &[], fixed_now());
         let mut expected = vec![
             "[Recording “Weekly Sync” · 12:34]",
             "Pause Recording",
@@ -810,7 +1098,7 @@ mod tests {
     #[test]
     fn paused_offers_resume() {
         let status = recording(RecordingPhase::Paused, TrackRunState::Active);
-        let menu = tray_menu(&status, &RecordingSettings::default(), None, None, None);
+        let menu = tray_menu(&status, &rec_on(), None, None, None, &[], fixed_now());
         let mut expected = vec![
             "[Paused “Weekly Sync” · 12:34]",
             "Resume Recording",
@@ -827,10 +1115,12 @@ mod tests {
             assert_eq!(
                 status_line(&tray_menu(
                     &status,
-                    &RecordingSettings::default(),
+                    &rec_on(),
                     None,
                     None,
-                    None
+                    None,
+                    &[],
+                    fixed_now()
                 )),
                 Some("Recording “Weekly Sync” · 12:34 · Microphone only"),
                 "{system:?}"
@@ -841,10 +1131,12 @@ mod tests {
         assert_eq!(
             status_line(&tray_menu(
                 &status,
-                &RecordingSettings::default(),
+                &rec_on(),
                 None,
                 None,
-                None
+                None,
+                &[],
+                fixed_now()
             )),
             Some("Recording “Weekly Sync” · 12:34")
         );
@@ -856,10 +1148,12 @@ mod tests {
         old_macos.tracks.retain(|t| t.track == Track::Mic);
         assert!(status_line(&tray_menu(
             &old_macos,
-            &RecordingSettings::default(),
+            &rec_on(),
             None,
             None,
-            None
+            None,
+            &[],
+            fixed_now()
         ))
         .unwrap()
         .ends_with(" · Microphone only"));
@@ -872,10 +1166,12 @@ mod tests {
         assert_eq!(
             status_line(&tray_menu(
                 &status,
-                &RecordingSettings::default(),
+                &rec_on(),
                 None,
                 None,
-                None
+                None,
+                &[],
+                fixed_now()
             )),
             Some("Recording “Quarterly planning review with the…” · 12:34")
         );
@@ -893,51 +1189,73 @@ mod tests {
 
     #[test]
     fn only_the_status_line_changing_keeps_the_menu_shape() {
-        let settings = RecordingSettings::default();
+        let settings = rec_on();
         let mut status = recording(RecordingPhase::Recording, TrackRunState::Active);
-        let before = tray_menu(&status, &settings, None, None, None);
+        let before = tray_menu(&status, &settings, None, None, None, &[], fixed_now());
         status.elapsed_ms += 1000;
-        let after = tray_menu(&status, &settings, None, None, None);
+        let after = tray_menu(&status, &settings, None, None, None, &[], fixed_now());
         assert!(same_shape(&before, &after));
         assert_ne!(status_line(&before), status_line(&after));
         status.state = RecordingPhase::Paused;
         assert!(!same_shape(
             &before,
-            &tray_menu(&status, &settings, None, None, None)
+            &tray_menu(&status, &settings, None, None, None, &[], fixed_now())
         ));
         assert!(!same_shape(
             &before,
-            &tray_menu(&idle(), &settings, None, None, None)
+            &tray_menu(&idle(), &settings, None, None, None, &[], fixed_now())
         ));
     }
 
     #[test]
     fn menu_ids_round_trip_and_ignore_other_menus() {
-        for command in TrayCommand::ALL {
-            assert_eq!(TrayCommand::from_id(command.id()), Some(command));
+        for command in TrayCommand::STATIC {
+            assert_eq!(TrayCommand::from_id(command.id().as_ref()), Some(command));
         }
+        for i in 0..policy::MAX_TRAY_MEETINGS {
+            assert_eq!(
+                TrayCommand::from_id(TrayCommand::JoinMeeting(i).id().as_ref()),
+                Some(TrayCommand::JoinMeeting(i))
+            );
+            assert_eq!(
+                TrayCommand::from_id(TrayCommand::OpenMeeting(i).id().as_ref()),
+                Some(TrayCommand::OpenMeeting(i))
+            );
+        }
+        assert_eq!(
+            TrayCommand::from_id(&format!(
+                "recording-tray-join-{}",
+                policy::MAX_TRAY_MEETINGS
+            )),
+            None
+        );
+        assert_eq!(TrayCommand::from_id("recording-tray-join-+0"), None);
+        assert_eq!(TrayCommand::from_id("recording-tray-open-meeting-99"), None);
         assert_eq!(TrayCommand::from_id("quit"), None);
         assert_eq!(TrayCommand::from_id("recording-tray-status"), None);
     }
 
     #[test]
-    fn the_icon_shows_while_record_meetings_is_on_or_a_recording_runs() {
-        let on = RecordingSettings {
-            record_meetings: true,
+    fn the_icon_shows_while_record_meetings_is_on_upcoming_meetings_show_or_a_recording_runs() {
+        let on = rec_on();
+        let off = RecordingSettings::default();
+        let meetings_hidden = RecordingSettings {
+            show_upcoming_meetings_in_tray: false,
             ..Default::default()
         };
-        let off = RecordingSettings::default();
         let live = recording(RecordingPhase::Recording, TrackRunState::Active);
         let paused = recording(RecordingPhase::Paused, TrackRunState::Active);
-        assert!(tray_visible(&on, &idle(), false, true));
-        assert!(!tray_visible(&off, &idle(), false, true));
+        assert!(tray_visible(&on, &idle(), false, false, true));
+        assert!(!tray_visible(&off, &idle(), false, false, true));
+        assert!(tray_visible(&off, &idle(), false, true, true));
+        assert!(!tray_visible(&meetings_hidden, &idle(), false, true, true));
         assert!(
-            tray_visible(&off, &live, false, true),
+            tray_visible(&off, &live, false, false, true),
             "turned off mid-recording"
         );
-        assert!(tray_visible(&off, &paused, false, true));
+        assert!(tray_visible(&off, &paused, false, false, true));
         assert!(
-            !tray_visible(&on, &live, false, false),
+            !tray_visible(&on, &live, false, true, false),
             "never where recording is unsupported"
         );
     }
@@ -1007,8 +1325,16 @@ mod tests {
 
     #[test]
     fn a_transcription_after_stop_gets_its_own_status_line() {
-        let settings = RecordingSettings::default();
-        let menu = tray_menu(&idle(), &settings, Some(&job(40)), None, None);
+        let settings = rec_on();
+        let menu = tray_menu(
+            &idle(),
+            &settings,
+            Some(&job(40)),
+            None,
+            None,
+            &[],
+            fixed_now(),
+        );
         let mut expected = vec![
             "Start Recording",
             "---",
@@ -1018,7 +1344,15 @@ mod tests {
         assert_eq!(labels(&menu), expected);
         // While another recording runs, both lines show.
         let live = recording(RecordingPhase::Recording, TrackRunState::Active);
-        let both = tray_menu(&live, &settings, Some(&job(40)), None, None);
+        let both = tray_menu(
+            &live,
+            &settings,
+            Some(&job(40)),
+            None,
+            None,
+            &[],
+            fixed_now(),
+        );
         assert_eq!(
             status_lines(&both),
             [
@@ -1029,28 +1363,52 @@ mod tests {
         // Progress only changes text, so the menu is updated in place.
         assert!(same_shape(
             &menu,
-            &tray_menu(&idle(), &settings, Some(&job(41)), None, None)
+            &tray_menu(
+                &idle(),
+                &settings,
+                Some(&job(41)),
+                None,
+                None,
+                &[],
+                fixed_now()
+            )
         ));
         assert!(!same_shape(
             &menu,
-            &tray_menu(&idle(), &settings, None, None, None)
+            &tray_menu(&idle(), &settings, None, None, None, &[], fixed_now())
         ));
         let mut long = job(5);
         long.title = "Quarterly planning review with the whole extended team".into();
         assert_eq!(
-            status_lines(&tray_menu(&idle(), &settings, Some(&long), None, None)),
+            status_lines(&tray_menu(
+                &idle(),
+                &settings,
+                Some(&long),
+                None,
+                None,
+                &[],
+                fixed_now()
+            )),
             ["Transcribing “Quarterly planning review with the…”… 5%"]
         );
     }
 
     #[test]
     fn an_unreviewed_recording_offers_review_in_the_tray() {
-        let settings = RecordingSettings::default();
+        let settings = rec_on();
         let review = TrayReview {
             recording_id: "rec-9".into(),
             title: "Design Review".into(),
         };
-        let menu = tray_menu(&idle(), &settings, None, Some(&review), None);
+        let menu = tray_menu(
+            &idle(),
+            &settings,
+            None,
+            Some(&review),
+            None,
+            &[],
+            fixed_now(),
+        );
         let mut expected = vec!["Start Recording", "---", "Review “Design Review”"];
         expected.extend(FOOTER);
         assert_eq!(labels(&menu), expected);
@@ -1063,6 +1421,7 @@ mod tests {
     #[test]
     fn an_offer_and_silence_nudge_render_when_enabled() {
         let settings = RecordingSettings {
+            record_meetings: true,
             offer_to_record: true,
             ..Default::default()
         };
@@ -1072,7 +1431,15 @@ mod tests {
             attendees: Vec::new(),
             badged: true,
         };
-        let offered = tray_menu(&idle(), &settings, None, None, Some(&offer));
+        let offered = tray_menu(
+            &idle(),
+            &settings,
+            None,
+            None,
+            Some(&offer),
+            &[],
+            fixed_now(),
+        );
         assert_eq!(
             offered[0],
             MenuItemModel::Action {
@@ -1089,15 +1456,24 @@ mod tests {
         );
 
         let disabled = RecordingSettings {
+            record_meetings: true,
             offer_to_record: false,
             ..Default::default()
         };
-        let suppressed = tray_menu(&idle(), &disabled, None, None, Some(&offer));
+        let suppressed = tray_menu(
+            &idle(),
+            &disabled,
+            None,
+            None,
+            Some(&offer),
+            &[],
+            fixed_now(),
+        );
         assert_eq!(labels(&suppressed)[0], "Start Recording");
 
         let mut live = recording(RecordingPhase::Recording, TrackRunState::Active);
         live.still_recording_nudge = true;
-        let nudged = tray_menu(&live, &settings, None, None, None);
+        let nudged = tray_menu(&live, &settings, None, None, None, &[], fixed_now());
         assert_eq!(
             status_lines(&nudged),
             ["Recording “Weekly Sync” · 12:34", "Still recording — Stop?"]
@@ -1108,10 +1484,10 @@ mod tests {
     fn a_transcription_keeps_the_icon_shown_and_has_its_own_icon() {
         let off = RecordingSettings::default();
         assert!(
-            tray_visible(&off, &idle(), true, true),
+            tray_visible(&off, &idle(), true, false, true),
             "turned off mid-transcription"
         );
-        assert!(!tray_visible(&off, &idle(), true, false));
+        assert!(!tray_visible(&off, &idle(), true, false, false));
         assert_eq!(icon_kind(&idle(), true, true), TrayIconKind::Transcribing);
         let live = recording(RecordingPhase::Recording, TrackRunState::Active);
         assert_eq!(
@@ -1158,12 +1534,204 @@ mod tests {
     }
 
     #[test]
+    fn upcoming_meetings_render_with_join_or_open_commands_and_tomorrow_heading() {
+        let now = fixed_now();
+        let meetings = vec![
+            meeting_at(
+                "m1",
+                "Weekly Sync",
+                "2026-11-27T09:45:00-05:00",
+                "2026-11-27T10:15:00-05:00",
+                Some("https://meet.google.com/aaa-bbbb-ccc"),
+                Some("Google Meet"),
+                false,
+            ),
+            meeting_at(
+                "m2",
+                "Design Review",
+                "2026-11-27T14:00:00-05:00",
+                "2026-11-27T14:30:00-05:00",
+                Some("https://call.example.com/123"),
+                None,
+                false,
+            ),
+            meeting_at(
+                "m3",
+                "Coffee Chat",
+                "2026-11-27T15:30:00-05:00",
+                "2026-11-27T16:00:00-05:00",
+                None,
+                None,
+                false,
+            ),
+        ];
+
+        // Recording off: only upcoming meetings + footer appear.
+        let rec_off = RecordingSettings::default();
+        let menu_off = tray_menu(&idle(), &rec_off, None, None, None, &meetings, now);
+        assert_eq!(
+            labels(&menu_off),
+            [
+                "[Upcoming Today]",
+                "Now · Weekly Sync · Join Google Meet",
+                "2:00 PM · Design Review · Join",
+                "3:30 PM · Coffee Chat",
+                "---",
+                "Open ThreeStrands",
+                "Settings…",
+                "Quit ThreeStrands",
+            ]
+        );
+        assert_eq!(
+            menu_off[1],
+            MenuItemModel::Action {
+                command: TrayCommand::JoinMeeting(0),
+                label: "Now · Weekly Sync · Join Google Meet".into(),
+            }
+        );
+        assert_eq!(
+            menu_off[3],
+            MenuItemModel::Action {
+                command: TrayCommand::OpenMeeting(2),
+                label: "3:30 PM · Coffee Chat".into(),
+            }
+        );
+
+        // Recording on + offer: upcoming section followed by recording section.
+        let offer = TrayOffer {
+            event_ref: None,
+            title: "Weekly Sync".into(),
+            attendees: Vec::new(),
+            badged: false,
+        };
+        let menu_on = tray_menu(&idle(), &rec_on(), None, None, Some(&offer), &meetings, now);
+        assert_eq!(
+            labels(&menu_on),
+            [
+                "[Upcoming Today]",
+                "Now · Weekly Sync · Join Google Meet",
+                "2:00 PM · Design Review · Join",
+                "3:30 PM · Coffee Chat",
+                "---",
+                "Record “Weekly Sync”",
+                "Start Recording",
+                "---",
+                "Open ThreeStrands",
+                "Settings…",
+                "Quit ThreeStrands",
+            ]
+        );
+
+        // Tomorrow fallback uses Tomorrow heading.
+        let tomorrow_only = vec![meeting_at(
+            "t1",
+            "Tomorrow Kickoff",
+            "2026-11-28T09:00:00-05:00",
+            "2026-11-28T09:30:00-05:00",
+            Some("https://zoom.us/j/123"),
+            Some("Zoom"),
+            true,
+        )];
+        let menu_tmr = tray_menu(&idle(), &rec_off, None, None, None, &tomorrow_only, now);
+        assert_eq!(
+            labels(&menu_tmr),
+            [
+                "[Tomorrow]",
+                "9:00 AM · Tomorrow Kickoff · Join Zoom",
+                "---",
+                "Open ThreeStrands",
+                "Settings…",
+                "Quit ThreeStrands",
+            ]
+        );
+    }
+
+    #[test]
+    fn tray_title_formats_countdown_and_respects_window_and_mode() {
+        let now = fixed_now();
+        let active = vec![meeting_at(
+            "m1",
+            "Weekly Sync",
+            "2026-11-27T09:42:00-05:00",
+            "2026-11-27T10:18:00-05:00",
+            None,
+            None,
+            false,
+        )];
+        let soon = vec![meeting_at(
+            "m2",
+            "Quarterly Planning Discussion With Team",
+            "2026-11-27T10:12:00-05:00",
+            "2026-11-27T11:00:00-05:00",
+            None,
+            None,
+            false,
+        )];
+        let in_90 = vec![meeting_at(
+            "m3",
+            "Design Review",
+            "2026-11-27T11:30:00-05:00",
+            "2026-11-27T12:00:00-05:00",
+            None,
+            None,
+            false,
+        )];
+        let far = vec![meeting_at(
+            "m4",
+            "Afternoon Sync",
+            "2026-11-27T12:01:00-05:00",
+            "2026-11-27T12:30:00-05:00",
+            None,
+            None,
+            false,
+        )];
+
+        let defaults = RecordingSettings::default();
+        assert_eq!(
+            tray_title(&idle(), &defaults, &active, now).as_deref(),
+            Some("Weekly Sync · 18m left")
+        );
+        assert_eq!(
+            tray_title(&idle(), &defaults, &soon, now).as_deref(),
+            Some("Quarterly Planning… · in 12m")
+        );
+        assert_eq!(
+            tray_title(&idle(), &defaults, &in_90, now).as_deref(),
+            Some("Design Review · in 1h 30m")
+        );
+        assert_eq!(tray_title(&idle(), &defaults, &far, now), None);
+
+        let time_only = RecordingSettings {
+            tray_next_meeting_title: TrayNextMeetingTitle::TimeOnly,
+            ..Default::default()
+        };
+        assert_eq!(
+            tray_title(&idle(), &time_only, &soon, now).as_deref(),
+            Some("in 12m")
+        );
+        assert_eq!(
+            tray_title(&idle(), &time_only, &active, now).as_deref(),
+            Some("18m left")
+        );
+
+        let off = RecordingSettings {
+            tray_next_meeting_title: TrayNextMeetingTitle::Off,
+            ..Default::default()
+        };
+        assert_eq!(tray_title(&idle(), &off, &active, now), None);
+
+        let live = recording(RecordingPhase::Recording, TrackRunState::Active);
+        assert_eq!(tray_title(&live, &defaults, &active, now), None);
+    }
+
+    #[test]
     fn event_payloads_use_the_contract_shape() {
         assert_eq!(
             serde_json::to_value(TrayCommandEvent {
                 command: TrayRequest::OpenSettings,
                 recording_id: None,
                 start_request: None,
+                meeting_event: None,
             })
             .unwrap(),
             serde_json::json!({ "command": "openSettings" })
@@ -1173,6 +1741,7 @@ mod tests {
                 command: TrayRequest::Start,
                 recording_id: None,
                 start_request: None,
+                meeting_event: None,
             })
             .unwrap(),
             serde_json::json!({ "command": "start" })
@@ -1186,6 +1755,7 @@ mod tests {
                     title: "Zoom Call".into(),
                     attendees: Vec::new(),
                 }),
+                meeting_event: None,
             })
             .unwrap(),
             serde_json::json!({
@@ -1198,6 +1768,7 @@ mod tests {
                 command: TrayRequest::Review,
                 recording_id: Some("r1".into()),
                 start_request: None,
+                meeting_event: None,
             })
             .unwrap(),
             serde_json::json!({ "command": "review", "recordingId": "r1" })

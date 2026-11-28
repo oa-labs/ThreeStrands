@@ -283,7 +283,12 @@ export function App() {
   } = selection;
   const [notice, setNotice] = useNotice();
   const openRecordingSettings = useCallback(() => openSettingsAt("meetingRecording"), [openSettingsAt]);
-  const recording = useMeetingRecording({ onNotice: setNotice, onOpenSettings: openRecordingSettings });
+  const openTrayMeetingRef = useRef<(event?: ScheduleEvent) => void>(() => {});
+  const recording = useMeetingRecording({
+    onNotice: setNotice,
+    onOpenSettings: openRecordingSettings,
+    onOpenMeeting: (event) => openTrayMeetingRef.current(event),
+  });
   const recordingCommands = useMemo<RecordingCommands | undefined>(() => recording.supported ? {
     enabled: recording.enabled,
     state: recording.status.state,
@@ -376,8 +381,12 @@ export function App() {
     keepInTouchDueCount, refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openContactsView, contactCardActions,
     scheduleShown, setSideColumn, showMailContext, narrowLayout, sideDrawerOpen, setSideDrawerOpen, mailPanel,
-    contextPersonEmail, openCalendarView, notesRequest, consumeNotesRequest, openNote,
+    contextPersonEmail, openCalendarView, openTodayView, notesRequest, consumeNotesRequest, openNote,
   } = workspaces;
+  openTrayMeetingRef.current = (event?: ScheduleEvent) => {
+    if (event) openCalendarView(new Date(event.start), event);
+    else openTodayView();
+  };
   const inboxAgents = useInboxAgents(activeAccountId, settingsOpen);
   const openAssistantTask = (id: string) => {
     void mailClient.listTasks().then(list => {

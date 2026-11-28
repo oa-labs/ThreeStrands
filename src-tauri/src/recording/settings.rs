@@ -60,6 +60,16 @@ pub fn effective_engine(
     }
 }
 
+/// How the next upcoming meeting is shown beside the macOS menu bar icon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TrayNextMeetingTitle {
+    #[default]
+    TitleAndTime,
+    TimeOnly,
+    Off,
+}
+
 /// How long a recording's audio files are kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +96,8 @@ pub struct RecordingSettings {
     pub transcribe_during_meetings: bool,
     pub keep_audio: KeepAudio,
     pub offer_to_record: bool,
+    pub show_upcoming_meetings_in_tray: bool,
+    pub tray_next_meeting_title: TrayNextMeetingTitle,
     pub remind_to_tell: bool,
     pub summarize_with_ai: bool,
     pub include_my_notes: bool,
@@ -112,6 +124,8 @@ impl Default for RecordingSettings {
             transcribe_during_meetings: true,
             keep_audio: KeepAudio::Days7,
             offer_to_record: true,
+            show_upcoming_meetings_in_tray: true,
+            tray_next_meeting_title: TrayNextMeetingTitle::TitleAndTime,
             remind_to_tell: true,
             summarize_with_ai: false,
             include_my_notes: false,
@@ -146,6 +160,11 @@ mod tests {
         assert!(!settings.summarize_with_ai);
         assert!(!settings.consent_acknowledged);
         assert!(settings.offer_to_record && settings.remind_to_tell);
+        assert!(settings.show_upcoming_meetings_in_tray);
+        assert_eq!(
+            settings.tray_next_meeting_title,
+            TrayNextMeetingTitle::TitleAndTime
+        );
         assert_eq!(settings.keep_audio, KeepAudio::Days7);
         assert_eq!(settings.transcription_model, TranscriptionModelChoice::Fast);
         assert!(settings.transcribe_during_meetings);
@@ -192,6 +211,20 @@ mod tests {
         assert!(!older.cloud_transcription_enabled);
         assert!(older.cloud_transcription_diarize);
         assert!(older.offer_to_record, "a missing field takes its default");
+        assert!(
+            older.show_upcoming_meetings_in_tray,
+            "older settings show upcoming meetings in the tray by default"
+        );
+        assert_eq!(
+            older.tray_next_meeting_title,
+            TrayNextMeetingTitle::TitleAndTime
+        );
+        assert_eq!(json["showUpcomingMeetingsInTray"], true);
+        assert_eq!(json["trayNextMeetingTitle"], "titleAndTime");
+        for mode in ["titleAndTime", "timeOnly", "off"] {
+            let parsed: TrayNextMeetingTitle = serde_json::from_value(mode.into()).unwrap();
+            assert_eq!(serde_json::to_value(parsed).unwrap(), mode);
+        }
         assert!(
             older.transcribe_during_meetings,
             "settings saved before the switch existed read as on"

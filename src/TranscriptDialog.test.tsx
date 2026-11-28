@@ -10,7 +10,7 @@ const recording: MeetingRecording = {
 };
 const cloudEnabledSettings: RecordingSettings = {
   recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast", transcriptionLanguage: null,
-  transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true, summarizeWithAi: false, includeMyNotes: false,
+  transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, showUpcomingMeetingsInTray: true, trayNextMeetingTitle: "titleAndTime", remindToTell: true, summarizeWithAi: false, includeMyNotes: false,
   attachTranscript: false, consentAcknowledged: true, customVocabulary: ["ThreeStrands"], cloudTranscriptionEnabled: true,
   cloudTranscriptionDisclosureAcknowledged: true, cloudTranscriptionDefault: false, cloudTranscriptionProvider: "openrouter",
   cloudTranscriptionModel: "microsoft/mai-transcribe-2", cloudTranscriptionEndpoint: null, cloudTranscriptionDiarize: true,

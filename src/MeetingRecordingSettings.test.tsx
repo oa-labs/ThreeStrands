@@ -22,7 +22,7 @@ vi.mock("./recordingEvents", async (original) => ({
 const available: RecordingCapabilities = { supported: true, systemAudio: { kind: "available" }, speechAnalyzer: false };
 const defaults: RecordingSettings = {
   recordMeetings: false, microphoneDeviceUid: null, transcriptionEngine: "auto", transcriptionModel: "fast", transcriptionLanguage: null,
-  transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, remindToTell: true,
+  transcribeDuringMeetings: true, keepAudio: "days7", offerToRecord: true, showUpcomingMeetingsInTray: true, trayNextMeetingTitle: "titleAndTime", remindToTell: true,
   summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: false,
   customVocabulary: [], cloudTranscriptionEnabled: false, cloudTranscriptionDisclosureAcknowledged: false, cloudTranscriptionDefault: false,
   cloudTranscriptionProvider: null, cloudTranscriptionModel: "microsoft/mai-transcribe-2", cloudTranscriptionEndpoint: null, cloudTranscriptionDiarize: true,
@@ -359,6 +359,29 @@ describe("Transcription Model", () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, offerToRecord: false }));
     expect(toggle).not.toBeChecked();
+  });
+
+  it("saves Show Upcoming Meetings in Menu Bar and Menu Bar Countdown mode", async () => {
+    const { save } = setup();
+    const upcomingToggle = await screen.findByRole("checkbox", { name: "Show Upcoming Meetings in Menu Bar" });
+    const countdownSelect = await screen.findByRole("combobox", { name: "Menu Bar Countdown" });
+    await waitFor(() => expect(upcomingToggle).toBeEnabled());
+    expect(upcomingToggle).toBeChecked();
+    expect(upcomingToggle).toHaveAccessibleDescription();
+    expect(countdownSelect).toBeEnabled();
+    expect(countdownSelect).toHaveValue("titleAndTime");
+    expect(countdownSelect).toHaveAccessibleDescription();
+
+    fireEvent.change(countdownSelect, { target: { value: "timeOnly" } });
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ ...defaults, trayNextMeetingTitle: "timeOnly" }));
+
+    fireEvent.click(upcomingToggle);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({
+      ...defaults,
+      showUpcomingMeetingsInTray: false,
+      trayNextMeetingTitle: "timeOnly",
+    }));
+    expect(countdownSelect).toBeDisabled();
   });
 
   it("lets the user add, review Sent-mail suggestions, and remove Custom Vocabulary without auto-saving suggestions", async () => {

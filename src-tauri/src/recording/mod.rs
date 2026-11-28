@@ -11,6 +11,7 @@
 
 pub mod capture;
 pub mod files;
+pub mod meeting_links;
 pub mod offers;
 pub mod permissions;
 pub mod policy;

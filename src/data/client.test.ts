@@ -98,7 +98,7 @@ describe("native account requests", () => {
     await client.recordingSettings();
     expect(invoke).toHaveBeenLastCalledWith("recording_settings", undefined);
     const settings = {
-      recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto" as const, transcriptionModel: "accurate" as const, transcriptionLanguage: null, transcribeDuringMeetings: false, keepAudio: "days30" as const, offerToRecord: true, remindToTell: false, summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true,
+      recordMeetings: true, microphoneDeviceUid: null, transcriptionEngine: "auto" as const, transcriptionModel: "accurate" as const, transcriptionLanguage: null, transcribeDuringMeetings: false, keepAudio: "days30" as const, offerToRecord: true, showUpcomingMeetingsInTray: true, trayNextMeetingTitle: "titleAndTime" as const, remindToTell: false, summarizeWithAi: false, includeMyNotes: false, attachTranscript: false, consentAcknowledged: true,
       customVocabulary: [], cloudTranscriptionEnabled: false, cloudTranscriptionDisclosureAcknowledged: false, cloudTranscriptionDefault: false, cloudTranscriptionProvider: null, cloudTranscriptionModel: "microsoft/mai-transcribe-2", cloudTranscriptionEndpoint: null, cloudTranscriptionDiarize: true,
     };
     await client.setRecordingSettings(settings);

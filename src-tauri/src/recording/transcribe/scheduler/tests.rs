@@ -78,6 +78,8 @@ impl RecordingNotifier for Recorder {
         transcribing: Option<&TrayTranscription>,
         _: Option<&TrayReview>,
         _: Option<&TrayOffer>,
+        _: &[crate::db::note_entities::TrayMeeting],
+        _: std::time::SystemTime,
         _: bool,
     ) {
         self.0

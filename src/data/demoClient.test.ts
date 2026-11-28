@@ -35,6 +35,8 @@ describe("demoClient recording settings", () => {
       transcribeDuringMeetings: true,
       keepAudio: "days7",
       offerToRecord: true,
+      showUpcomingMeetingsInTray: true,
+      trayNextMeetingTitle: "titleAndTime",
       remindToTell: true,
       summarizeWithAi: false,
       includeMyNotes: false,
