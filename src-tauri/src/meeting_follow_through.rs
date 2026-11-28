@@ -380,7 +380,8 @@ fn render_section_lines(
 }
 
 /// `body` with a follow-through section for `occurrence`, dated `date`,
-/// as a top-level list item linking the occurrence by `name`. It goes after
+/// as a top-level list item linking the occurrence by `name`, with an
+/// optional recap summary and transcript attachment link. It goes after
 /// the last top-level meeting block of this occurrence (its meeting line, or
 /// an earlier follow-through), else after the top-level item holding a
 /// nested meeting line, else at the end of the note. Refuses a note whose
@@ -389,18 +390,6 @@ fn render_section_lines(
 /// The section is always top-level, with its items one level in: the note
 /// parser reads a list item indented four or more columns after a sibling
 /// at that depth as code, so deeper items would lose their tasks and links.
-pub fn insert(
-    note: &str,
-    body: &str,
-    occurrence: &NoteReference,
-    name: &str,
-    date: &str,
-    items: &[FollowThroughItem],
-) -> Result<FollowThroughInsert, String> {
-    insert_with_extras(note, body, occurrence, name, date, None, items, None)
-}
-
-/// Like [`insert`], with an optional recap summary and transcript attachment link.
 pub fn insert_with_extras(
     note: &str,
     body: &str,
@@ -680,7 +669,16 @@ mod tests {
                 &fixtures.events,
             ))
             .unwrap();
-            let actual = match insert("note", &body, target, &case.meeting, &case.date, &items) {
+            let actual = match insert_with_extras(
+                "note",
+                &body,
+                target,
+                &case.meeting,
+                &case.date,
+                None,
+                &items,
+                None,
+            ) {
                 Ok(inserted) => {
                     // Removing the inserted range gives back the original.
                     let mut undone = inserted.body.clone();

@@ -44,8 +44,10 @@ pub trait MicActivityProbe: Send + Sync {
     fn snapshot(&self) -> MicActivitySnapshot;
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 pub struct NullMicProbe;
 
+#[cfg(any(not(target_os = "macos"), test))]
 impl MicActivityProbe for NullMicProbe {
     fn snapshot(&self) -> MicActivitySnapshot {
         MicActivitySnapshot::default()
