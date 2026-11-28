@@ -219,6 +219,21 @@ impl ProposalKind {
         }
     }
 
+    /// How long a pending suggestion of this kind stays before it expires,
+    /// measured from when it was created. Exhaustive, so a new kind cannot
+    /// compile without a limit.
+    pub(crate) fn expires_after_secs(self) -> i64 {
+        let days = match self {
+            Self::DraftReply => policy::EXPIRY_DRAFT_REPLY_DAYS,
+            Self::ArchiveWithSummary => policy::EXPIRY_ARCHIVE_WITH_SUMMARY_DAYS,
+            Self::ArchiveAsExpired => policy::EXPIRY_ARCHIVE_AS_EXPIRED_DAYS,
+            Self::ArchiveAsResolved => policy::EXPIRY_ARCHIVE_AS_RESOLVED_DAYS,
+            Self::SenderHygiene => policy::EXPIRY_SENDER_HYGIENE_DAYS,
+            Self::DigestItem => policy::EXPIRY_DIGEST_ITEM_DAYS,
+        };
+        days * 86_400
+    }
+
     pub(crate) fn parse(raw: &str) -> Option<Self> {
         match raw {
             "archive_with_summary" => Some(Self::ArchiveWithSummary),
@@ -239,6 +254,9 @@ pub(crate) enum ProposalState {
     Accepted,
     Dismissed,
     Superseded,
+    /// Left unanswered past its kind's limit. Blocks re-proposal of the same
+    /// thread revision like a dismissal does.
+    Expired,
 }
 
 impl ProposalState {
@@ -248,6 +266,7 @@ impl ProposalState {
             Self::Accepted => "accepted",
             Self::Dismissed => "dismissed",
             Self::Superseded => "superseded",
+            Self::Expired => "expired",
         }
     }
 
@@ -257,6 +276,7 @@ impl ProposalState {
             "accepted" => Some(Self::Accepted),
             "dismissed" => Some(Self::Dismissed),
             "superseded" => Some(Self::Superseded),
+            "expired" => Some(Self::Expired),
             _ => None,
         }
     }

@@ -129,7 +129,7 @@ fn load_aging_inbox_threads(
                WHERE p.agent_id = ?1
                  AND p.thread_id = t.id
                  AND p.thread_revision = t.last_message_at
-                 AND p.state IN ('pending', 'dismissed')
+                 AND p.state IN ('pending', 'dismissed', 'expired')
            )
            AND COALESCE(NULLIF(t.last_received_at, ''), t.last_message_at) <= ?2",
     );
@@ -622,7 +622,7 @@ fn select_stale_reads_digest(
                  AND ((p.agent_id IN ('stale_reads', 'stale_reads_digest') AND p.state = 'pending')
                    OR (p.agent_id = 'stale_reads_digest'
                        AND p.thread_revision = t.last_message_at
-                       AND p.state = 'dismissed'))
+                       AND p.state IN ('dismissed', 'expired')))
            )
            AND (
                t.labels_json LIKE '%\"CATEGORY_UPDATES\"%'
@@ -990,7 +990,7 @@ fn select_sender_hygiene(
              FROM inbox_agent_proposals
              WHERE agent_id = ?1
                AND json_extract(payload_json, '$.senderEmail') IS NOT NULL
-               AND (state = 'pending' OR (state = 'dismissed' AND updated_at >= ?2))",
+               AND (state = 'pending' OR (state IN ('dismissed', 'expired') AND updated_at >= ?2))",
         )?;
         let rows = stmt.query_map(
             params![AgentId::SenderHygiene.as_str(), dismissed_since],
@@ -1088,7 +1088,7 @@ fn select_sender_hygiene(
         let seen: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM inbox_agent_proposals
                  WHERE agent_id = ?1 AND thread_id = ?2 AND thread_revision = ?3
-                   AND state IN ('pending', 'dismissed'))",
+                   AND state IN ('pending', 'dismissed', 'expired'))",
             params![
                 AgentId::SenderHygiene.as_str(),
                 anchor.id,

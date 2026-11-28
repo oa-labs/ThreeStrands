@@ -45,6 +45,18 @@ pub(crate) const DIGEST_ITEM_BODY_CHARS: usize = 1_500;
 /// Longest deadline label a digest item keeps.
 pub(crate) const DIGEST_DEADLINE_MAX_CHARS: usize = 40;
 
+/// How long a pending suggestion waits, from its creation, before it expires.
+/// Expired suggestions disappear and are not proposed again for the same
+/// conversation revision; new mail in the conversation allows a fresh one.
+/// Stale Read deadlines are free text ("Dec 16", no year), so they do not
+/// shorten the limit.
+pub(crate) const EXPIRY_DRAFT_REPLY_DAYS: i64 = 7;
+pub(crate) const EXPIRY_ARCHIVE_WITH_SUMMARY_DAYS: i64 = 14;
+pub(crate) const EXPIRY_ARCHIVE_AS_EXPIRED_DAYS: i64 = 21;
+pub(crate) const EXPIRY_ARCHIVE_AS_RESOLVED_DAYS: i64 = 21;
+pub(crate) const EXPIRY_SENDER_HYGIENE_DAYS: i64 = 30;
+pub(crate) const EXPIRY_DIGEST_ITEM_DAYS: i64 = 14;
+
 pub(crate) fn valid_schedule_hours(hours: Option<i64>) -> bool {
     matches!(hours, None | Some(24) | Some(168))
 }

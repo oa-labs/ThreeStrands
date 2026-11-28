@@ -313,6 +313,31 @@ fn list_proposals_conn(
         [now],
     )?;
 
+    // What is still pending after those checks and past its kind's limit has
+    // gone unanswered: it expires, which blocks re-proposal of the revision.
+    conn.execute(
+        "UPDATE inbox_agent_proposals
+         SET state = 'expired', updated_at = ?1
+         WHERE state = 'pending'
+           AND ?1 - created_at >= CASE kind
+               WHEN 'draft_reply' THEN ?2
+               WHEN 'archive_with_summary' THEN ?3
+               WHEN 'archive_as_expired' THEN ?4
+               WHEN 'archive_as_resolved' THEN ?5
+               WHEN 'sender_hygiene' THEN ?6
+               WHEN 'digest_item' THEN ?7
+               ELSE NULL END",
+        params![
+            now,
+            ProposalKind::DraftReply.expires_after_secs(),
+            ProposalKind::ArchiveWithSummary.expires_after_secs(),
+            ProposalKind::ArchiveAsExpired.expires_after_secs(),
+            ProposalKind::ArchiveAsResolved.expires_after_secs(),
+            ProposalKind::SenderHygiene.expires_after_secs(),
+            ProposalKind::DigestItem.expires_after_secs(),
+        ],
+    )?;
+
     let mut sql = String::from(
         "SELECT p.id, p.agent_id, p.account_id, p.thread_id, p.thread_revision,
                 t.subject, t.participants_json,
@@ -851,7 +876,15 @@ impl Database {
         &self,
         account_id: Option<&str>,
     ) -> DbResult<InboxAgentsSnapshot> {
-        let now = chrono::Utc::now().timestamp();
+        self.inbox_agents_snapshot_at(account_id, chrono::Utc::now().timestamp())
+    }
+
+    /// The snapshot as of `now`, which decides what has expired.
+    pub(crate) fn inbox_agents_snapshot_at(
+        &self,
+        account_id: Option<&str>,
+        now: i64,
+    ) -> DbResult<InboxAgentsSnapshot> {
         self.with_transaction(|conn| {
             Ok(InboxAgentsSnapshot {
                 runner_enabled: runner_enabled_conn(conn)?,
@@ -1169,13 +1202,17 @@ mod tests {
             )
             .unwrap());
 
-        let snap = db.inbox_agents_snapshot(None).unwrap();
+        let snap = db.inbox_agents_snapshot_at(None, 140).unwrap();
         assert_eq!(snap.proposals.len(), 1);
         let id = snap.proposals[0].id.clone();
 
         db.resolve_inbox_agent_proposal(&id, ProposalState::Dismissed, 110)
             .unwrap();
-        assert!(db.inbox_agents_snapshot(None).unwrap().proposals.is_empty());
+        assert!(db
+            .inbox_agents_snapshot_at(None, 140)
+            .unwrap()
+            .proposals
+            .is_empty());
 
         // Re-inserting for same revision is ignored.
         assert!(!db
@@ -1221,7 +1258,11 @@ mod tests {
             .unwrap()
             .execute("UPDATE threads SET archived = 1 WHERE id = 't2'", [])
             .unwrap();
-        assert!(db.inbox_agents_snapshot(None).unwrap().proposals.is_empty());
+        assert!(db
+            .inbox_agents_snapshot_at(None, 140)
+            .unwrap()
+            .proposals
+            .is_empty());
     }
 
     // ---- Sender Hygiene Advisor ----
@@ -1585,7 +1626,7 @@ mod tests {
         assert_eq!(run(now), 1);
         // Pending already: a second run proposes nothing new.
         assert_eq!(run(now), 0);
-        let id = db.inbox_agents_snapshot(None).unwrap().proposals[0]
+        let id = db.inbox_agents_snapshot_at(None, now).unwrap().proposals[0]
             .id
             .clone();
         db.resolve_inbox_agent_proposal(&id, ProposalState::Dismissed, now - 10 * 86_400)
@@ -1702,7 +1743,13 @@ mod tests {
             )
             .unwrap();
         }
-        assert_eq!(db.inbox_agents_snapshot(None).unwrap().proposals.len(), 2);
+        assert_eq!(
+            db.inbox_agents_snapshot_at(None, now)
+                .unwrap()
+                .proposals
+                .len(),
+            2
+        );
         db.connection()
             .unwrap()
             .execute(
@@ -1711,7 +1758,7 @@ mod tests {
                 [],
             )
             .unwrap();
-        let remaining = db.inbox_agents_snapshot(None).unwrap().proposals;
+        let remaining = db.inbox_agents_snapshot_at(None, now).unwrap().proposals;
         assert_eq!(remaining.len(), 1);
         assert_eq!(
             remaining[0].payload.sender_email.as_deref(),
@@ -1990,7 +2037,7 @@ mod tests {
             1,
         )
         .unwrap();
-        let id = db.inbox_agents_snapshot(None).unwrap().proposals[0]
+        let id = db.inbox_agents_snapshot_at(None, 3).unwrap().proposals[0]
             .id
             .clone();
         db.resolve_inbox_agent_proposal(&id, ProposalState::Dismissed, 2)
@@ -2015,11 +2062,340 @@ mod tests {
             1,
         )
         .unwrap();
-        assert_eq!(db.inbox_agents_snapshot(None).unwrap().proposals.len(), 1);
+        assert_eq!(
+            db.inbox_agents_snapshot_at(None, 3)
+                .unwrap()
+                .proposals
+                .len(),
+            1
+        );
         db.connection()
             .unwrap()
             .execute("UPDATE threads SET archived = 1 WHERE id = 'gone'", [])
             .unwrap();
-        assert!(db.inbox_agents_snapshot(None).unwrap().proposals.is_empty());
+        assert!(db
+            .inbox_agents_snapshot_at(None, 3)
+            .unwrap()
+            .proposals
+            .is_empty());
+    }
+
+    // ---- Suggestion expiry ----
+
+    const DAY: i64 = 86_400;
+
+    fn save_kind(db: &Database, thread: &str, rev: &str, kind: ProposalKind, created: i64) {
+        let agent = match kind {
+            ProposalKind::DraftReply => AgentId::AgingReplies,
+            ProposalKind::SenderHygiene => AgentId::SenderHygiene,
+            ProposalKind::DigestItem => AgentId::StaleReadsDigest,
+            ProposalKind::ArchiveAsExpired | ProposalKind::ArchiveAsResolved => {
+                AgentId::ResolvedAndExpired
+            }
+            ProposalKind::ArchiveWithSummary => AgentId::StaleReads,
+        };
+        assert!(db
+            .save_inbox_agent_proposal(
+                agent,
+                "me@example.com",
+                thread,
+                rev,
+                kind,
+                "H",
+                "R",
+                &ProposalPayload::default(),
+                &[],
+                created,
+            )
+            .unwrap());
+    }
+
+    fn pending_at(db: &Database, now: i64) -> usize {
+        db.with_transaction(|conn| list_proposals_conn(conn, None, now))
+            .unwrap()
+            .len()
+    }
+
+    fn state_of(db: &Database, thread: &str) -> String {
+        db.connection()
+            .unwrap()
+            .query_row(
+                "SELECT state FROM inbox_agent_proposals WHERE thread_id = ?1",
+                [thread],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn every_kind_expires_exactly_at_its_limit() {
+        let limits = [
+            (ProposalKind::DraftReply, 7),
+            (ProposalKind::ArchiveWithSummary, 14),
+            (ProposalKind::ArchiveAsExpired, 21),
+            (ProposalKind::ArchiveAsResolved, 21),
+            (ProposalKind::SenderHygiene, 30),
+            (ProposalKind::DigestItem, 14),
+        ];
+        for (kind, days) in limits {
+            assert_eq!(kind.expires_after_secs(), days * DAY);
+            let db = hygiene_db();
+            seed_thread(
+                &db,
+                "t",
+                "S",
+                "a@x.example",
+                "2026-11-01T10:00:00Z",
+                "Body",
+                "[\"INBOX\"]",
+                None,
+            );
+            save_kind(&db, "t", "2026-11-01T10:00:00Z", kind, 1_000);
+            assert_eq!(pending_at(&db, 1_000 + days * DAY - 1), 1, "{kind:?} below");
+            assert_eq!(state_of(&db, "t"), "pending");
+            assert_eq!(pending_at(&db, 1_000 + days * DAY), 0, "{kind:?} at");
+            assert_eq!(state_of(&db, "t"), "expired");
+        }
+    }
+
+    #[test]
+    fn expiry_records_when_it_happened_and_leaves_resolved_proposals_alone() {
+        let db = hygiene_db();
+        for id in ["a", "b"] {
+            seed_thread(
+                &db,
+                id,
+                "S",
+                "a@x.example",
+                "2026-11-01T10:00:00Z",
+                "Body",
+                "[\"INBOX\"]",
+                None,
+            );
+            save_kind(&db, id, "2026-11-01T10:00:00Z", ProposalKind::DraftReply, 0);
+        }
+        let accepted: String = db
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM inbox_agent_proposals WHERE thread_id = 'a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        db.resolve_inbox_agent_proposal(&accepted, ProposalState::Accepted, 5)
+            .unwrap();
+        let now = 30 * DAY;
+        assert_eq!(pending_at(&db, now), 0);
+        assert_eq!(state_of(&db, "a"), "accepted");
+        assert_eq!(state_of(&db, "b"), "expired");
+        let updated: i64 = db
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT updated_at FROM inbox_agent_proposals WHERE thread_id = 'b'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(updated, now);
+    }
+
+    #[test]
+    fn superseded_wins_over_expired() {
+        let db = hygiene_db();
+        seed_thread(
+            &db,
+            "t",
+            "S",
+            "a@x.example",
+            "2026-11-01T10:00:00Z",
+            "Body",
+            "[\"INBOX\"]",
+            None,
+        );
+        save_kind(
+            &db,
+            "t",
+            "2026-11-01T10:00:00Z",
+            ProposalKind::DraftReply,
+            0,
+        );
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET archived = 1 WHERE id = 't'", [])
+            .unwrap();
+        assert_eq!(pending_at(&db, 100 * DAY), 0);
+        assert_eq!(state_of(&db, "t"), "superseded");
+    }
+
+    #[test]
+    fn resolving_a_proposal_as_expired_is_rejected() {
+        let db = hygiene_db();
+        seed_thread(
+            &db,
+            "t",
+            "S",
+            "a@x.example",
+            "2026-11-01T10:00:00Z",
+            "Body",
+            "[\"INBOX\"]",
+            None,
+        );
+        save_kind(
+            &db,
+            "t",
+            "2026-11-01T10:00:00Z",
+            ProposalKind::DraftReply,
+            0,
+        );
+        let id: String = db
+            .connection()
+            .unwrap()
+            .query_row("SELECT id FROM inbox_agent_proposals", [], |r| r.get(0))
+            .unwrap();
+        for state in [
+            ProposalState::Expired,
+            ProposalState::Superseded,
+            ProposalState::Pending,
+        ] {
+            assert!(db.resolve_inbox_agent_proposal(&id, state, 1).is_err());
+        }
+        assert_eq!(state_of(&db, "t"), "pending");
+    }
+
+    #[test]
+    fn an_expired_proposal_blocks_the_same_revision_until_new_mail_arrives() {
+        let db = hygiene_db();
+        seed_thread(
+            &db,
+            "old",
+            "Old thread",
+            "a@x.example",
+            "2026-11-01T10:00:00Z",
+            &"Long article content. ".repeat(80),
+            "[\"INBOX\"]",
+            None,
+        );
+        let cfg = db.get_inbox_agent_config(AgentId::StaleReads).unwrap();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-25T10:00:00Z")
+            .unwrap()
+            .timestamp();
+        let candidates = |db: &Database| {
+            db.with_inbox_agent_candidates(&cfg, now)
+                .unwrap()
+                .ai_candidates
+                .into_iter()
+                .map(|c| c.thread_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(candidates(&db), vec!["old".to_string()]);
+        save_kind(
+            &db,
+            "old",
+            "2026-11-01T10:00:00Z",
+            ProposalKind::ArchiveWithSummary,
+            now - 20 * DAY,
+        );
+        assert_eq!(pending_at(&db, now), 0);
+        assert_eq!(state_of(&db, "old"), "expired");
+        assert!(candidates(&db).is_empty(), "same revision stays blocked");
+        // The unique index also rejects a direct re-proposal.
+        assert!(!db
+            .save_inbox_agent_proposal(
+                AgentId::StaleReads,
+                "me@example.com",
+                "old",
+                "2026-11-01T10:00:00Z",
+                ProposalKind::ArchiveWithSummary,
+                "H",
+                "R",
+                &ProposalPayload::default(),
+                &[],
+                now,
+            )
+            .unwrap());
+        // New mail is a new revision and may be proposed again.
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE threads SET last_message_at = '2026-11-02T10:00:00Z' WHERE id = 'old'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(candidates(&db), vec!["old".to_string()]);
+    }
+
+    #[test]
+    fn an_expired_digest_item_is_not_proposed_again_for_the_same_revision() {
+        let db = hygiene_db();
+        seed_digest_thread(&db, "once", "2026-11-10T10:00:00Z");
+        save_kind(
+            &db,
+            "once",
+            "2026-11-10T10:00:00Z",
+            ProposalKind::DigestItem,
+            1,
+        );
+        assert_eq!(pending_at(&db, 1 + 14 * DAY), 0);
+        assert!(digest_ids(&db).is_empty());
+    }
+
+    #[test]
+    fn sender_hygiene_cooldown_counts_expired_from_when_it_expired() {
+        let db = hygiene_db();
+        seed_unread_threads(&db, "ok", "ok@x.example", 3, false);
+        let now = hygiene_now();
+        let cfg = db.get_inbox_agent_config(AgentId::SenderHygiene).unwrap();
+        let batch = db.with_inbox_agent_candidates(&cfg, now).unwrap();
+        assert_eq!(batch.deterministic.len(), 1);
+        let p = &batch.deterministic[0];
+        db.save_inbox_agent_proposal(
+            AgentId::SenderHygiene,
+            &p.account_id,
+            &p.thread_id,
+            &p.thread_revision,
+            p.kind,
+            &p.headline,
+            &p.reason,
+            &p.payload,
+            &p.evidence,
+            now - 31 * DAY,
+        )
+        .unwrap();
+        // It expired 1 day ago: inside the 30-day cooldown.
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE inbox_agent_proposals SET state = 'expired', updated_at = ?1",
+                [now - DAY],
+            )
+            .unwrap();
+        let again = db.with_inbox_agent_candidates(&cfg, now).unwrap();
+        assert!(again.deterministic.is_empty(), "within cooldown");
+        // Past the cooldown, a new revision of the anchor thread may return.
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE inbox_agent_proposals SET updated_at = ?1",
+                [now - 31 * DAY],
+            )
+            .unwrap();
+        seed_thread(
+            &db,
+            "more-0",
+            "newer",
+            "ok@x.example",
+            "2026-11-10T10:00:00Z",
+            "Body",
+            "[\"INBOX\"]",
+            None,
+        );
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET unread = 1 WHERE id = 'more-0'", [])
+            .unwrap();
+        let later = db.with_inbox_agent_candidates(&cfg, now).unwrap();
+        assert_eq!(later.deterministic.len(), 1);
     }
 }

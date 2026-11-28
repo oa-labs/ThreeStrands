@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createDemoClient } from "./demoClient";
 import { defaultDemoDataset, DEMO_ACCOUNT_ID } from "./demoDataset";
 
@@ -246,5 +246,33 @@ describe("demo inbox assistants", () => {
     await client.resolveInboxAgentProposal(letter.id, "dismissed");
     const afterDismiss = await client.runInboxAgent("stale_reads_digest");
     expect(afterDismiss.proposals.some((p) => p.threadId === "letter-1")).toBe(false);
+  });
+
+  it("expires unanswered suggestions at their kind's limit and does not suggest them again", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-11-01T12:00:00Z"));
+      const client = createDemoClient(defaultDemoDataset());
+      const first = await client.runInboxAgent("aging_replies");
+      const reply = first.proposals.find((p) => p.kind === "draft_reply")!;
+      const stale = await client.runInboxAgent("stale_reads");
+      const summary = stale.proposals.find((p) => p.kind === "archive_with_summary")!;
+
+      // Suggested Reply: 7 days. Stale Read: 14 days.
+      vi.setSystemTime(new Date("2026-11-08T11:59:59Z"));
+      expect((await client.getInboxAgentsSnapshot()).proposals.some((p) => p.id === reply.id)).toBe(true);
+      vi.setSystemTime(new Date("2026-11-08T12:00:00Z"));
+      const week = await client.getInboxAgentsSnapshot();
+      expect(week.proposals.some((p) => p.id === reply.id)).toBe(false);
+      expect(week.proposals.some((p) => p.id === summary.id)).toBe(true);
+      vi.setSystemTime(new Date("2026-11-15T12:00:00Z"));
+      expect((await client.getInboxAgentsSnapshot()).proposals.some((p) => p.id === summary.id)).toBe(false);
+
+      // Expired items stay out of later runs for the same revision.
+      const again = await client.runInboxAgent("aging_replies");
+      expect(again.proposals.some((p) => p.threadId === reply.threadId && p.kind === "draft_reply")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

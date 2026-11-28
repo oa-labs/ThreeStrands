@@ -75,6 +75,7 @@ const MIGRATIONS: &[Migration] = &[
     (128, to_v128),
     (129, to_v129),
     (130, to_v130),
+    (131, to_v131),
 ];
 
 // Steps number consecutively from the baseline, so a gap or a repeat fails to
@@ -1609,6 +1610,45 @@ fn to_v120(tx: &rusqlite::Transaction) -> Result<(), String> {
     Ok(())
 }
 
+fn to_v131(tx: &rusqlite::Transaction) -> Result<(), String> {
+    // Unanswered suggestions expire. SQLite cannot change a CHECK constraint in
+    // place, so the table is rebuilt with its rows and indexes, and the unique
+    // index also covers expired rows so they block re-proposal like dismissals.
+    // Nothing references the table, so dropping it cascades nowhere.
+    tx.execute_batch(
+        "CREATE TABLE inbox_agent_proposals_v131 (
+             id TEXT PRIMARY KEY,
+             agent_id TEXT NOT NULL,
+             account_id TEXT NOT NULL REFERENCES accounts(email) ON DELETE CASCADE,
+             thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+             thread_revision TEXT NOT NULL,
+             kind TEXT NOT NULL CHECK(kind IN ('archive_with_summary','archive_as_resolved','archive_as_expired','draft_reply','sender_hygiene','digest_item')),
+             state TEXT NOT NULL CHECK(state IN ('pending','accepted','dismissed','superseded','expired')),
+             headline TEXT NOT NULL,
+             reason TEXT NOT NULL,
+             payload_json TEXT NOT NULL,
+             evidence_json TEXT NOT NULL,
+             created_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL
+         );
+         INSERT INTO inbox_agent_proposals_v131(
+             id, agent_id, account_id, thread_id, thread_revision, kind, state,
+             headline, reason, payload_json, evidence_json, created_at, updated_at)
+             SELECT id, agent_id, account_id, thread_id, thread_revision, kind, state,
+                    headline, reason, payload_json, evidence_json, created_at, updated_at
+             FROM inbox_agent_proposals;
+         DROP TABLE inbox_agent_proposals;
+         ALTER TABLE inbox_agent_proposals_v131 RENAME TO inbox_agent_proposals;
+         CREATE INDEX IF NOT EXISTS inbox_agent_proposals_state ON inbox_agent_proposals(state, agent_id, created_at DESC);
+         CREATE INDEX IF NOT EXISTS inbox_agent_proposals_thread ON inbox_agent_proposals(thread_id, state);
+         CREATE UNIQUE INDEX IF NOT EXISTS inbox_agent_proposals_unique_active
+             ON inbox_agent_proposals(agent_id, thread_id, thread_revision)
+             WHERE state IN ('pending', 'dismissed', 'expired');",
+    )
+    .map_err(error)?;
+    Ok(())
+}
+
 fn to_v130(tx: &rusqlite::Transaction) -> Result<(), String> {
     // The Stale Reads Digest adds a proposal kind. SQLite cannot change a
     // CHECK constraint in place, so the table is rebuilt with its rows and
@@ -2717,6 +2757,61 @@ mod tests {
                 [],
             )
             .unwrap();
+        for index in [
+            "inbox_agent_proposals_state",
+            "inbox_agent_proposals_thread",
+            "inbox_agent_proposals_unique_active",
+        ] {
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name=?1)",
+                    [index],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(exists, "{index}");
+        }
+        super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v131_rebuilds_agent_proposals_to_accept_expired_and_keeps_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO accounts(email, color, status, sort_order, connected_at, provider) VALUES('me@example.com','#000','connected',0,'2026-01-01T00:00:00Z','gmail');
+                 INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json, last_message_at, labels_json, account_id)
+                     VALUES('t131','t131','Hi','','[]','2026-11-01T00:00:00Z','[]','me@example.com');
+                 INSERT INTO inbox_agent_proposals(id, agent_id, account_id, thread_id, thread_revision, kind, state, headline, reason, payload_json, evidence_json, created_at, updated_at)
+                     VALUES('p131','stale_reads','me@example.com','t131','2026-11-01T00:00:00Z','archive_with_summary','dismissed','H','R','{}','[]',1,1);
+                 PRAGMA user_version=130;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let (state, headline): (String, String) = connection
+            .query_row(
+                "SELECT state, headline FROM inbox_agent_proposals WHERE id='p131'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((state.as_str(), headline.as_str()), ("dismissed", "H"));
+        connection
+            .execute(
+                "INSERT INTO inbox_agent_proposals(id, agent_id, account_id, thread_id, thread_revision, kind, state, headline, reason, payload_json, evidence_json, created_at, updated_at)
+                 VALUES('p2','aging_replies','me@example.com','t131','2026-11-01T00:00:00Z','draft_reply','expired','H','R','{}','[]',1,1)",
+                [],
+            )
+            .unwrap();
+        // An expired row holds the unique slot, as a dismissed one does.
+        let duplicate = connection.execute(
+            "INSERT INTO inbox_agent_proposals(id, agent_id, account_id, thread_id, thread_revision, kind, state, headline, reason, payload_json, evidence_json, created_at, updated_at)
+             VALUES('p3','aging_replies','me@example.com','t131','2026-11-01T00:00:00Z','draft_reply','pending','H','R','{}','[]',1,1)",
+            [],
+        );
+        assert!(duplicate.is_err());
         for index in [
             "inbox_agent_proposals_state",
             "inbox_agent_proposals_thread",
