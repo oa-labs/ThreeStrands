@@ -3,11 +3,11 @@ import { createDemoClient } from "./demoClient";
 import { defaultDemoDataset, DEMO_ACCOUNT_ID } from "./demoDataset";
 
 describe("demo inbox assistants", () => {
-  it("lists all three assistants disabled by default and validates config updates", async () => {
+  it("lists all four assistants disabled by default and validates config updates", async () => {
     const client = createDemoClient(defaultDemoDataset());
     const initial = await client.getInboxAgentsSnapshot();
     expect(initial.runnerEnabled).toBe(true);
-    expect(initial.agents).toHaveLength(3);
+    expect(initial.agents).toHaveLength(4);
     expect(initial.agents.every((a) => !a.enabled)).toBe(true);
 
     await expect(
@@ -148,5 +148,47 @@ describe("demo inbox assistants", () => {
     const client = createDemoClient(dataset);
     const swept = await client.runInboxAgent("resolved_and_expired");
     expect(swept.proposals).toHaveLength(0);
+  });
+
+  it("sender hygiene proposes a sender with several Inbox conversations, leading with its unsubscribe message", async () => {
+    const dataset = defaultDemoDataset();
+    const base = dataset.threads[0];
+    for (const [id, minutes] of [["promo-1", 10], ["promo-2", 20]] as const) {
+      dataset.threads.push({
+        ...base,
+        id,
+        subject: `Deals ${id}`,
+        participants: ["Acme Deals"],
+        lastMessageAt: `2026-03-04T10:${minutes}:00Z`,
+        lastReceivedAt: `2026-03-04T10:${minutes}:00Z`,
+        unread: true,
+        starred: false,
+        archived: false,
+        trashed: false,
+        labels: ["INBOX"],
+      });
+      dataset.messages[id] = [{
+        sender: "Acme Deals <deals@acme.example>",
+        recipients: ["You <you@example.com>"],
+        sentAt: `2026-03-04T10:${minutes}:00Z`,
+        bodyHtml: "<p>Sale</p>",
+        bodyText: "Sale",
+        unsubscribe: { methods: ["oneClick"], listId: "acme.example" },
+      }];
+    }
+    const client = createDemoClient(dataset);
+    const snapshot = await client.runInboxAgent("sender_hygiene");
+    const proposals = snapshot.proposals.filter((p) => p.kind === "sender_hygiene" && p.payload.senderEmail === "deals@acme.example");
+    expect(proposals).toHaveLength(1);
+    const [proposal] = proposals;
+    expect(proposal.agentId).toBe("sender_hygiene");
+    expect(proposal.payload.senderEmail).toBe("deals@acme.example");
+    expect(proposal.payload.recommendation).toBe("unsubscribe");
+    expect(proposal.payload.messageId).toBe(`${proposal.threadId}-message`);
+    expect([...(proposal.payload.inboxThreadIds ?? [])].sort()).toEqual(["promo-1", "promo-2"]);
+
+    // Running again does not duplicate a pending suggestion.
+    const again = await client.runInboxAgent("sender_hygiene");
+    expect(again.proposals.filter((p) => p.payload.senderEmail === "deals@acme.example")).toHaveLength(1);
   });
 });

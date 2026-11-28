@@ -139,6 +139,7 @@ import { threadTextIndex } from "./threadTextIndex";
 import { bulkMessage, type TrustLink } from "./senderSignals";
 import { UnsubscribeConfirm } from "./UnsubscribeConfirm";
 import { SenderSplitDialog } from "./SenderSplitDialog";
+import type { SenderHygieneHandlers } from "./SenderHygieneActions";
 import { MuteSenderDialog } from "./MuteSenderDialog";
 import { useSenderRules } from "./useSenderRules";
 import { describeSenderRule } from "./MutedSendersSettings";
@@ -368,7 +369,10 @@ export function App() {
   const [gettingStartedOpen, setGettingStartedOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [splitTarget, setSplitTarget] = useState<SenderTarget | null>(null);
-  const [muteTarget, setMuteTarget] = useState<{ target: SenderTarget; inboxThreadIds: string[] } | null>(null);
+  const [muteTarget, setMuteTarget] = useState<{ target: SenderTarget; inboxThreadIds: string[]; proposalId?: string } | null>(null);
+  // The Sender Hygiene suggestion a dialog was opened from; it is accepted when that dialog succeeds.
+  const [splitProposalId, setSplitProposalId] = useState<string | null>(null);
+  const [unsubscribeProposalId, setUnsubscribeProposalId] = useState<string | null>(null);
   const fileSessions = useRef(new Map<string, FilesWorkspaceSnapshot>());
   const calendarSession = useRef<CalendarWorkspaceSnapshot | null>(null);
   const taskSessions = useRef(new Map<string, TaskWorkspaceSnapshot>());
@@ -388,6 +392,7 @@ export function App() {
     else openTodayView();
   };
   const inboxAgents = useInboxAgents(activeAccountId, settingsOpen);
+  const resolveInboxProposal = inboxAgents.resolveProposal;
   const openAssistantTask = (id: string) => {
     void mailClient.listTasks().then(list => {
       const task = list.find(t => t.id === id);
@@ -601,6 +606,10 @@ export function App() {
     try {
       const result = await mailClient.unsubscribe(unsubscribeMessageId);
       setUnsubscribeMessageId(null);
+      if (unsubscribeProposalId) {
+        void resolveInboxProposal(unsubscribeProposalId, "accepted");
+        setUnsubscribeProposalId(null);
+      }
       setNotice({
         message: result.outcome === "requested"
           ? "Unsubscribe request sent"
@@ -611,7 +620,7 @@ export function App() {
         message: `Unsubscribe failed: ${errorMessage(reason)}`,
       });
     }
-  }, [setNotice, unsubscribeMessageId]);
+  }, [resolveInboxProposal, setNotice, unsubscribeMessageId, unsubscribeProposalId]);
 
   /** Shows the context panel and moves focus into its question box. */
   const openThreadChat = useCallback(() => {
@@ -945,7 +954,7 @@ export function App() {
       run: () => mutateIds(ids, { kind: "archive", value: true }, { includeUnloaded: true }),
       undo: undoResult,
     }),
-    onNewSplit: setSplitTarget,
+    onNewSplit: (target) => { setSplitProposalId(null); setSplitTarget(target); },
     rules: senderRuleCatalog.senderRules,
     onMute: (target, inboxThreadIds) => setMuteTarget({ target, inboxThreadIds }),
     onUnmute: (rule) => {
@@ -973,6 +982,43 @@ export function App() {
       setNotice({ message: errorMessage(reason) });
     }
   }, [executeCommand, inboxAgents, mutateIds, setNotice]);
+
+  const senderHygiene = useMemo<SenderHygieneHandlers>(() => {
+    const targetOf = (p: InboxAgentProposal): SenderTarget => {
+      const email = p.payload.senderEmail ?? "";
+      return { accountId: p.accountId, email, name: p.payload.senderName ?? email };
+    };
+    return {
+      splits: splitInboxCatalog.splitInboxes,
+      onUnsubscribe: (p) => {
+        if (!p.payload.messageId) return;
+        setUnsubscribeProposalId(p.id);
+        setUnsubscribeMessageId(p.payload.messageId);
+        jumpToThread(p.threadId);
+      },
+      onMute: (p) => setMuteTarget({ target: targetOf(p), inboxThreadIds: p.payload.inboxThreadIds ?? [p.threadId], proposalId: p.id }),
+      onNewSplit: (p) => { setSplitProposalId(p.id); setSplitTarget(targetOf(p)); },
+      onArchiveAll: (p) => {
+        const ids = p.payload.inboxThreadIds ?? [p.threadId];
+        void (async () => {
+          try {
+            await executeCommand({
+              id: "agents.archiveSenderThreads",
+              title: "Archive",
+              keys: [],
+              group: "Triage",
+              enabled: () => true,
+              run: () => mutateIds(ids, { kind: "archive", value: true }, { includeUnloaded: true }),
+              undo: undoResult,
+            });
+            await resolveInboxProposal(p.id, "accepted");
+          } catch (reason) {
+            setNotice({ message: errorMessage(reason) });
+          }
+        })();
+      },
+    };
+  }, [splitInboxCatalog.splitInboxes, jumpToThread, executeCommand, mutateIds, setNotice, resolveInboxProposal]);
 
   const saveProposalToNoteAndArchive = useCallback(async (proposal: InboxAgentProposal) => {
     try {
@@ -1106,9 +1152,10 @@ export function App() {
    * step. Undo removes the rule and puts those conversations back as they
    * were, unread ones unread.
    */
-  const muteSender = useCallback(async (target: SenderTarget, matchKind: SenderRule["matchKind"], matchValue: string, archiveThreadIds: string[]) => {
+  const muteSender = useCallback(async (target: SenderTarget, matchKind: SenderRule["matchKind"], matchValue: string, archiveThreadIds: string[], proposalId?: string) => {
     const result = await senderRuleCatalog.mute(target.accountId, matchKind, matchValue, archiveThreadIds);
     setMuteTarget(null);
+    if (proposalId) void resolveInboxProposal(proposalId, "accepted");
     if (result.archivedThreadIds.length > 0) void loadThreadsRef.current(queryRef.current);
     const archived = result.archivedThreadIds.length;
     setNotice({
@@ -1125,7 +1172,7 @@ export function App() {
         })().catch((reason: unknown) => setNotice({ message: `Undo failed: ${errorMessage(reason)}` }));
       },
     });
-  }, [senderRuleCatalog, loadThreadsRef, queryRef, setNotice]);
+  }, [senderRuleCatalog, loadThreadsRef, queryRef, setNotice, resolveInboxProposal]);
   const runGettingStartedStep = useCallback((id: GettingStartedStepId) => {
     setGettingStartedOpen(false);
     if (id === "connectMail") openSettingsAt("accounts");
@@ -2045,6 +2092,7 @@ export function App() {
               onOpenEvidenceThread={jumpToThread}
               onOpenEvidenceTask={openAssistantTask}
               onDismiss={(p) => { void inboxAgents.resolveProposal(p.id, "dismissed"); }}
+              senderHygiene={senderHygiene}
             />
           ) : null}
           assist={visibleDetail ? (
@@ -2225,7 +2273,7 @@ export function App() {
         onEventCreated={() => void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"))}
         onOpenContact={contactCardActions.onOpenContact}
       /></Suspense></ErrorBoundary> : null}
-      {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Inbox Assistants…</p>}><AgentsWorkspace controller={inboxAgents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAssistantTask} onArchiveProposal={(p) => { void archiveAssistantProposals([p]); }} onArchiveBatch={(ps) => { void archiveAssistantProposals(ps); }} onSaveToNoteAndArchive={(p) => { void saveProposalToNoteAndArchive(p); }} onCreateTask={(p) => { void createTaskFromProposal(p); }} onReopenTask={(p, taskId) => { void reopenAssistantTask(p, taskId); }} onReviewDraft={(p, text) => { void reviewProposalDraft(p, text); }} onOpenAiSettings={() => openSettingsAt("ai")} /></Suspense></ErrorBoundary> : null}
+      {rightWorkspace === "agents" ? <ErrorBoundary area="Agents" variant="side"><Suspense fallback={<p role="status">Loading Inbox Assistants…</p>}><AgentsWorkspace controller={inboxAgents} accounts={accounts} accountId={activeAccountId} onOpenThread={jumpToThread} onOpenTask={openAssistantTask} onArchiveProposal={(p) => { void archiveAssistantProposals([p]); }} onArchiveBatch={(ps) => { void archiveAssistantProposals(ps); }} onSaveToNoteAndArchive={(p) => { void saveProposalToNoteAndArchive(p); }} onCreateTask={(p) => { void createTaskFromProposal(p); }} onReopenTask={(p, taskId) => { void reopenAssistantTask(p, taskId); }} onReviewDraft={(p, text) => { void reviewProposalDraft(p, text); }} onOpenAiSettings={() => openSettingsAt("ai")} senderHygiene={senderHygiene} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "notes" ? <ErrorBoundary area="Notes" variant="side"><Suspense fallback={null}><NotesWorkspace request={notesRequest} onRequestConsumed={consumeNotesRequest} refreshKey={syncStatus?.lastSuccessfulSync ?? ""} onOpenContact={contactCardActions.onOpenContact} onOpenEntity={openEntityReference} onReturn={notesReturnMail ? () => { setRightWorkspace(null); setNotesReturnMail(false); } : undefined}
         meetingPreparation={notePreparation} onMeetingPreparationChange={setNotePreparation} onPreparationVisibilityChange={setNotePreparationVisible}
         renderMeetingPreparation={(event, close, noteId) => renderPreparation("notes", noteId)(event, close)}
@@ -2332,7 +2380,7 @@ export function App() {
       {unsubscribeMessage ? (
         <UnsubscribeConfirm
           message={unsubscribeMessage}
-          onClose={() => setUnsubscribeMessageId(null)}
+          onClose={() => { setUnsubscribeMessageId(null); setUnsubscribeProposalId(null); }}
           onConfirm={confirmUnsubscribe}
         />
       ) : null}
@@ -2341,16 +2389,18 @@ export function App() {
           target={muteTarget.target}
           inboxThreadIds={muteTarget.inboxThreadIds}
           onClose={() => setMuteTarget(null)}
-          onMute={(matchKind, matchValue, archiveThreadIds) => muteSender(muteTarget.target, matchKind, matchValue, archiveThreadIds)}
+          onMute={(matchKind, matchValue, archiveThreadIds) => muteSender(muteTarget.target, matchKind, matchValue, archiveThreadIds, muteTarget.proposalId)}
         />
       ) : null}
       {splitTarget ? (
         <SenderSplitDialog
           target={splitTarget}
-          onClose={() => setSplitTarget(null)}
+          onClose={() => { setSplitTarget(null); setSplitProposalId(null); }}
           onCreate={async (name, matchKind, matchValue, accountId) => {
             await splitInboxCatalog.create(name, matchKind, matchValue, accountId);
             setSplitTarget(null);
+            if (splitProposalId) void resolveInboxProposal(splitProposalId, "accepted");
+            setSplitProposalId(null);
             // The new rule takes its matches out of the Inbox now, not at the next sync.
             void loadThreadsRef.current(queryRef.current);
             setNotice({ message: `Created the ${name} split` });

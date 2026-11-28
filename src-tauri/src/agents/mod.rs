@@ -17,13 +17,15 @@ pub(crate) enum AgentId {
     StaleReads,
     ResolvedAndExpired,
     AgingReplies,
+    SenderHygiene,
 }
 
 impl AgentId {
-    pub(crate) const ALL: [Self; 3] = [
+    pub(crate) const ALL: [Self; 4] = [
         Self::StaleReads,
         Self::ResolvedAndExpired,
         Self::AgingReplies,
+        Self::SenderHygiene,
     ];
 
     pub(crate) fn as_str(self) -> &'static str {
@@ -31,6 +33,7 @@ impl AgentId {
             Self::StaleReads => "stale_reads",
             Self::ResolvedAndExpired => "resolved_and_expired",
             Self::AgingReplies => "aging_replies",
+            Self::SenderHygiene => "sender_hygiene",
         }
     }
 
@@ -39,6 +42,7 @@ impl AgentId {
             "stale_reads" => Some(Self::StaleReads),
             "resolved_and_expired" => Some(Self::ResolvedAndExpired),
             "aging_replies" => Some(Self::AgingReplies),
+            "sender_hygiene" => Some(Self::SenderHygiene),
             _ => None,
         }
     }
@@ -65,6 +69,13 @@ impl AgentId {
                 default_age_days: 3,
                 default_max_threads: 10,
                 default_include_starred: true,
+            },
+            Self::SenderHygiene => AgentCatalogEntry {
+                name: "Sender Hygiene Advisor",
+                description: "Spots senders you keep ignoring or dismissing within a second and suggests unsubscribing, muting, or giving them a split.",
+                default_age_days: 14,
+                default_max_threads: 10,
+                default_include_starred: false,
             },
         }
     }
@@ -175,6 +186,7 @@ pub(crate) enum ProposalKind {
     ArchiveAsResolved,
     ArchiveAsExpired,
     DraftReply,
+    SenderHygiene,
 }
 
 impl ProposalKind {
@@ -184,6 +196,7 @@ impl ProposalKind {
             Self::ArchiveAsResolved => "archive_as_resolved",
             Self::ArchiveAsExpired => "archive_as_expired",
             Self::DraftReply => "draft_reply",
+            Self::SenderHygiene => "sender_hygiene",
         }
     }
 
@@ -193,6 +206,7 @@ impl ProposalKind {
             "archive_as_resolved" => Some(Self::ArchiveAsResolved),
             "archive_as_expired" => Some(Self::ArchiveAsExpired),
             "draft_reply" => Some(Self::DraftReply),
+            "sender_hygiene" => Some(Self::SenderHygiene),
             _ => None,
         }
     }
@@ -264,6 +278,20 @@ pub(crate) struct ProposalPayload {
     pub reply_draft: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gentle_out_draft: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aging_unread_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quick_dismiss_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dismiss_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inbox_thread_ids: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommendation: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

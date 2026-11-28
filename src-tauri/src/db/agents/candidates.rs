@@ -1,6 +1,6 @@
 //! Stage 1 deterministic local SQLite candidate selection for Inbox Assistants.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection};
@@ -420,6 +420,9 @@ pub(super) fn select_candidates(
     config: &InboxAgentConfig,
     now_secs: i64,
 ) -> DbResult<CandidateBatch> {
+    if config.agent_id == AgentId::SenderHygiene {
+        return select_sender_hygiene(conn, config, now_secs);
+    }
     let now_dt = DateTime::<Utc>::from_timestamp(now_secs, 0).unwrap_or_else(Utc::now);
     let now_iso = now_dt.to_rfc3339();
     let cutoff_iso = (now_dt - Duration::days(config.age_days.max(1))).to_rfc3339();
@@ -523,6 +526,7 @@ pub(super) fn select_candidates(
                     related_events,
                 });
             }
+            AgentId::SenderHygiene => continue,
             AgentId::AgingReplies => {
                 let latest = messages.last().unwrap();
                 if latest.is_own || has_unsubscribe || has_bulk_label(&thread.labels) {
@@ -554,5 +558,427 @@ pub(super) fn select_candidates(
         }
     }
 
+    Ok(batch)
+}
+
+/// One of a sender's conversations still in the Inbox.
+struct HygieneThread {
+    id: String,
+    subject: String,
+    snippet: String,
+    last_message_at: String,
+    last_received_at: String,
+    unread: bool,
+    /// Newest message in the conversation from this sender that offers unsubscribing.
+    unsubscribe_message_id: Option<String>,
+}
+
+/// Everything known about one (account, sender) pair.
+#[derive(Default)]
+struct HygieneSender {
+    name: String,
+    threads: Vec<HygieneThread>,
+}
+
+#[derive(Default)]
+struct TriageCounts {
+    quick: i64,
+    dispositions: i64,
+    restores: i64,
+    responses: i64,
+}
+
+fn display_name_of(sender: &str, email: &str) -> String {
+    let name = sender
+        .split('<')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .trim();
+    if name.is_empty() || name.contains('@') {
+        email.to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+fn plural(count: i64, noun: &str) -> String {
+    if count == 1 {
+        format!("{count} {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
+/// Senders the user keeps ignoring: unread mail left to age in the Inbox, or
+/// mail dismissed within a second. Local and zero-token, so every proposal is
+/// deterministic and no AI provider is involved.
+fn select_sender_hygiene(
+    conn: &Connection,
+    config: &InboxAgentConfig,
+    now_secs: i64,
+) -> DbResult<CandidateBatch> {
+    let now_dt = DateTime::<Utc>::from_timestamp(now_secs, 0).unwrap_or_else(Utc::now);
+    let age_cutoff = (now_dt - Duration::days(config.age_days.max(1))).to_rfc3339();
+    let lookback = (now_dt - Duration::days(HYGIENE_LOOKBACK_DAYS)).to_rfc3339();
+    let dismissed_since = now_secs - HYGIENE_DISMISSED_COOLDOWN_DAYS * 86_400;
+    let max_out = config
+        .max_threads_per_run
+        .clamp(MIN_THREADS_PER_RUN, MAX_THREADS_PER_RUN) as usize;
+    let mut batch = CandidateBatch {
+        deterministic: Vec::new(),
+        ai_candidates: Vec::new(),
+    };
+
+    // The account's Inbox conversations, by thread.
+    let mut sql = String::from(
+        "SELECT t.id, t.account_id, t.subject, t.snippet, t.last_message_at,
+                COALESCE(NULLIF(t.last_received_at, ''), t.last_message_at), t.unread
+         FROM threads t
+         WHERE t.archived = 0 AND t.trashed = 0
+           AND NOT EXISTS (
+               SELECT 1 FROM conversation_snoozes s
+               WHERE s.id = t.id AND json_extract(s.record_json, '$.state') = 'active'
+           )",
+    );
+    if !config.include_starred {
+        sql.push_str(" AND t.starred = 0");
+    }
+    if config.account_id.is_some() {
+        sql.push_str(" AND t.account_id = ?1");
+    }
+    let mut stmt = conn.prepare(&sql)?;
+    let map_row = |row: &rusqlite::Row<'_>| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            HygieneThread {
+                id: row.get(0)?,
+                subject: row.get(2)?,
+                snippet: row.get(3)?,
+                last_message_at: row.get(4)?,
+                last_received_at: row.get(5)?,
+                unread: row.get::<_, i64>(6)? != 0,
+                unsubscribe_message_id: None,
+            },
+        ))
+    };
+    let thread_rows = if let Some(account_id) = config.account_id.as_deref() {
+        stmt.query_map([account_id], map_row)?
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        stmt.query_map([], map_row)?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if thread_rows.is_empty() {
+        return Ok(batch);
+    }
+
+    // Messages of those conversations, newest first, to attribute each one to
+    // its sender the way triage does: the newest message not sent by the user.
+    let mut messages_by_thread: HashMap<String, Vec<(String, String, String, bool)>> =
+        HashMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT m.thread_id, m.id, m.sender, m.sent_at, m.unsubscribe_json IS NOT NULL
+             FROM messages m JOIN threads t ON t.id = m.thread_id
+             WHERE t.archived = 0 AND t.trashed = 0
+             ORDER BY m.sent_at DESC, m.id DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)? != 0,
+            ))
+        })?;
+        for row in rows {
+            let (thread_id, id, sender, sent_at, unsub) = row?;
+            messages_by_thread
+                .entry(thread_id)
+                .or_default()
+                .push((id, sender, sent_at, unsub));
+        }
+    }
+
+    let mut own_cache: HashMap<String, BTreeSet<String>> = HashMap::new();
+    let mut senders: HashMap<(String, String), HygieneSender> = HashMap::new();
+    for (thread_id, account_id, thread) in thread_rows {
+        let Some(messages) = messages_by_thread.get(&thread_id) else {
+            continue;
+        };
+        let own = own_cache
+            .entry(account_id.clone())
+            .or_insert_with(|| sending_addresses_for_account(conn, &account_id));
+        let attributed = messages
+            .iter()
+            .map(|(_, sender, _, _)| (sender, normalize_sender(sender).0))
+            .find(|(_, email)| !email.is_empty() && (own.is_empty() || !own.contains(email)));
+        // A sent-only conversation has no sender to judge.
+        let Some((raw_sender, email)) = attributed else {
+            continue;
+        };
+        let entry = senders.entry((account_id, email.clone())).or_default();
+        if entry.name.is_empty() {
+            entry.name = display_name_of(raw_sender, &email);
+        }
+        // Messages are newest first, so the first match is the newest.
+        let mut thread = thread;
+        thread.unsubscribe_message_id = messages
+            .iter()
+            .find(|(_, sender, _, unsub)| *unsub && normalize_sender(sender).0 == email)
+            .map(|(id, _, _, _)| id.clone());
+        entry.threads.push(thread);
+    }
+
+    // Triage telemetry in the lookback window. Quick dispositions mirror
+    // `list_triage_sender_stats` and `isQuickTriageDisposition` in triage.ts.
+    let mut triage: HashMap<(String, String), TriageCounts> = HashMap::new();
+    {
+        let mut sql = String::from(
+            "SELECT account_id, sender_email,
+                    SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                  AND action IN ('archive', 'trash')
+                                  AND opened = 1 AND batch = 0 AND scrolled = 0
+                                  AND dwell_ms BETWEEN 0 AND 1000
+                             THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                             THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN event_kind = 'restore' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN event_kind = 'response' THEN 1 ELSE 0 END)
+             FROM triage_events
+             WHERE created_at >= ?1",
+        );
+        if config.account_id.is_some() {
+            sql.push_str(" AND account_id = ?2");
+        }
+        sql.push_str(" GROUP BY account_id, sender_email");
+        let mut stmt = conn.prepare(&sql)?;
+        let map = |row: &rusqlite::Row<'_>| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                TriageCounts {
+                    quick: row.get(2)?,
+                    dispositions: row.get(3)?,
+                    restores: row.get(4)?,
+                    responses: row.get(5)?,
+                },
+            ))
+        };
+        let rows = if let Some(account_id) = config.account_id.as_deref() {
+            stmt.query_map(params![lookback, account_id], map)?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(params![lookback], map)?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for (account, email, counts) in rows {
+            triage.insert((account, email), counts);
+        }
+    }
+
+    // Mute and block rules, and suggestions already pending or recently dismissed.
+    let mut rules: HashMap<String, (HashSet<String>, HashSet<String>)> = HashMap::new();
+    {
+        let mut stmt =
+            conn.prepare("SELECT lower(account_id), match_kind, match_value FROM sender_rules")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (account, kind, value) = row?;
+            let entry = rules.entry(account).or_default();
+            if kind == "domain" {
+                entry.1.insert(value);
+            } else {
+                entry.0.insert(value);
+            }
+        }
+    }
+    let mut already: HashSet<(String, String)> = HashSet::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT account_id, json_extract(payload_json, '$.senderEmail')
+             FROM inbox_agent_proposals
+             WHERE agent_id = ?1
+               AND json_extract(payload_json, '$.senderEmail') IS NOT NULL
+               AND (state = 'pending' OR (state = 'dismissed' AND updated_at >= ?2))",
+        )?;
+        let rows = stmt.query_map(
+            params![AgentId::SenderHygiene.as_str(), dismissed_since],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?;
+        for row in rows {
+            already.insert(row?);
+        }
+    }
+
+    struct Qualified {
+        account_id: String,
+        email: String,
+        sender: HygieneSender,
+        aging: i64,
+        quick: i64,
+        dispositions: i64,
+    }
+    let mut qualified: Vec<Qualified> = Vec::new();
+    for ((account_id, email), sender) in senders {
+        let counts = triage.get(&(account_id.clone(), email.clone()));
+        let (quick, dispositions) = counts.map_or((0, 0), |c| (c.quick, c.dispositions));
+        if counts.is_some_and(|c| c.responses > 0 || c.restores > 0) {
+            continue;
+        }
+        let aging = sender
+            .threads
+            .iter()
+            .filter(|t| t.unread && t.last_received_at <= age_cutoff)
+            .count() as i64;
+        let by_dismissal = quick >= HYGIENE_MIN_QUICK_DISMISSALS
+            && dispositions > 0
+            && quick as f64 / dispositions as f64 >= HYGIENE_MIN_QUICK_RATE;
+        if !by_dismissal && aging < HYGIENE_MIN_AGING_UNREAD {
+            continue;
+        }
+        let domain = email.rsplit_once('@').map(|(_, d)| d).unwrap_or("");
+        if let Some((addresses, domains)) = rules.get(&account_id.to_lowercase()) {
+            if addresses.contains(&email) || domains.contains(domain) {
+                continue;
+            }
+        }
+        if already.contains(&(account_id.clone(), email.clone())) {
+            continue;
+        }
+        if sending_addresses_for_account(conn, &account_id).contains(&email) {
+            continue;
+        }
+        let written_to: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM contact_interactions
+                 WHERE direction = 'sent' AND email = ?1 AND account_id = lower(trim(?2)))",
+            params![email, account_id],
+            |row| row.get(0),
+        )?;
+        if written_to {
+            continue;
+        }
+        qualified.push(Qualified {
+            account_id,
+            email,
+            sender,
+            aging,
+            quick,
+            dispositions,
+        });
+    }
+    qualified.sort_by(|a, b| {
+        b.quick
+            .cmp(&a.quick)
+            .then(b.aging.cmp(&a.aging))
+            .then_with(|| a.account_id.cmp(&b.account_id))
+            .then_with(|| a.email.cmp(&b.email))
+    });
+
+    for mut item in qualified {
+        if batch.deterministic.len() >= max_out {
+            break;
+        }
+        item.sender.threads.sort_by(|a, b| {
+            b.last_message_at
+                .cmp(&a.last_message_at)
+                .then(b.id.cmp(&a.id))
+        });
+        // Anchor on the newest conversation, preferring the newest that offers
+        // unsubscribing so the proposal's message opens with its conversation.
+        let anchor_index = item
+            .sender
+            .threads
+            .iter()
+            .position(|t| t.unsubscribe_message_id.is_some())
+            .unwrap_or(0);
+        let anchor = &item.sender.threads[anchor_index];
+        // An anchor revision already proposed or dismissed would be ignored on
+        // save; skip it so it does not use up a slot in this run.
+        let seen: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM inbox_agent_proposals
+                 WHERE agent_id = ?1 AND thread_id = ?2 AND thread_revision = ?3
+                   AND state IN ('pending', 'dismissed'))",
+            params![
+                AgentId::SenderHygiene.as_str(),
+                anchor.id,
+                anchor.last_message_at
+            ],
+            |row| row.get(0),
+        )?;
+        if seen {
+            continue;
+        }
+        let mut reasons = Vec::new();
+        if item.quick > 0 && item.dispositions > 0 {
+            reasons.push(format!(
+                "Dismissed {} of {} within a second",
+                item.quick,
+                plural(item.dispositions, "email")
+            ));
+        }
+        if item.aging > 0 {
+            reasons.push(format!(
+                "{} older than {}",
+                plural(item.aging, "unread email"),
+                plural(config.age_days.max(1), "day")
+            ));
+        }
+        let reason = format!("{}.", reasons.join("; "));
+        let message_id = anchor.unsubscribe_message_id.clone();
+        let recommendation = if message_id.is_some() {
+            "unsubscribe"
+        } else {
+            "mute"
+        };
+        batch.deterministic.push(DeterministicProposal {
+            account_id: item.account_id.clone(),
+            thread_id: anchor.id.clone(),
+            thread_revision: anchor.last_message_at.clone(),
+            kind: ProposalKind::SenderHygiene,
+            headline: format!("You usually skip {}", item.sender.name),
+            reason,
+            payload: ProposalPayload {
+                sender_email: Some(item.email.clone()),
+                sender_name: Some(item.sender.name.clone()),
+                aging_unread_count: Some(item.aging),
+                quick_dismiss_count: Some(item.quick),
+                dismiss_count: Some(item.dispositions),
+                inbox_thread_ids: Some(
+                    item.sender
+                        .threads
+                        .iter()
+                        .take(HYGIENE_MAX_INBOX_THREADS)
+                        .map(|t| t.id.clone())
+                        .collect(),
+                ),
+                recommendation: Some(recommendation.into()),
+                message_id,
+                ..Default::default()
+            },
+            evidence: item
+                .sender
+                .threads
+                .iter()
+                .take(HYGIENE_EVIDENCE_THREADS)
+                .map(|t| ProposalEvidence {
+                    kind: "thread".into(),
+                    id: t.id.clone(),
+                    label: t.subject.clone(),
+                    excerpt: Some(truncate_chars(&t.snippet, MAX_EXCERPT_CHARS)),
+                })
+                .collect(),
+        });
+    }
     Ok(batch)
 }

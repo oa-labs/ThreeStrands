@@ -1,3 +1,4 @@
+import { parseAddress } from "../emailAddress";
 import type {
   Account,
   AiRunConfig,
@@ -5,6 +6,7 @@ import type {
   InboxAgentId,
   InboxAgentProposal,
   InboxAgentsSnapshot,
+  Message,
   ProposalState,
   Thread,
   ThreadTask,
@@ -15,6 +17,7 @@ type DemoState = {
   accounts: Account[];
   threads: Thread[];
   tasks: ThreadTask[];
+  messagesFor(thread: Thread): Message[];
 };
 
 const CATALOG: Record<InboxAgentId, Omit<InboxAgentConfig, "updatedAt">> = {
@@ -66,7 +69,28 @@ const CATALOG: Record<InboxAgentId, Omit<InboxAgentConfig, "updatedAt">> = {
     lastRunScanned: 0,
     lastRunProposed: 0,
   },
+  sender_hygiene: {
+    agentId: "sender_hygiene",
+    name: "Sender Hygiene Advisor",
+    description: "Spots senders you keep ignoring or dismissing within a second and suggests unsubscribing, muting, or giving them a split.",
+    enabled: false,
+    ageDays: 14,
+    maxThreadsPerRun: 10,
+    includeStarred: false,
+    accountId: null,
+    scheduleHours: null,
+    lastRunAt: null,
+    lastRunStatus: null,
+    lastRunError: null,
+    lastRunScanned: 0,
+    lastRunProposed: 0,
+  },
 };
+
+/** The demo has no triage history, so a sender with several Inbox conversations stands in for one the user keeps ignoring. */
+const DEMO_HYGIENE_MIN_THREADS = 2;
+const DEMO_HYGIENE_QUICK = 5;
+const DEMO_HYGIENE_DISMISSED = 6;
 
 export function createDemoInboxAgents(readState: () => DemoState) {
   let runnerEnabled = true;
@@ -74,6 +98,7 @@ export function createDemoInboxAgents(readState: () => DemoState) {
     stale_reads: { ...CATALOG.stale_reads, updatedAt: 0 },
     resolved_and_expired: { ...CATALOG.resolved_and_expired, updatedAt: 0 },
     aging_replies: { ...CATALOG.aging_replies, updatedAt: 0 },
+    sender_hygiene: { ...CATALOG.sender_hygiene, updatedAt: 0 },
   };
   let proposals: InboxAgentProposal[] = [];
 
@@ -94,7 +119,7 @@ export function createDemoInboxAgents(readState: () => DemoState) {
     syncWithThreads();
     return {
       runnerEnabled,
-      agents: structuredClone([configs.stale_reads, configs.resolved_and_expired, configs.aging_replies]),
+      agents: structuredClone([configs.stale_reads, configs.resolved_and_expired, configs.aging_replies, configs.sender_hygiene]),
       activeRuns: [],
       proposals: structuredClone(
         proposals.filter((p) => p.state === "pending" && (!accountId || accountId === "all" || p.accountId === accountId)),
@@ -117,6 +142,76 @@ export function createDemoInboxAgents(readState: () => DemoState) {
     );
     let scanned = 0;
     let proposed = 0;
+
+    if (agentId === "sender_hygiene") {
+      const bySender = new Map<string, { name: string; email: string; threads: Thread[]; unsubscribeId: string | null }>();
+      for (const t of scoped) {
+        const messages = t.labels.includes("SENT") ? [] : readState().messagesFor(t);
+        const latest = messages[messages.length - 1];
+        if (!latest) continue;
+        const parsed = parseAddress(latest.sender);
+        const email = parsed.email.toLowerCase();
+        if (!email) continue;
+        const key = `${t.accountId}\n${email}`;
+        const entry = bySender.get(key) ?? { name: parsed.name || email, email, threads: [], unsubscribeId: null };
+        entry.threads.push(t);
+        bySender.set(key, entry);
+      }
+      for (const entry of [...bySender.values()].sort((a, b) => b.threads.length - a.threads.length)) {
+        if (proposed >= cfg.maxThreadsPerRun) break;
+        if (entry.threads.length < DEMO_HYGIENE_MIN_THREADS) continue;
+        scanned++;
+        const sorted = [...entry.threads].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+        const withUnsubscribe = sorted.find((t) => readState().messagesFor(t).some((m) => m.unsubscribe));
+        const anchor = withUnsubscribe ?? sorted[0];
+        const already = proposals.some(
+          (p) => p.agentId === agentId && p.payload.senderEmail === entry.email && (p.state === "pending" || (p.state === "dismissed" && p.threadId === anchor.id)),
+        );
+        if (already) continue;
+        const unsubscribeMessage = withUnsubscribe ? readState().messagesFor(withUnsubscribe).find((m) => m.unsubscribe) : undefined;
+        proposed++;
+        proposals.unshift({
+          id: `demo-prop-${crypto.randomUUID()}`,
+          agentId,
+          accountId: anchor.accountId,
+          threadId: anchor.id,
+          threadRevision: anchor.lastMessageAt,
+          threadSubject: anchor.subject,
+          threadSender: anchor.participants[0] ?? "",
+          threadLastReceivedAt: anchor.lastReceivedAt ?? anchor.lastMessageAt,
+          threadSnippet: anchor.snippet,
+          threadUnread: anchor.unread,
+          threadStarred: anchor.starred,
+          kind: "sender_hygiene",
+          state: "pending",
+          headline: `You usually skip ${entry.name}`,
+          reason: `Dismissed ${DEMO_HYGIENE_QUICK} of ${DEMO_HYGIENE_DISMISSED} emails within a second; ${entry.threads.length} emails still in your Inbox.`,
+          payload: {
+            senderEmail: entry.email,
+            senderName: entry.name,
+            agingUnreadCount: entry.threads.filter((t) => t.unread).length,
+            quickDismissCount: DEMO_HYGIENE_QUICK,
+            dismissCount: DEMO_HYGIENE_DISMISSED,
+            inboxThreadIds: sorted.map((t) => t.id),
+            recommendation: unsubscribeMessage ? "unsubscribe" : "mute",
+            ...(unsubscribeMessage ? { messageId: unsubscribeMessage.id } : {}),
+          },
+          evidence: sorted.slice(0, 3).map((t) => ({ kind: "thread", id: t.id, label: t.subject, excerpt: t.snippet })),
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      configs[agentId] = {
+        ...cfg,
+        lastRunAt: now,
+        lastRunStatus: "completed",
+        lastRunError: null,
+        lastRunScanned: scanned,
+        lastRunProposed: proposed,
+        updatedAt: now,
+      };
+      return;
+    }
 
     for (const t of scoped.slice(0, cfg.maxThreadsPerRun)) {
       const already = proposals.some(
@@ -272,7 +367,7 @@ export function createDemoInboxAgents(readState: () => DemoState) {
       return snapshot(accountId);
     },
     async runEnabledInboxAgents(_aiConfig?: AiRunConfig | null, accountId?: string): Promise<InboxAgentsSnapshot> {
-      for (const id of ["stale_reads", "resolved_and_expired", "aging_replies"] as InboxAgentId[]) {
+      for (const id of ["stale_reads", "resolved_and_expired", "aging_replies", "sender_hygiene"] as InboxAgentId[]) {
         if (configs[id].enabled) runOne(id, accountId);
       }
       return snapshot(accountId);

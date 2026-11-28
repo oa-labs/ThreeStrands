@@ -14,6 +14,7 @@ import {
   shouldShowSubjectSubline,
 } from "./inboxAssistantCard";
 import { InboxAgentConfigModal } from "./InboxAgentConfigModal";
+import { SenderHygieneActions, type SenderHygieneHandlers } from "./SenderHygieneActions";
 import { readCurrentAiRunConfig, type InboxAgentsController } from "./useInboxAgents";
 import { useWorkspaceCommands } from "./workspaceCommands";
 
@@ -39,6 +40,7 @@ export function AgentsWorkspace({
   onReopenTask,
   onReviewDraft,
   onOpenAiSettings,
+  senderHygiene,
 }: {
   controller: InboxAgentsController;
   accounts: readonly Account[];
@@ -52,6 +54,7 @@ export function AgentsWorkspace({
   onReopenTask(proposal: InboxAgentProposal, taskId: string): void;
   onReviewDraft(proposal: InboxAgentProposal, draftText: string): void;
   onOpenAiSettings(): void;
+  senderHygiene: SenderHygieneHandlers;
 }) {
   const { snapshot, loaded, busy, error } = controller;
   const [filterAgent, setFilterAgent] = useState<InboxAgentId | "all">("all");
@@ -165,7 +168,7 @@ export function AgentsWorkspace({
         <div className="agents-paused" role="status">
           <Sparkles size={ICON_SIZE.sm} aria-hidden="true" />
           <span>
-            <strong>AI provider not configured.</strong> Completed-task checks run locally, while summaries, cross-thread checks, and reply drafts require an AI provider.
+            <strong>AI provider not configured.</strong> Completed-task checks and Sender Hygiene run locally, while summaries, cross-thread checks, and reply drafts require an AI provider.
           </span>
           <button type="button" className="btn" onClick={onOpenAiSettings}>AI Provider Settings</button>
         </div>
@@ -310,6 +313,7 @@ export function AgentsWorkspace({
                 const linkedTask = proposal.evidence.find((e) => e.kind === "task");
                 const evidenceExcerpt = proposal.evidence.find((e) => e.excerpt)?.excerpt;
                 const isSummary = proposal.kind === "archive_with_summary";
+                const isHygiene = proposal.kind === "sender_hygiene";
                 const sender = formatProposalSender(proposal.threadSender);
                 const ageLabel = formatAgeDays(proposal.threadLastReceivedAt);
                 const deadline = proposal.payload.deadline?.trim();
@@ -355,7 +359,13 @@ export function AgentsWorkspace({
                     ) : (
                       <>
                         <p className="assistant-card-reason">{proposal.reason}</p>
-                        {evidenceExcerpt ? (
+                        {isHygiene ? (
+                          <ul className="assistant-takeaways">
+                            {proposal.evidence.filter((e) => e.kind === "thread").map((e) => (
+                              <li key={e.id}>{e.label}</li>
+                            ))}
+                          </ul>
+                        ) : evidenceExcerpt ? (
                           <blockquote className="assistant-evidence-quote">{formatEvidenceExcerpt(evidenceExcerpt)}</blockquote>
                         ) : null}
                       </>
@@ -407,6 +417,9 @@ export function AgentsWorkspace({
                             </button>
                           )}
                         </>
+                      ) : null}
+                      {isHygiene ? (
+                        <SenderHygieneActions proposal={proposal} busy={busy} handlers={senderHygiene} />
                       ) : null}
                       {proposal.kind === "draft_reply" && proposal.payload.replyDraft ? (
                         <>
