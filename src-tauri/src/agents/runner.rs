@@ -440,7 +440,7 @@ mod tests {
         let worked = runner.tick(&MockExecutor, || 1001).await.unwrap();
         assert!(worked);
 
-        let snapshot = db.inbox_agents_snapshot(None).unwrap();
+        let snapshot = db.inbox_agents_snapshot_at(None, 1002).unwrap();
         assert!(snapshot.active_runs.is_empty());
         assert_eq!(snapshot.proposals.len(), 1);
         assert_eq!(snapshot.proposals[0].headline, "Expired offer");
@@ -483,7 +483,7 @@ mod tests {
         let runner = Runner::new(db.clone());
         assert!(runner.tick(&ProductionExecutor, || now).await.unwrap());
 
-        let snapshot = db.inbox_agents_snapshot(None).unwrap();
+        let snapshot = db.inbox_agents_snapshot_at(None, now).unwrap();
         assert_eq!(snapshot.proposals.len(), 1);
         assert_eq!(snapshot.proposals[0].kind, ProposalKind::SenderHygiene);
         let cfg = snapshot
@@ -531,7 +531,7 @@ mod tests {
         let runner = Runner::new(db.clone());
         assert!(runner.tick(&ProductionExecutor, || now).await.unwrap());
 
-        let snapshot = db.inbox_agents_snapshot(None).unwrap();
+        let snapshot = db.inbox_agents_snapshot_at(None, now).unwrap();
         assert_eq!(snapshot.proposals.len(), 2);
         for proposal in &snapshot.proposals {
             assert_eq!(proposal.kind, ProposalKind::DigestItem);

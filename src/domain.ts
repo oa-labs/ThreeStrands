@@ -1766,7 +1766,7 @@ export type SystemContactsStatus = {
 export type InboxAgentId = "stale_reads" | "resolved_and_expired" | "aging_replies" | "sender_hygiene" | "stale_reads_digest";
 export type InboxAgentRunState = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type ProposalKind = "archive_with_summary" | "archive_as_resolved" | "archive_as_expired" | "draft_reply" | "sender_hygiene" | "digest_item";
-export type ProposalState = "pending" | "accepted" | "dismissed" | "superseded";
+export type ProposalState = "pending" | "accepted" | "dismissed" | "superseded" | "expired";
 
 export type InboxAgentConfig = {
   agentId: InboxAgentId;

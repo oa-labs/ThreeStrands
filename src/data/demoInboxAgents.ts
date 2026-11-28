@@ -112,6 +112,19 @@ const DEMO_HYGIENE_MIN_THREADS = 2;
 const DEMO_HYGIENE_QUICK = 5;
 const DEMO_HYGIENE_DISMISSED = 6;
 
+/** Days a pending suggestion waits, from creation, before it expires. Mirrors the app's per-kind limits. */
+const DEMO_EXPIRY_DAYS: Record<InboxAgentProposal["kind"], number> = {
+  draft_reply: 7,
+  archive_with_summary: 14,
+  archive_as_expired: 21,
+  archive_as_resolved: 21,
+  sender_hygiene: 30,
+  digest_item: 14,
+};
+
+/** Dismissed and expired suggestions both stop the same conversation revision from being suggested again. */
+const settledWithoutAction = (p: InboxAgentProposal) => p.state === "dismissed" || p.state === "expired";
+
 export function createDemoInboxAgents(readState: () => DemoState) {
   let runnerEnabled = true;
   const configs: Record<InboxAgentId, InboxAgentConfig> = {
@@ -131,6 +144,10 @@ export function createDemoInboxAgents(readState: () => DemoState) {
       const t = byId.get(p.threadId);
       if (!t || t.archived || t.trashed || t.lastMessageAt !== p.threadRevision) {
         return { ...p, state: "superseded" };
+      }
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      if (nowSeconds - p.createdAt >= DEMO_EXPIRY_DAYS[p.kind] * 86_400) {
+        return { ...p, state: "expired", updatedAt: nowSeconds };
       }
       return p;
     });
@@ -186,7 +203,7 @@ export function createDemoInboxAgents(readState: () => DemoState) {
         const withUnsubscribe = sorted.find((t) => readState().messagesFor(t).some((m) => m.unsubscribe));
         const anchor = withUnsubscribe ?? sorted[0];
         const already = proposals.some(
-          (p) => p.agentId === agentId && p.payload.senderEmail === entry.email && (p.state === "pending" || (p.state === "dismissed" && p.threadId === anchor.id)),
+          (p) => p.agentId === agentId && p.payload.senderEmail === entry.email && (p.state === "pending" || (settledWithoutAction(p) && p.threadId === anchor.id)),
         );
         if (already) continue;
         const unsubscribeMessage = withUnsubscribe ? readState().messagesFor(withUnsubscribe).find((m) => m.unsubscribe) : undefined;
@@ -250,7 +267,7 @@ export function createDemoInboxAgents(readState: () => DemoState) {
             (p) =>
               p.threadId === t.id &&
               ((p.state === "pending" && (p.agentId === "stale_reads" || p.agentId === agentId)) ||
-                (p.agentId === agentId && p.state === "dismissed" && p.threadRevision === t.lastMessageAt)),
+                (p.agentId === agentId && settledWithoutAction(p) && p.threadRevision === t.lastMessageAt)),
           );
           return isBulk && !wroteIn && !claimed;
         })
@@ -299,7 +316,7 @@ export function createDemoInboxAgents(readState: () => DemoState) {
     for (const t of scoped.slice(0, cfg.maxThreadsPerRun)) {
       const already = proposals.some(
         (p) =>
-          (p.agentId === agentId && p.threadId === t.id && p.threadRevision === t.lastMessageAt && (p.state === "pending" || p.state === "dismissed")) ||
+          (p.agentId === agentId && p.threadId === t.id && p.threadRevision === t.lastMessageAt && (p.state === "pending" || settledWithoutAction(p))) ||
           (agentId === "stale_reads" && p.kind === "digest_item" && p.threadId === t.id && p.state === "pending"),
       );
       if (already) continue;

@@ -36,6 +36,7 @@ Suggestions appear in **Agents** (<kbd>7</kbd>) and in Mail's right-side context
 
 - In **Agents**, use <kbd>j</kbd> / <kbd>k</kbd> or <kbd>↓</kbd> / <kbd>↑</kbd> to move through suggestions, <kbd>o</kbd> or <kbd>Enter</kbd> to open the conversation, <kbd>e</kbd> to **Archive** the conversation, <kbd>n</kbd> to **Save to Notes & Archive**, <kbd>r</kbd> to **Review Draft**, and <kbd>x</kbd> to **Dismiss**. The Stale Reads Digest is a single stop: <kbd>e</kbd> archives all of its emails (undoable), <kbd>x</kbd> dismisses them all, and <kbd>o</kbd> or <kbd>Enter</kbd> opens the first.
 - Suggestions clear automatically if you archive, trash, or snooze the conversation, or if a new message arrives. Dismissed suggestions are not shown again unless new mail arrives in that conversation.
+- Suggestions you leave unanswered expire on their own: **Suggested Reply** after 7 days, **Stale Read** and **Stale Reads Digest** items after 14 days, **Expired & Already-Handled Sweeper** suggestions after 21 days, and **Ignored Sender** suggestions after 30 days. An expired suggestion is treated like a dismissed one, so it is not suggested again unless new mail arrives in that conversation.
 
 ## Privacy and Local State {#privacy-and-local-state}
 
