@@ -3,11 +3,11 @@ import { createDemoClient } from "./demoClient";
 import { defaultDemoDataset, DEMO_ACCOUNT_ID } from "./demoDataset";
 
 describe("demo inbox assistants", () => {
-  it("lists all four assistants disabled by default and validates config updates", async () => {
+  it("lists all five assistants disabled by default and validates config updates", async () => {
     const client = createDemoClient(defaultDemoDataset());
     const initial = await client.getInboxAgentsSnapshot();
     expect(initial.runnerEnabled).toBe(true);
-    expect(initial.agents).toHaveLength(4);
+    expect(initial.agents).toHaveLength(5);
     expect(initial.agents.every((a) => !a.enabled)).toBe(true);
 
     await expect(
@@ -190,5 +190,61 @@ describe("demo inbox assistants", () => {
     // Running again does not duplicate a pending suggestion.
     const again = await client.runInboxAgent("sender_hygiene");
     expect(again.proposals.filter((p) => p.payload.senderEmail === "deals@acme.example")).toHaveLength(1);
+  });
+
+  it("stale reads digest rolls unread bulk reads into per-thread digest items and never doubles up with stale reads", async () => {
+    const dataset = defaultDemoDataset();
+    const base = dataset.threads[0];
+    for (const [id, day] of [["letter-1", "01"], ["letter-2", "02"]] as const) {
+      dataset.threads.push({
+        ...base,
+        id,
+        subject: `Weekend Reader ${id}`,
+        snippet: `Issue ${id}: a long read about slow software.`,
+        participants: ["Weekend Reader"],
+        lastMessageAt: `2026-02-${day}T10:00:00Z`,
+        lastReceivedAt: `2026-02-${day}T10:00:00Z`,
+        unread: true,
+        labels: ["INBOX", "CATEGORY_UPDATES"],
+      });
+      dataset.messages[id] = [{
+        sender: "Weekend Reader <hi@reader.example>",
+        recipients: ["You <you@example.com>"],
+        sentAt: `2026-02-${day}T10:00:00Z`,
+        bodyHtml: "<p>Read</p>",
+        bodyText: "Read",
+      }];
+    }
+    // Read already, so it never joins the digest.
+    dataset.threads.push({ ...base, id: "read-letter", unread: false, labels: ["INBOX", "CATEGORY_UPDATES"], lastReceivedAt: "2026-02-03T10:00:00Z", lastMessageAt: "2026-02-03T10:00:00Z" });
+    dataset.messages["read-letter"] = dataset.messages.welcome;
+    const client = createDemoClient(dataset);
+
+    const initial = await client.getInboxAgentsSnapshot();
+    const digest = initial.agents.find((a) => a.agentId === "stale_reads_digest")!;
+    expect(digest.scheduleHours).toBe(168);
+    expect(digest.enabled).toBe(false);
+
+    const snapshot = await client.runInboxAgent("stale_reads_digest");
+    const items = snapshot.proposals.filter((p) => p.kind === "digest_item");
+    expect(items.map((p) => p.threadId).sort()).toEqual(["letter-1", "letter-2", "welcome"]);
+    expect(items.every((p) => p.agentId === "stale_reads_digest")).toBe(true);
+    const letter = items.find((p) => p.threadId === "letter-1")!;
+    expect(letter.payload.summary).toBe("Issue letter-1: a long read about slow software.");
+    expect(letter.payload.takeaways).toEqual([letter.payload.summary]);
+    expect(letter.payload.suggestSaveToNote).toBe(false);
+    expect(letter.reason).toMatch(/^Unread for \d+ days$/);
+
+    // A second run does not duplicate pending items, and Stale Reads skips digested threads.
+    const again = await client.runInboxAgent("stale_reads_digest");
+    expect(again.proposals.filter((p) => p.kind === "digest_item")).toHaveLength(3);
+    const stale = await client.runInboxAgent("stale_reads");
+    const digested = new Set(items.map((p) => p.threadId));
+    expect(stale.proposals.filter((p) => p.kind === "archive_with_summary" && digested.has(p.threadId))).toHaveLength(0);
+
+    // Dismissing one item keeps it out of the next run.
+    await client.resolveInboxAgentProposal(letter.id, "dismissed");
+    const afterDismiss = await client.runInboxAgent("stale_reads_digest");
+    expect(afterDismiss.proposals.some((p) => p.threadId === "letter-1")).toBe(false);
   });
 });

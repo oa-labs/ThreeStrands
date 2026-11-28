@@ -26,6 +26,7 @@ pub enum Feature {
     AgentStaleReads,
     AgentResolvedSweeper,
     AgentAgingReplies,
+    AgentStaleReadsDigest,
 }
 impl Feature {
     pub fn id(self) -> &'static str {
@@ -45,6 +46,7 @@ impl Feature {
             Self::AgentStaleReads => "agent_stale_reads",
             Self::AgentResolvedSweeper => "agent_resolved_sweeper",
             Self::AgentAgingReplies => "agent_aging_replies",
+            Self::AgentStaleReadsDigest => "agent_stale_reads_digest",
         }
     }
     /// Bump when instructions/interpretation change; hashes also detect drift.
@@ -62,7 +64,10 @@ impl Feature {
             Self::MeetingRecap => 1,
             Self::CloudTranscription => 1,
             Self::Connection => 1,
-            Self::AgentStaleReads | Self::AgentResolvedSweeper | Self::AgentAgingReplies => 1,
+            Self::AgentStaleReads
+            | Self::AgentResolvedSweeper
+            | Self::AgentAgingReplies
+            | Self::AgentStaleReadsDigest => 1,
         }
     }
     pub fn schema_version(self) -> u32 {

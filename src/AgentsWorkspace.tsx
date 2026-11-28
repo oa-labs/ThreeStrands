@@ -7,6 +7,7 @@ import type { Account, InboxAgentConfig, InboxAgentId, InboxAgentProposal } from
 import { ICON_SIZE } from "./iconSizes";
 import {
   ASSISTANT_KIND_LABELS,
+  formatAgeDays,
   formatEvidenceExcerpt,
   formatProposalSender,
   isSafeForBatchArchive,
@@ -14,18 +15,12 @@ import {
   shouldShowSubjectSubline,
 } from "./inboxAssistantCard";
 import { InboxAgentConfigModal } from "./InboxAgentConfigModal";
+import { DIGEST_ENTRY_ID, sortDigestItems, StaleReadsDigestCard, type DigestHandlers } from "./StaleReadsDigestCard";
 import { SenderHygieneActions, type SenderHygieneHandlers } from "./SenderHygieneActions";
 import { readCurrentAiRunConfig, type InboxAgentsController } from "./useInboxAgents";
 import { useWorkspaceCommands } from "./workspaceCommands";
 
-function formatAgeDays(iso: string): string {
-  const ts = Date.parse(iso);
-  if (!Number.isFinite(ts)) return "";
-  const days = Math.max(0, Math.floor((Date.now() - ts) / 86_400_000));
-  if (days === 0) return "Today";
-  if (days === 1) return "1 day old";
-  return `${days} days old`;
-}
+type QueueEntry = { id: string; proposal: InboxAgentProposal | null };
 
 export function AgentsWorkspace({
   controller,
@@ -65,16 +60,35 @@ export function AgentsWorkspace({
     (p) => filterAgent === "all" || p.agentId === filterAgent,
   );
   const safeBatch = visibleProposals.filter(isSafeForBatchArchive);
-  const activeProposal =
-    visibleProposals.find((p) => p.id === selectedId) ?? visibleProposals[0] ?? null;
+  const digestItems = visibleProposals.filter((p) => p.kind === "digest_item");
+  // Every digest item shares one card, placed where its newest item sits in the queue.
+  const entries: QueueEntry[] = [];
+  for (const proposal of visibleProposals) {
+    if (proposal.kind !== "digest_item") entries.push({ id: proposal.id, proposal });
+    else if (!entries.some((e) => e.id === DIGEST_ENTRY_ID)) entries.push({ id: DIGEST_ENTRY_ID, proposal: null });
+  }
+  const activeEntry = entries.find((e) => e.id === selectedId) ?? entries[0] ?? null;
+  const activeProposal = activeEntry?.proposal ?? null;
+  const entryKey = entries.map((e) => e.id).join("|");
 
   useEffect(() => {
-    if (visibleProposals.length === 0) {
+    if (entries.length === 0) {
       setSelectedId(null);
-    } else if (!selectedId || !visibleProposals.some((p) => p.id === selectedId)) {
-      setSelectedId(visibleProposals[0].id);
+    } else if (!selectedId || !entries.some((e) => e.id === selectedId)) {
+      setSelectedId(entries[0].id);
     }
-  }, [selectedId, visibleProposals]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, entryKey]);
+
+  const digestHandlers: DigestHandlers = {
+    onArchiveAll: onArchiveBatch,
+    onDismissAll: (items) => {
+      for (const item of items) void controller.resolveProposal(item.id, "dismissed");
+    },
+    onDismiss: (item) => { void controller.resolveProposal(item.id, "dismissed"); },
+    onSaveToNoteAndArchive,
+    onOpenThread,
+  };
 
   useWorkspaceCommands({
     "agents.runAll": () => { void controller.runEnabled(); },
@@ -90,19 +104,34 @@ export function AgentsWorkspace({
       className="agents-workspace"
       aria-label="Inbox Assistants"
       onKeyDown={(e) => {
-        if (isEditableTarget(e.target) || editingConfig || visibleProposals.length === 0) return;
-        if (e.key === "j" || e.key === "ArrowDown") {
+        if (isEditableTarget(e.target) || editingConfig || entries.length === 0) return;
+        const stepTo = (delta: number) => {
           e.preventDefault();
-          const idx = visibleProposals.findIndex((p) => p.id === activeProposal?.id);
-          const next = visibleProposals[Math.min(visibleProposals.length - 1, Math.max(0, idx) + 1)];
+          const idx = entries.findIndex((entry) => entry.id === activeEntry?.id);
+          const next = entries[Math.min(entries.length - 1, Math.max(0, Math.max(0, idx) + delta))];
           if (next) setSelectedId(next.id);
+        };
+        if (e.key === "j" || e.key === "ArrowDown") {
+          stepTo(1);
           return;
         }
         if (e.key === "k" || e.key === "ArrowUp") {
-          e.preventDefault();
-          const idx = visibleProposals.findIndex((p) => p.id === activeProposal?.id);
-          const prev = visibleProposals[Math.max(0, Math.max(0, idx) - 1)];
-          if (prev) setSelectedId(prev.id);
+          stepTo(-1);
+          return;
+        }
+        if (activeEntry?.id === DIGEST_ENTRY_ID) {
+          const rows = sortDigestItems(digestItems);
+          if (e.key === "e") {
+            e.preventDefault();
+            digestHandlers.onArchiveAll(rows);
+          } else if (e.key === "x") {
+            e.preventDefault();
+            digestHandlers.onDismissAll(rows);
+          } else if ((e.key === "o" || e.key === "Enter") && rows[0]) {
+            if (e.target instanceof HTMLButtonElement) return;
+            e.preventDefault();
+            onOpenThread(rows[0].threadId);
+          }
           return;
         }
         if (!activeProposal) return;
@@ -168,7 +197,7 @@ export function AgentsWorkspace({
         <div className="agents-paused" role="status">
           <Sparkles size={ICON_SIZE.sm} aria-hidden="true" />
           <span>
-            <strong>AI provider not configured.</strong> Completed-task checks and Sender Hygiene run locally, while summaries, cross-thread checks, and reply drafts require an AI provider.
+            <strong>AI provider not configured.</strong> Completed-task checks, Sender Hygiene, and the Stale Reads Digest (with preview text) run locally, while summaries, cross-thread checks, reply drafts, and written digest gists require an AI provider.
           </span>
           <button type="button" className="btn" onClick={onOpenAiSettings}>AI Provider Settings</button>
         </div>
@@ -307,8 +336,22 @@ export function AgentsWorkspace({
             </div>
           ) : (
             <div className="assistant-proposal-list">
-              {visibleProposals.map((proposal) => {
-                const isSelected = activeProposal?.id === proposal.id;
+              {entries.map((entry) => {
+                const proposal = entry.proposal;
+                if (!proposal) {
+                  return (
+                    <StaleReadsDigestCard
+                      key={entry.id}
+                      items={digestItems}
+                      selected={activeEntry?.id === entry.id}
+                      busy={busy}
+                      showAccount={showAccount}
+                      handlers={digestHandlers}
+                      onSelect={() => setSelectedId(entry.id)}
+                    />
+                  );
+                }
+                const isSelected = activeEntry?.id === proposal.id;
                 const linkedThread = proposal.evidence.find((e) => e.kind === "thread");
                 const linkedTask = proposal.evidence.find((e) => e.kind === "task");
                 const evidenceExcerpt = proposal.evidence.find((e) => e.excerpt)?.excerpt;

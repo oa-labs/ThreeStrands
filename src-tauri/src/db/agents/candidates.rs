@@ -133,6 +133,15 @@ fn load_aging_inbox_threads(
            )
            AND COALESCE(NULLIF(t.last_received_at, ''), t.last_message_at) <= ?2",
     );
+    if agent_id == AgentId::StaleReads {
+        // The Stale Reads Digest already covers a thread it holds an item for.
+        sql.push_str(
+            " AND NOT EXISTS (
+                SELECT 1 FROM inbox_agent_proposals d
+                WHERE d.thread_id = t.id AND d.kind = 'digest_item' AND d.state = 'pending'
+            )",
+        );
+    }
     if !config.include_starred {
         sql.push_str(" AND t.starred = 0");
     }
@@ -423,6 +432,9 @@ pub(super) fn select_candidates(
     if config.agent_id == AgentId::SenderHygiene {
         return select_sender_hygiene(conn, config, now_secs);
     }
+    if config.agent_id == AgentId::StaleReadsDigest {
+        return select_stale_reads_digest(conn, config, now_secs);
+    }
     let now_dt = DateTime::<Utc>::from_timestamp(now_secs, 0).unwrap_or_else(Utc::now);
     let now_iso = now_dt.to_rfc3339();
     let cutoff_iso = (now_dt - Duration::days(config.age_days.max(1))).to_rfc3339();
@@ -526,7 +538,7 @@ pub(super) fn select_candidates(
                     related_events,
                 });
             }
-            AgentId::SenderHygiene => continue,
+            AgentId::SenderHygiene | AgentId::StaleReadsDigest => continue,
             AgentId::AgingReplies => {
                 let latest = messages.last().unwrap();
                 if latest.is_own || has_unsubscribe || has_bulk_label(&thread.labels) {
@@ -558,6 +570,174 @@ pub(super) fn select_candidates(
         }
     }
 
+    Ok(batch)
+}
+
+/// Collapses whitespace and cuts `value` to at most `limit` characters,
+/// ending in an ellipsis when it was cut.
+fn bounded_gist(value: &str, limit: usize) -> String {
+    let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= limit {
+        return collapsed;
+    }
+    let mut cut: String = collapsed.chars().take(limit.saturating_sub(1)).collect();
+    cut = cut.trim_end().to_string();
+    cut.push('\u{2026}');
+    cut
+}
+
+/// Unread bulk reads (newsletters, articles) older than the age setting, oldest
+/// first. Each becomes one `digest_item` proposal carrying a deterministic
+/// gist (the preview text); `ai_candidates` carries the same threads so the
+/// runner can replace gists with model-written ones when a provider is set.
+fn select_stale_reads_digest(
+    conn: &Connection,
+    config: &InboxAgentConfig,
+    now_secs: i64,
+) -> DbResult<CandidateBatch> {
+    let now_dt = DateTime::<Utc>::from_timestamp(now_secs, 0).unwrap_or_else(Utc::now);
+    let cutoff_iso = (now_dt - Duration::days(config.age_days.max(1))).to_rfc3339();
+    let max_out = config
+        .max_threads_per_run
+        .clamp(MIN_THREADS_PER_RUN, MAX_THREADS_PER_RUN) as usize;
+    let mut batch = CandidateBatch {
+        deterministic: Vec::new(),
+        ai_candidates: Vec::new(),
+    };
+
+    let mut sql = String::from(
+        "SELECT t.id, t.provider_thread_id, t.account_id, t.subject,
+                t.participants_json, t.last_message_at,
+                COALESCE(NULLIF(t.last_received_at, ''), t.last_message_at) AS received_at,
+                t.labels_json, t.snippet
+         FROM threads t
+         WHERE t.archived = 0 AND t.trashed = 0 AND t.unread = 1
+           AND NOT EXISTS (
+               SELECT 1 FROM conversation_snoozes s
+               WHERE s.id = t.id AND json_extract(s.record_json, '$.state') = 'active'
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM inbox_agent_proposals p
+               WHERE p.thread_id = t.id
+                 AND ((p.agent_id IN ('stale_reads', 'stale_reads_digest') AND p.state = 'pending')
+                   OR (p.agent_id = 'stale_reads_digest'
+                       AND p.thread_revision = t.last_message_at
+                       AND p.state = 'dismissed'))
+           )
+           AND (
+               t.labels_json LIKE '%\"CATEGORY_UPDATES\"%'
+               OR t.labels_json LIKE '%\"CATEGORY_PROMOTIONS\"%'
+               OR EXISTS (
+                   SELECT 1 FROM messages m
+                   WHERE m.thread_id = t.id AND m.unsubscribe_json IS NOT NULL
+               )
+           )
+           AND COALESCE(NULLIF(t.last_received_at, ''), t.last_message_at) <= ?1",
+    );
+    if !config.include_starred {
+        sql.push_str(" AND t.starred = 0");
+    }
+    if config.account_id.is_some() {
+        sql.push_str(" AND t.account_id = ?2");
+    }
+    sql.push_str(" ORDER BY received_at ASC, t.id ASC");
+
+    let mut stmt = conn.prepare(&sql)?;
+    let map_row = |row: &rusqlite::Row<'_>| {
+        Ok((
+            ThreadRow {
+                id: row.get(0)?,
+                provider_thread_id: row.get(1)?,
+                account_id: row.get(2)?,
+                subject: row.get(3)?,
+                participants: decode_json(row.get::<_, String>(4)?)?,
+                last_message_at: row.get(5)?,
+                last_received_at: row.get(6)?,
+                labels: decode_json(row.get::<_, String>(7)?)?,
+            },
+            row.get::<_, String>(8)?,
+        ))
+    };
+    let pool = if let Some(account_id) = config.account_id.as_deref() {
+        stmt.query_map(params![cutoff_iso, account_id], map_row)?
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        stmt.query_map(params![cutoff_iso], map_row)?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    let mut own_cache: HashMap<String, BTreeSet<String>> = HashMap::new();
+    for (thread, snippet) in pool {
+        if batch.deterministic.len() >= max_out {
+            break;
+        }
+        let own = own_cache
+            .entry(thread.account_id.clone())
+            .or_insert_with(|| sending_addresses_for_account(conn, &thread.account_id))
+            .clone();
+        let messages = load_thread_messages(conn, &thread.id, &own)?;
+        let Some(newest) = messages.last() else {
+            continue;
+        };
+        if messages.iter().any(|m| m.is_own) {
+            continue;
+        }
+        let age_days = parse_rfc3339_age_days(&thread.last_received_at, now_secs);
+        let subject = if thread.subject.trim().is_empty() {
+            "(no subject)".to_string()
+        } else {
+            thread.subject.trim().to_string()
+        };
+        let mut gist = bounded_gist(&snippet, DIGEST_GIST_MAX_CHARS);
+        if gist.is_empty() {
+            gist = bounded_gist(&newest.body_text, DIGEST_GIST_MAX_CHARS);
+        }
+        if gist.is_empty() {
+            gist = bounded_gist(&subject, DIGEST_GIST_MAX_CHARS);
+        }
+        let excerpt = bounded_gist(&newest.body_text, MAX_EXCERPT_CHARS);
+        let evidence = if excerpt.is_empty() {
+            Vec::new()
+        } else {
+            vec![ProposalEvidence {
+                kind: "message".into(),
+                id: newest.id.clone(),
+                label: subject.clone(),
+                excerpt: Some(excerpt),
+            }]
+        };
+        batch.deterministic.push(DeterministicProposal {
+            account_id: thread.account_id.clone(),
+            thread_id: thread.id.clone(),
+            thread_revision: thread.last_message_at.clone(),
+            kind: ProposalKind::DigestItem,
+            headline: subject.clone(),
+            reason: if age_days == 1 {
+                "Unread for 1 day".to_string()
+            } else {
+                format!("Unread for {age_days} days")
+            },
+            payload: ProposalPayload {
+                summary: Some(gist.clone()),
+                takeaways: Some(vec![gist]),
+                note_title: Some(subject.clone()),
+                suggest_save_to_note: Some(false),
+                ..Default::default()
+            },
+            evidence,
+        });
+        batch.ai_candidates.push(CandidateThread {
+            thread_id: thread.id,
+            account_id: thread.account_id,
+            subject,
+            last_message_at: thread.last_message_at,
+            age_days,
+            has_unsubscribe: messages.iter().any(|m| m.has_unsubscribe),
+            messages,
+            related_threads: Vec::new(),
+            related_events: Vec::new(),
+        });
+    }
     Ok(batch)
 }
 

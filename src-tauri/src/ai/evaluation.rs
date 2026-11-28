@@ -392,7 +392,10 @@ async fn execute(case: &Case, provider: AiProvider, options: &Options) -> Result
         Feature::CloudTranscription => {
             Err("Cloud transcription does not use offline replay evaluations".into())
         }
-        Feature::AgentStaleReads | Feature::AgentResolvedSweeper | Feature::AgentAgingReplies => {
+        Feature::AgentStaleReads
+        | Feature::AgentResolvedSweeper
+        | Feature::AgentAgingReplies
+        | Feature::AgentStaleReadsDigest => {
             Err("Inbox assistants do not use offline replay evaluations".into())
         }
     }

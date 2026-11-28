@@ -1,7 +1,7 @@
 import { Bot } from "lucide-react";
 import type { InboxAgentProposal } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
-import { ASSISTANT_KIND_LABELS, proposalTakeaways } from "./inboxAssistantCard";
+import { ASSISTANT_KIND_LABELS, digestGist, proposalTakeaways } from "./inboxAssistantCard";
 import { SenderHygieneActions, type SenderHygieneHandlers } from "./SenderHygieneActions";
 
 export function InboxAssistantBanner({
@@ -59,6 +59,8 @@ export function InboxAssistantBanner({
                   ))}
                 </ul>
               ) : null
+            ) : proposal.kind === "digest_item" ? (
+              <p className="assistant-card-reason">{digestGist(proposal)}</p>
             ) : (
               <p className="assistant-card-reason">{proposal.reason}</p>
             )}
@@ -127,6 +129,16 @@ export function InboxAssistantBanner({
                       Quick Check-In
                     </button>
                   ) : null}
+                </>
+              ) : null}
+              {proposal.kind === "digest_item" ? (
+                <>
+                  <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => onArchive(proposal)}>
+                    Archive
+                  </button>
+                  <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onSaveToNoteAndArchive(proposal)}>
+                    Save to Notes &amp; Archive
+                  </button>
                 </>
               ) : null}
               {proposal.kind === "sender_hygiene" ? (

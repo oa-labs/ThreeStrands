@@ -75,7 +75,7 @@ You can cancel running AI work from its feature panel or **Request Controls**. C
 | Find Times with AI | Conversation and draft to interpret the requested meeting range | Calendar availability is computed locally; calendar contents are not sent |
 | Enhance With AI | Requested contact enrichment from correspondence | Accept suggested profile changes yourself |
 | Meeting Preparation | On request (**Prepare Agenda…**); checked invitation, notes, conversations, promises, commitments, and file metadata | Review and uncheck sources before **Generate Agenda**; **Exclude from AI** blocks private notes |
-| Inbox Assistants | Manual or scheduled (**Daily** / **Weekly**); candidate emails (plus related threads and calendar events for Sweeper); Sender Hygiene Advisor sends nothing | Enable, configure, pause, or run manually; review every suggestion before acting |
+| Inbox Assistants | Manual or scheduled (**Daily** / **Weekly**); candidate emails (plus related threads and calendar events for Sweeper); Sender Hygiene Advisor sends nothing; Stale Reads Digest sends batches of up to 15 emails (about 1,500 characters each) only when a provider is set | Enable, configure, pause, or run manually; review every suggestion before acting |
 
 Draft Review excludes recipient fields, separately stored quoted history, and attachments. Text you put inside the authored draft itself is part of what it reviews. **Settings → AI Provider → Activity** records which provider, model, and message count each request used; a brief can be limited to recent messages rather than the entire history.
 
@@ -89,4 +89,4 @@ Requests go directly to the provider you choose. Its API billing, model access, 
 
 ## Inbox Assistants {#inbox-assistants}
 
-Open **Agents** (<kbd>7</kbd>) to enable, configure, or pause **Stale Reads Summarizer**, **Expired & Already-Handled Sweeper**, **Aging Reply Drafter**, and **Sender Hygiene Advisor**. Assistants use the provider configured in **Settings → AI Provider** (completed-task checks in the sweeper and all of Sender Hygiene run locally without AI) and prepare proposals for your review without archiving or sending automatically. See [Inbox Assistants](inbox-assistants.html) for full controls and actions.
+Open **Agents** (<kbd>7</kbd>) to enable, configure, or pause **Stale Reads Summarizer**, **Expired & Already-Handled Sweeper**, **Aging Reply Drafter**, **Sender Hygiene Advisor**, and **Stale Reads Digest**. Assistants use the provider configured in **Settings → AI Provider** (completed-task checks in the sweeper, all of Sender Hygiene, and the digest's preview-text mode run locally without AI) and prepare proposals for your review without archiving or sending automatically. See [Inbox Assistants](inbox-assistants.html) for full controls and actions.

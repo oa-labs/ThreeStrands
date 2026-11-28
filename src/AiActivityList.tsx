@@ -15,6 +15,7 @@ const FEATURE_LABELS: Record<string, string> = {
   agent_stale_reads: "Stale Reads Summarizer",
   agent_resolved_sweeper: "Expired & Handled Sweeper",
   agent_aging_replies: "Aging Reply Drafter",
+  agent_stale_reads_digest: "Stale Reads Digest",
   brief: "Brief",
   summary: "Brief",
   suggestions: "Suggestions",

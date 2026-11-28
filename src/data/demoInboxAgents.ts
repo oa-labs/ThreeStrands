@@ -85,7 +85,27 @@ const CATALOG: Record<InboxAgentId, Omit<InboxAgentConfig, "updatedAt">> = {
     lastRunScanned: 0,
     lastRunProposed: 0,
   },
+  stale_reads_digest: {
+    agentId: "stale_reads_digest",
+    name: "Stale Reads Digest",
+    description: "Rolls up unread newsletters and articles older than a week into one scannable list you can clear in one click.",
+    enabled: false,
+    ageDays: 7,
+    maxThreadsPerRun: 30,
+    includeStarred: false,
+    accountId: null,
+    scheduleHours: 168,
+    lastRunAt: null,
+    lastRunStatus: null,
+    lastRunError: null,
+    lastRunScanned: 0,
+    lastRunProposed: 0,
+  },
 };
+
+const AGENT_ORDER: InboxAgentId[] = ["stale_reads", "resolved_and_expired", "aging_replies", "sender_hygiene", "stale_reads_digest"];
+/** The digest's gist is the preview text, as in the app without an AI provider. */
+const DEMO_GIST_MAX = 160;
 
 /** The demo has no triage history, so a sender with several Inbox conversations stands in for one the user keeps ignoring. */
 const DEMO_HYGIENE_MIN_THREADS = 2;
@@ -99,6 +119,7 @@ export function createDemoInboxAgents(readState: () => DemoState) {
     resolved_and_expired: { ...CATALOG.resolved_and_expired, updatedAt: 0 },
     aging_replies: { ...CATALOG.aging_replies, updatedAt: 0 },
     sender_hygiene: { ...CATALOG.sender_hygiene, updatedAt: 0 },
+    stale_reads_digest: { ...CATALOG.stale_reads_digest, updatedAt: 0 },
   };
   let proposals: InboxAgentProposal[] = [];
 
@@ -119,7 +140,7 @@ export function createDemoInboxAgents(readState: () => DemoState) {
     syncWithThreads();
     return {
       runnerEnabled,
-      agents: structuredClone([configs.stale_reads, configs.resolved_and_expired, configs.aging_replies, configs.sender_hygiene]),
+      agents: structuredClone(AGENT_ORDER.map((id) => configs[id])),
       activeRuns: [],
       proposals: structuredClone(
         proposals.filter((p) => p.state === "pending" && (!accountId || accountId === "all" || p.accountId === accountId)),
@@ -213,9 +234,73 @@ export function createDemoInboxAgents(readState: () => DemoState) {
       return;
     }
 
+    if (agentId === "stale_reads_digest") {
+      const cutoff = Date.now() - cfg.ageDays * 86_400_000;
+      const ownAddresses = new Set(readState().accounts.map((a) => a.email.toLowerCase()));
+      const bulk = scoped
+        .filter((t) => {
+          if (!t.unread || Date.parse(t.lastReceivedAt ?? t.lastMessageAt) > cutoff) return false;
+          const messages = readState().messagesFor(t);
+          const isBulk =
+            t.labels.includes("CATEGORY_UPDATES") ||
+            t.labels.includes("CATEGORY_PROMOTIONS") ||
+            messages.some((m) => m.unsubscribe);
+          const wroteIn = messages.some((m) => ownAddresses.has(parseAddress(m.sender).email.toLowerCase())) || t.labels.includes("SENT");
+          const claimed = proposals.some(
+            (p) =>
+              p.threadId === t.id &&
+              ((p.state === "pending" && (p.agentId === "stale_reads" || p.agentId === agentId)) ||
+                (p.agentId === agentId && p.state === "dismissed" && p.threadRevision === t.lastMessageAt)),
+          );
+          return isBulk && !wroteIn && !claimed;
+        })
+        .sort((a, b) => Date.parse(a.lastReceivedAt ?? a.lastMessageAt) - Date.parse(b.lastReceivedAt ?? b.lastMessageAt))
+        .slice(0, cfg.maxThreadsPerRun);
+      for (const t of bulk) {
+        scanned++;
+        proposed++;
+        const received = t.lastReceivedAt ?? t.lastMessageAt;
+        const days = Math.max(1, Math.floor((Date.now() - Date.parse(received)) / 86_400_000));
+        const gist = t.snippet.replace(/\s+/g, " ").trim().slice(0, DEMO_GIST_MAX);
+        proposals.unshift({
+          id: `demo-prop-${crypto.randomUUID()}`,
+          agentId,
+          accountId: t.accountId,
+          threadId: t.id,
+          threadRevision: t.lastMessageAt,
+          threadSubject: t.subject,
+          threadSender: t.participants[0] ?? "",
+          threadLastReceivedAt: received,
+          threadSnippet: t.snippet,
+          threadUnread: t.unread,
+          threadStarred: t.starred,
+          kind: "digest_item",
+          state: "pending",
+          headline: t.subject,
+          reason: `Unread for ${days} ${days === 1 ? "day" : "days"}`,
+          payload: { summary: gist, takeaways: [gist], noteTitle: t.subject, suggestSaveToNote: false },
+          evidence: [{ kind: "message", id: `${t.id}-message`, label: t.subject, excerpt: t.snippet }],
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      configs[agentId] = {
+        ...cfg,
+        lastRunAt: now,
+        lastRunStatus: "completed",
+        lastRunError: null,
+        lastRunScanned: scanned,
+        lastRunProposed: proposed,
+        updatedAt: now,
+      };
+      return;
+    }
+
     for (const t of scoped.slice(0, cfg.maxThreadsPerRun)) {
       const already = proposals.some(
-        (p) => p.agentId === agentId && p.threadId === t.id && p.threadRevision === t.lastMessageAt && (p.state === "pending" || p.state === "dismissed"),
+        (p) =>
+          (p.agentId === agentId && p.threadId === t.id && p.threadRevision === t.lastMessageAt && (p.state === "pending" || p.state === "dismissed")) ||
+          (agentId === "stale_reads" && p.kind === "digest_item" && p.threadId === t.id && p.state === "pending"),
       );
       if (already) continue;
 
@@ -367,7 +452,7 @@ export function createDemoInboxAgents(readState: () => DemoState) {
       return snapshot(accountId);
     },
     async runEnabledInboxAgents(_aiConfig?: AiRunConfig | null, accountId?: string): Promise<InboxAgentsSnapshot> {
-      for (const id of ["stale_reads", "resolved_and_expired", "aging_replies", "sender_hygiene"] as InboxAgentId[]) {
+      for (const id of AGENT_ORDER) {
         if (configs[id].enabled) runOne(id, accountId);
       }
       return snapshot(accountId);

@@ -18,14 +18,16 @@ pub(crate) enum AgentId {
     ResolvedAndExpired,
     AgingReplies,
     SenderHygiene,
+    StaleReadsDigest,
 }
 
 impl AgentId {
-    pub(crate) const ALL: [Self; 4] = [
+    pub(crate) const ALL: [Self; 5] = [
         Self::StaleReads,
         Self::ResolvedAndExpired,
         Self::AgingReplies,
         Self::SenderHygiene,
+        Self::StaleReadsDigest,
     ];
 
     pub(crate) fn as_str(self) -> &'static str {
@@ -34,6 +36,7 @@ impl AgentId {
             Self::ResolvedAndExpired => "resolved_and_expired",
             Self::AgingReplies => "aging_replies",
             Self::SenderHygiene => "sender_hygiene",
+            Self::StaleReadsDigest => "stale_reads_digest",
         }
     }
 
@@ -43,6 +46,7 @@ impl AgentId {
             "resolved_and_expired" => Some(Self::ResolvedAndExpired),
             "aging_replies" => Some(Self::AgingReplies),
             "sender_hygiene" => Some(Self::SenderHygiene),
+            "stale_reads_digest" => Some(Self::StaleReadsDigest),
             _ => None,
         }
     }
@@ -55,6 +59,7 @@ impl AgentId {
                 default_age_days: 7,
                 default_max_threads: 15,
                 default_include_starred: false,
+                default_schedule_hours: None,
             },
             Self::ResolvedAndExpired => AgentCatalogEntry {
                 name: "Expired & Already-Handled Sweeper",
@@ -62,6 +67,7 @@ impl AgentId {
                 default_age_days: 7,
                 default_max_threads: 15,
                 default_include_starred: false,
+                default_schedule_hours: None,
             },
             Self::AgingReplies => AgentCatalogEntry {
                 name: "Aging Reply Drafter",
@@ -69,6 +75,7 @@ impl AgentId {
                 default_age_days: 3,
                 default_max_threads: 10,
                 default_include_starred: true,
+                default_schedule_hours: None,
             },
             Self::SenderHygiene => AgentCatalogEntry {
                 name: "Sender Hygiene Advisor",
@@ -76,6 +83,15 @@ impl AgentId {
                 default_age_days: 14,
                 default_max_threads: 10,
                 default_include_starred: false,
+                default_schedule_hours: None,
+            },
+            Self::StaleReadsDigest => AgentCatalogEntry {
+                name: "Stale Reads Digest",
+                description: "Rolls up unread newsletters and articles older than a week into one scannable list you can clear in one click.",
+                default_age_days: 7,
+                default_max_threads: 30,
+                default_include_starred: false,
+                default_schedule_hours: Some(168),
             },
         }
     }
@@ -88,6 +104,7 @@ pub(crate) struct AgentCatalogEntry {
     pub default_age_days: i64,
     pub default_max_threads: i64,
     pub default_include_starred: bool,
+    pub default_schedule_hours: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -187,6 +204,7 @@ pub(crate) enum ProposalKind {
     ArchiveAsExpired,
     DraftReply,
     SenderHygiene,
+    DigestItem,
 }
 
 impl ProposalKind {
@@ -197,6 +215,7 @@ impl ProposalKind {
             Self::ArchiveAsExpired => "archive_as_expired",
             Self::DraftReply => "draft_reply",
             Self::SenderHygiene => "sender_hygiene",
+            Self::DigestItem => "digest_item",
         }
     }
 
@@ -207,6 +226,7 @@ impl ProposalKind {
             "archive_as_expired" => Some(Self::ArchiveAsExpired),
             "draft_reply" => Some(Self::DraftReply),
             "sender_hygiene" => Some(Self::SenderHygiene),
+            "digest_item" => Some(Self::DigestItem),
             _ => None,
         }
     }

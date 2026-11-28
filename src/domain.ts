@@ -1763,9 +1763,9 @@ export type SystemContactsStatus = {
 };
 
 /** Standing, configurable Inbox Assistants backed by local SQLite state. */
-export type InboxAgentId = "stale_reads" | "resolved_and_expired" | "aging_replies" | "sender_hygiene";
+export type InboxAgentId = "stale_reads" | "resolved_and_expired" | "aging_replies" | "sender_hygiene" | "stale_reads_digest";
 export type InboxAgentRunState = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
-export type ProposalKind = "archive_with_summary" | "archive_as_resolved" | "archive_as_expired" | "draft_reply" | "sender_hygiene";
+export type ProposalKind = "archive_with_summary" | "archive_as_resolved" | "archive_as_expired" | "draft_reply" | "sender_hygiene" | "digest_item";
 export type ProposalState = "pending" | "accepted" | "dismissed" | "superseded";
 
 export type InboxAgentConfig = {

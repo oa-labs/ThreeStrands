@@ -36,6 +36,15 @@ pub(crate) const HYGIENE_MAX_INBOX_THREADS: usize = 25;
 /// Conversations listed as evidence on a proposal.
 pub(crate) const HYGIENE_EVIDENCE_THREADS: usize = 3;
 
+/// Stale Reads Digest: most items sent to the model in one batched request.
+pub(crate) const DIGEST_ITEMS_PER_REQUEST: usize = 15;
+/// Longest gist, in characters, for one digest item.
+pub(crate) const DIGEST_GIST_MAX_CHARS: usize = 160;
+/// Most body text, in characters, sent to the model for one digest item.
+pub(crate) const DIGEST_ITEM_BODY_CHARS: usize = 1_500;
+/// Longest deadline label a digest item keeps.
+pub(crate) const DIGEST_DEADLINE_MAX_CHARS: usize = 40;
+
 pub(crate) fn valid_schedule_hours(hours: Option<i64>) -> bool {
     matches!(hours, None | Some(24) | Some(168))
 }

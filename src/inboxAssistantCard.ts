@@ -8,6 +8,7 @@ export const ASSISTANT_KIND_LABELS: Record<InboxAgentProposal["kind"], string> =
   archive_as_expired: "Expired",
   draft_reply: "Suggested Reply",
   sender_hygiene: "Ignored Sender",
+  digest_item: "Digest",
 };
 
 /** Extracts a concise sender display label and exposes the raw email in tooltip only when it adds info. */
@@ -79,4 +80,19 @@ export function isSafeForBatchArchive(proposal: InboxAgentProposal): boolean {
     proposal.payload.resolvedByKind === "task" &&
     proposal.payload.taskCompletionSource === "user"
   );
+}
+
+/** "Today", "1 day old", or "N days old" for a received-at timestamp; empty when unparseable. */
+export function formatAgeDays(iso: string): string {
+  const ts = Date.parse(iso);
+  if (!Number.isFinite(ts)) return "";
+  const days = Math.max(0, Math.floor((Date.now() - ts) / 86_400_000));
+  if (days === 0) return "Today";
+  if (days === 1) return "1 day old";
+  return `${days} days old`;
+}
+
+/** The digest's gist for one item: its summary, else first takeaway, else the reason. */
+export function digestGist(proposal: InboxAgentProposal): string {
+  return proposal.payload.summary?.trim() || proposalTakeaways(proposal)[0] || proposal.reason;
 }

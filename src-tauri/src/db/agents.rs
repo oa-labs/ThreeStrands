@@ -64,7 +64,7 @@ fn default_config(agent_id: AgentId) -> InboxAgentConfig {
         max_threads_per_run: entry.default_max_threads,
         include_starred: entry.default_include_starred,
         account_id: None,
-        schedule_hours: None,
+        schedule_hours: entry.default_schedule_hours,
         last_run_at: None,
         last_run_status: None,
         last_run_error: None,
@@ -912,7 +912,7 @@ mod tests {
         let db = Database::open_memory();
         let snapshot = db.inbox_agents_snapshot(None).unwrap();
         assert!(snapshot.runner_enabled);
-        assert_eq!(snapshot.agents.len(), 4);
+        assert_eq!(snapshot.agents.len(), 5);
         assert!(snapshot.agents.iter().all(|a| !a.enabled));
 
         assert!(db
@@ -1717,5 +1717,309 @@ mod tests {
             remaining[0].payload.sender_email.as_deref(),
             Some("other@kept.example")
         );
+    }
+
+    const DIGEST_NOW: &str = "2026-11-25T10:00:00Z";
+
+    fn digest_now() -> i64 {
+        chrono::DateTime::parse_from_rfc3339(DIGEST_NOW)
+            .unwrap()
+            .timestamp()
+    }
+
+    /// An unread bulk read (labelled Updates) from a newsletter sender.
+    fn seed_digest_thread(db: &Database, id: &str, sent_at: &str) {
+        seed_thread(
+            db,
+            id,
+            &format!("Issue {id}"),
+            "News <news@letters.example>",
+            sent_at,
+            "A long weekly roundup of things worth knowing.",
+            "[\"INBOX\",\"CATEGORY_UPDATES\"]",
+            None,
+        );
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET unread = 1 WHERE id = ?1", [id])
+            .unwrap();
+    }
+
+    fn digest_ids(db: &Database) -> Vec<String> {
+        let cfg = db
+            .get_inbox_agent_config(AgentId::StaleReadsDigest)
+            .unwrap();
+        db.with_inbox_agent_candidates(&cfg, digest_now())
+            .unwrap()
+            .deterministic
+            .into_iter()
+            .map(|p| p.thread_id)
+            .collect()
+    }
+
+    #[test]
+    fn stale_reads_digest_defaults_are_registered_with_a_weekly_schedule() {
+        let db = Database::open_memory();
+        let cfg = db
+            .get_inbox_agent_config(AgentId::StaleReadsDigest)
+            .unwrap();
+        assert_eq!(cfg.name, "Stale Reads Digest");
+        assert_eq!(
+            (cfg.age_days, cfg.max_threads_per_run, cfg.include_starred),
+            (7, 30, false)
+        );
+        assert_eq!(cfg.schedule_hours, Some(168));
+        assert!(!cfg.enabled);
+        // Other assistants keep their unscheduled defaults.
+        let stale = db.get_inbox_agent_config(AgentId::StaleReads).unwrap();
+        assert_eq!(stale.schedule_hours, None);
+    }
+
+    #[test]
+    fn stale_reads_digest_selects_only_unread_bulk_reads_older_than_the_age_setting() {
+        let db = hygiene_db();
+        // Qualifies: unread, 10 days old, labelled Updates.
+        seed_digest_thread(&db, "ok-label", "2026-11-15T10:00:00Z");
+        // Qualifies through an unsubscribe option instead of a label.
+        seed_thread(
+            &db,
+            "ok-unsub",
+            "Weekly",
+            "News <news@letters.example>",
+            "2026-11-14T10:00:00Z",
+            "Body text",
+            "[\"INBOX\"]",
+            Some("{\"webUrl\":\"https://x.example/u\"}"),
+        );
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET unread = 1 WHERE id = 'ok-unsub'", [])
+            .unwrap();
+        // Too recent (3 days).
+        seed_digest_thread(&db, "recent", "2026-11-22T10:00:00Z");
+        // Read already.
+        seed_digest_thread(&db, "read", "2026-11-10T10:00:00Z");
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET unread = 0 WHERE id = 'read'", [])
+            .unwrap();
+        // A person writing to the user: not a bulk read.
+        seed_thread(
+            &db,
+            "human",
+            "Coffee?",
+            "Alex <alex@friend.example>",
+            "2026-11-10T10:00:00Z",
+            "Free Tuesday?",
+            "[\"INBOX\"]",
+            None,
+        );
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET unread = 1 WHERE id = 'human'", [])
+            .unwrap();
+        // Bulk, but the user wrote in the conversation.
+        seed_digest_thread(&db, "replied", "2026-11-09T10:00:00Z");
+        db.connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO messages(id, thread_id, sender, recipients_json, sent_at, body_html, body_text, unread)
+                 VALUES ('mine', 'replied', 'me@example.com', '[]', '2026-11-09T11:00:00Z', '', 'thanks', 0)",
+                [],
+            )
+            .unwrap();
+        // Archived.
+        seed_digest_thread(&db, "archived", "2026-11-08T10:00:00Z");
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET archived = 1 WHERE id = 'archived'", [])
+            .unwrap();
+
+        // Oldest first.
+        assert_eq!(digest_ids(&db), vec!["ok-unsub", "ok-label"]);
+
+        let cfg = db
+            .get_inbox_agent_config(AgentId::StaleReadsDigest)
+            .unwrap();
+        let batch = db.with_inbox_agent_candidates(&cfg, digest_now()).unwrap();
+        assert_eq!(batch.ai_candidates.len(), 2);
+        let item = batch
+            .deterministic
+            .iter()
+            .find(|p| p.thread_id == "ok-label")
+            .unwrap();
+        assert_eq!(item.kind, ProposalKind::DigestItem);
+        assert_eq!(item.headline, "Issue ok-label");
+        assert_eq!(item.reason, "Unread for 10 days");
+        assert_eq!(
+            item.payload.summary.as_deref(),
+            Some("A long weekly roundup of things worth knowing.")
+        );
+        assert_eq!(item.payload.suggest_save_to_note, Some(false));
+        assert_eq!(item.payload.note_title.as_deref(), Some("Issue ok-label"));
+        assert_eq!(item.evidence.len(), 1);
+    }
+
+    #[test]
+    fn stale_reads_digest_trims_the_gist_to_the_limit() {
+        let db = hygiene_db();
+        seed_digest_thread(&db, "long", "2026-11-10T10:00:00Z");
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE threads SET snippet = ?1 WHERE id = 'long'",
+                [format!(
+                    "{}   {}",
+                    "w".repeat(DIGEST_GIST_MAX_CHARS),
+                    "tail"
+                )],
+            )
+            .unwrap();
+        let cfg = db
+            .get_inbox_agent_config(AgentId::StaleReadsDigest)
+            .unwrap();
+        let batch = db.with_inbox_agent_candidates(&cfg, digest_now()).unwrap();
+        let gist = batch.deterministic[0].payload.summary.clone().unwrap();
+        assert_eq!(gist.chars().count(), DIGEST_GIST_MAX_CHARS);
+        assert!(gist.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn stale_reads_digest_respects_starred_account_scope_and_the_cap() {
+        let db = hygiene_db();
+        seed_digest_thread(&db, "d1", "2026-11-01T10:00:00Z");
+        seed_digest_thread(&db, "d2", "2026-11-02T10:00:00Z");
+        seed_digest_thread(&db, "d3", "2026-11-03T10:00:00Z");
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET starred = 1 WHERE id = 'd1'", [])
+            .unwrap();
+        assert_eq!(digest_ids(&db), vec!["d2", "d3"]);
+
+        let mut cfg = db
+            .get_inbox_agent_config(AgentId::StaleReadsDigest)
+            .unwrap();
+        cfg.include_starred = true;
+        cfg.max_threads_per_run = 2;
+        let capped = db.with_inbox_agent_candidates(&cfg, digest_now()).unwrap();
+        // The cap keeps the oldest threads.
+        let ids: Vec<_> = capped
+            .deterministic
+            .iter()
+            .map(|p| p.thread_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["d1", "d2"]);
+        assert_eq!(capped.ai_candidates.len(), 2);
+
+        cfg.account_id = Some("someone-else@example.com".into());
+        assert!(db
+            .with_inbox_agent_candidates(&cfg, digest_now())
+            .unwrap()
+            .deterministic
+            .is_empty());
+    }
+
+    #[test]
+    fn stale_reads_digest_and_stale_reads_never_propose_the_same_thread() {
+        let db = hygiene_db();
+        seed_digest_thread(&db, "shared", "2026-11-10T10:00:00Z");
+        seed_digest_thread(&db, "other", "2026-11-11T10:00:00Z");
+        let stale_ids = |db: &Database| {
+            let cfg = db.get_inbox_agent_config(AgentId::StaleReads).unwrap();
+            db.with_inbox_agent_candidates(&cfg, digest_now())
+                .unwrap()
+                .ai_candidates
+                .into_iter()
+                .map(|c| c.thread_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(digest_ids(&db).len(), 2);
+        assert_eq!(stale_ids(&db).len(), 2);
+
+        // A pending digest item hides the thread from Stale Reads Summarizer.
+        assert!(db
+            .save_inbox_agent_proposal(
+                AgentId::StaleReadsDigest,
+                "me@example.com",
+                "shared",
+                "2026-11-10T10:00:00Z",
+                ProposalKind::DigestItem,
+                "H",
+                "R",
+                &ProposalPayload::default(),
+                &[],
+                1,
+            )
+            .unwrap());
+        assert_eq!(stale_ids(&db), vec!["other"]);
+        // ... and is not re-proposed by the digest itself.
+        assert_eq!(digest_ids(&db), vec!["other"]);
+
+        // A pending stale-reads proposal hides the thread from the digest.
+        assert!(db
+            .save_inbox_agent_proposal(
+                AgentId::StaleReads,
+                "me@example.com",
+                "other",
+                "2026-11-11T10:00:00Z",
+                ProposalKind::ArchiveWithSummary,
+                "H",
+                "R",
+                &ProposalPayload::default(),
+                &[],
+                1,
+            )
+            .unwrap());
+        assert!(digest_ids(&db).is_empty());
+    }
+
+    #[test]
+    fn a_dismissed_digest_item_is_not_proposed_again_for_the_same_revision() {
+        let db = hygiene_db();
+        seed_digest_thread(&db, "once", "2026-11-10T10:00:00Z");
+        db.save_inbox_agent_proposal(
+            AgentId::StaleReadsDigest,
+            "me@example.com",
+            "once",
+            "2026-11-10T10:00:00Z",
+            ProposalKind::DigestItem,
+            "H",
+            "R",
+            &ProposalPayload::default(),
+            &[],
+            1,
+        )
+        .unwrap();
+        let id = db.inbox_agents_snapshot(None).unwrap().proposals[0]
+            .id
+            .clone();
+        db.resolve_inbox_agent_proposal(&id, ProposalState::Dismissed, 2)
+            .unwrap();
+        assert!(digest_ids(&db).is_empty());
+    }
+
+    #[test]
+    fn digest_items_supersede_when_the_thread_is_archived() {
+        let db = hygiene_db();
+        seed_digest_thread(&db, "gone", "2026-11-10T10:00:00Z");
+        db.save_inbox_agent_proposal(
+            AgentId::StaleReadsDigest,
+            "me@example.com",
+            "gone",
+            "2026-11-10T10:00:00Z",
+            ProposalKind::DigestItem,
+            "H",
+            "R",
+            &ProposalPayload::default(),
+            &[],
+            1,
+        )
+        .unwrap();
+        assert_eq!(db.inbox_agents_snapshot(None).unwrap().proposals.len(), 1);
+        db.connection()
+            .unwrap()
+            .execute("UPDATE threads SET archived = 1 WHERE id = 'gone'", [])
+            .unwrap();
+        assert!(db.inbox_agents_snapshot(None).unwrap().proposals.is_empty());
     }
 }

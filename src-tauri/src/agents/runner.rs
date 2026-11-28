@@ -8,9 +8,10 @@ use std::sync::{
 use chrono::{DateTime, Utc};
 use tokio::sync::Notify;
 
-use super::analyzer::analyze_candidate;
+use super::analyzer::{analyze_candidate, analyze_digest_chunk, DigestGist};
+use super::candidates::{CandidateBatch, DeterministicProposal};
 use super::policy::*;
-use super::{AiRunConfig, InboxAgentRun};
+use super::{AgentId, AiRunConfig, InboxAgentRun};
 use crate::ai::{get_key, AiProvider};
 use crate::db::Database;
 
@@ -55,6 +56,10 @@ impl Executor for ProductionExecutor {
         let batch = db
             .with_inbox_agent_candidates(&config, now)
             .map_err(|e| e.to_string())?;
+
+        if run.agent_id == AgentId::StaleReadsDigest {
+            return execute_digest(db, run, batch, ai, owner, now, stopped).await;
+        }
 
         let mut scanned = 0i64;
         let mut proposed = 0i64;
@@ -158,6 +163,101 @@ impl Executor for ProductionExecutor {
 
         Ok(RunExecutionReport { scanned, proposed })
     }
+}
+
+/// Overlays a model-written gist on a digest item's deterministic one.
+fn apply_digest_gist(item: &mut DeterministicProposal, gist: &DigestGist) {
+    item.payload.summary = Some(gist.gist.clone());
+    item.payload.takeaways = Some(vec![gist.gist.clone()]);
+    item.payload.deadline = gist.deadline.clone();
+    item.payload.suggest_save_to_note = Some(gist.suggest_save_to_note);
+}
+
+/// The Stale Reads Digest always produces its items from local data (the
+/// preview text as gist). When an AI provider is configured, batched requests
+/// replace the gists they answer validly; a failed request or an omitted item
+/// keeps the deterministic gist and never fails the run.
+async fn execute_digest(
+    db: &Database,
+    run: &InboxAgentRun,
+    batch: CandidateBatch,
+    ai: Option<&AiRunConfig>,
+    owner: &str,
+    now: i64,
+    stopped: &AtomicBool,
+) -> Result<RunExecutionReport, String> {
+    let mut items = batch.deterministic;
+    let mut gists: std::collections::HashMap<String, DigestGist> = Default::default();
+
+    let ai_cfg =
+        ai.filter(|cfg| !matches!(cfg.provider, AiProvider::None) && !cfg.model.trim().is_empty());
+    if let (Some(ai_cfg), false) = (ai_cfg, batch.ai_candidates.is_empty()) {
+        match get_key() {
+            Ok(Some(api_key)) if !api_key.trim().is_empty() => {
+                let current_date = DateTime::<Utc>::from_timestamp(now, 0)
+                    .unwrap_or_else(Utc::now)
+                    .format("%Y-%m-%d")
+                    .to_string();
+                let refs: Vec<_> = batch.ai_candidates.iter().collect();
+                for chunk in refs.chunks(DIGEST_ITEMS_PER_REQUEST) {
+                    if stopped.load(Ordering::SeqCst) {
+                        return Err("Execution interrupted".into());
+                    }
+                    let still_active = db
+                        .renew_inbox_agent_run_lease(&run.id, owner, Utc::now().timestamp())
+                        .map_err(|e| e.to_string())?;
+                    if !still_active {
+                        return Err("Run was paused or cancelled".into());
+                    }
+                    match analyze_digest_chunk(chunk, ai_cfg, &api_key, &current_date).await {
+                        Ok(found) => gists.extend(found),
+                        Err(error) => log::warn!(
+                            target: "inbox_assistants",
+                            "stale reads digest gists failed, using preview text: {error}"
+                        ),
+                    }
+                }
+            }
+            Ok(_) => log::warn!(
+                target: "inbox_assistants",
+                "stale reads digest has no AI API key saved, using preview text"
+            ),
+            Err(error) => log::warn!(
+                target: "inbox_assistants",
+                "stale reads digest could not read the AI API key, using preview text: {error}"
+            ),
+        }
+    }
+
+    let mut scanned = 0i64;
+    let mut proposed = 0i64;
+    for item in &mut items {
+        if stopped.load(Ordering::SeqCst) {
+            return Err("Execution interrupted".into());
+        }
+        scanned += 1;
+        if let Some(gist) = gists.get(&item.thread_id) {
+            apply_digest_gist(item, gist);
+        }
+        if db
+            .save_inbox_agent_proposal(
+                run.agent_id,
+                &item.account_id,
+                &item.thread_id,
+                &item.thread_revision,
+                item.kind,
+                &item.headline,
+                &item.reason,
+                &item.payload,
+                &item.evidence,
+                now,
+            )
+            .map_err(|e| e.to_string())?
+        {
+            proposed += 1;
+        }
+    }
+    Ok(RunExecutionReport { scanned, proposed })
 }
 
 #[derive(Clone)]
@@ -393,5 +493,88 @@ mod tests {
             .unwrap();
         assert_eq!(cfg.last_run_status.as_deref(), Some("completed"));
         assert_eq!(cfg.last_run_proposed, 1);
+    }
+
+    fn digest_db() -> Arc<Database> {
+        let db = Arc::new(Database::open_memory());
+        db.adopt_mail_account("me@example.com", MailProviderKind::Gmail)
+            .unwrap();
+        let conn = db.test_connection().unwrap();
+        conn.execute("DELETE FROM threads WHERE id = 'welcome'", [])
+            .unwrap();
+        for (index, day) in ["01", "02"].iter().enumerate() {
+            conn.execute(
+                "INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json, last_message_at, labels_json, account_id, last_received_at, unread)
+                 VALUES (?1, ?1, ?2, 'Preview text of the issue', '[\"news@letters.example\"]', ?3, '[\"INBOX\",\"CATEGORY_UPDATES\"]', 'me@example.com', ?3, 1)",
+                rusqlite::params![format!("d{index}"), format!("Issue {index}"), format!("2026-11-{day}T00:00:00Z")],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages(id, thread_id, sender, recipients_json, sent_at, body_html, body_text, unread)
+                 VALUES (?1, ?2, 'news@letters.example', '[\"me@example.com\"]', ?3, '', 'Body', 1)",
+                rusqlite::params![format!("dm{index}"), format!("d{index}"), format!("2026-11-{day}T00:00:00Z")],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        db
+    }
+
+    #[tokio::test]
+    async fn stale_reads_digest_runs_without_an_ai_provider_using_preview_text() {
+        let db = digest_db();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-25T10:00:00Z")
+            .unwrap()
+            .timestamp();
+        db.enqueue_inbox_agent_run(AgentId::StaleReadsDigest, None, None, now)
+            .unwrap();
+        let runner = Runner::new(db.clone());
+        assert!(runner.tick(&ProductionExecutor, || now).await.unwrap());
+
+        let snapshot = db.inbox_agents_snapshot(None).unwrap();
+        assert_eq!(snapshot.proposals.len(), 2);
+        for proposal in &snapshot.proposals {
+            assert_eq!(proposal.kind, ProposalKind::DigestItem);
+            assert_eq!(
+                proposal.payload.summary.as_deref(),
+                Some("Preview text of the issue")
+            );
+            assert_eq!(proposal.payload.suggest_save_to_note, Some(false));
+        }
+        let cfg = snapshot
+            .agents
+            .iter()
+            .find(|a| a.agent_id == AgentId::StaleReadsDigest)
+            .unwrap();
+        assert_eq!(cfg.last_run_status.as_deref(), Some("completed"));
+        assert_eq!(cfg.last_run_proposed, 2);
+    }
+
+    #[test]
+    fn model_gists_replace_the_deterministic_gist_on_a_digest_item() {
+        let db = digest_db();
+        let cfg = db
+            .get_inbox_agent_config(AgentId::StaleReadsDigest)
+            .unwrap();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-25T10:00:00Z")
+            .unwrap()
+            .timestamp();
+        let mut batch = db.with_inbox_agent_candidates(&cfg, now).unwrap();
+        let mut item = batch.deterministic.remove(0);
+        apply_digest_gist(
+            &mut item,
+            &DigestGist {
+                gist: "Model gist.".into(),
+                suggest_save_to_note: true,
+                deadline: Some("Dec 1".into()),
+            },
+        );
+        assert_eq!(item.payload.summary.as_deref(), Some("Model gist."));
+        assert_eq!(
+            item.payload.takeaways.as_deref(),
+            Some(["Model gist.".to_string()].as_slice())
+        );
+        assert_eq!(item.payload.deadline.as_deref(), Some("Dec 1"));
+        assert_eq!(item.payload.suggest_save_to_note, Some(true));
     }
 }
