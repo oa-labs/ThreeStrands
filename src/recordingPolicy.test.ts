@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingRecording, RecordingStatus, ScheduleEvent, TranscriptionModelStatus } from "./domain";
 import { meetingEventReference } from "./meetingNoteEntry";
-import { adHocRecordingTitle, canRecordEvent, canRetryTranscription, canShowTranscript, defaultCloudTranscriptionModel, formatElapsed, isCloudTranscriptionProvider, isRecordingOf, RECORD_LEAD_MS, recordingDetail, recordOffer, speakerLabel, stopReasonNotice, transcriptCopyText } from "./recordingPolicy";
+import {
+  adHocRecordingTitle, canRecordEvent, canRetryTranscription, canShowTranscript,
+  CUSTOM_VOCAB_MAX_TERM_CHARS, CUSTOM_VOCAB_MAX_TERMS, defaultCloudTranscriptionModel,
+  formatElapsed, isCloudTranscriptionProvider, isRecordingOf, mergeCustomVocab,
+  parseCustomVocabInput, RECORD_LEAD_MS, recordingDetail, recordOffer, speakerLabel,
+  stopReasonNotice, transcriptCopyText,
+} from "./recordingPolicy";
 
 const event = (overrides: Partial<ScheduleEvent> = {}): ScheduleEvent => ({
   id: "evt", accountId: "me@example.com", calendarId: "work", title: "Weekly Sync",
@@ -190,5 +196,38 @@ describe("formatting", () => {
     expect(stopReasonNotice("lowDisk")).toContain("disk space");
     expect(stopReasonNotice("allTracksFailed")).toContain("stopped working");
     expect(stopReasonNotice("systemSleep")).toContain("sleep");
+  });
+});
+
+describe("custom vocabulary helpers", () => {
+  it("splits comma- and newline-separated input into candidate terms", () => {
+    expect(parseCustomVocabInput("CoreAudio, QBR\nThreeStrands\r\nMAI-Transcribe-2, "))
+      .toEqual(["CoreAudio", " QBR", "ThreeStrands", "MAI-Transcribe-2", " "]);
+  });
+
+  it("cleans whitespace and outer punctuation while preserving inner symbols and deduplicating case-insensitively", () => {
+    const result = mergeCustomVocab(
+      ["CoreAudio"],
+      ["  coreaudio ", "  \"Three\tStrands\" ", "C++", "v1.2/alpha", "  !@#  ", "QBR", "qbr"],
+    );
+    expect(result).toEqual({
+      next: ["CoreAudio", "Three Strands", "C++", "v1.2/alpha", "QBR"],
+      added: 4,
+      duplicates: 2,
+      tooLong: 0,
+      truncated: 0,
+    });
+  });
+
+  it("rejects terms longer than 64 characters and stops adding at 100 terms", () => {
+    const tooLongTerm = "a".repeat(CUSTOM_VOCAB_MAX_TERM_CHARS + 1);
+    const exactTerm = "b".repeat(CUSTOM_VOCAB_MAX_TERM_CHARS);
+    const existing = Array.from({ length: CUSTOM_VOCAB_MAX_TERMS - 1 }, (_, i) => `Term${i}`);
+    const result = mergeCustomVocab(existing, [tooLongTerm, exactTerm, "OverflowOne", "OverflowTwo"]);
+    expect(result.next).toHaveLength(CUSTOM_VOCAB_MAX_TERMS);
+    expect(result.next.at(-1)).toBe(exactTerm);
+    expect(result.added).toBe(1);
+    expect(result.tooLong).toBe(1);
+    expect(result.truncated).toBe(2);
   });
 });

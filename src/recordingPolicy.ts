@@ -119,6 +119,62 @@ export const speakerLabel = (speaker: "you" | "others", remoteLabel?: string | n
 export const isCloudTranscriptionProvider = (provider: AiProvider): boolean =>
   provider === "openrouter" || provider === "openai" || provider === "fireworks" || provider === "custom";
 
+export const CUSTOM_VOCAB_MAX_TERMS = 100;
+export const CUSTOM_VOCAB_MAX_TERM_CHARS = 64;
+
+export interface CustomVocabMergeResult {
+  next: string[];
+  added: number;
+  duplicates: number;
+  tooLong: number;
+  truncated: number;
+}
+
+const OUTER_VOCAB_NOISE = /^[^\p{L}\p{N}\-'.+/]+|[^\p{L}\p{N}\-'.+/]+$/gu;
+
+function cleanCustomVocabTerm(raw: string): string {
+  const collapsed = raw.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
+  return collapsed.replace(OUTER_VOCAB_NOISE, "").trim();
+}
+
+/** Splits comma- or newline-separated vocabulary input into raw term candidates. */
+export function parseCustomVocabInput(raw: string): string[] {
+  return raw.split(/[,\n\r]+/);
+}
+
+/** Sanitizes, deduplicates case-insensitively, and caps custom vocabulary terms. */
+export function mergeCustomVocab(existing: string[], incoming: string[]): CustomVocabMergeResult {
+  const seen = new Set(existing.map((term) => term.toLowerCase()));
+  const next = [...existing];
+  let added = 0;
+  let duplicates = 0;
+  let tooLong = 0;
+  let truncated = 0;
+
+  for (const raw of incoming) {
+    const cleaned = cleanCustomVocabTerm(raw);
+    if (!cleaned) continue;
+    if ([...cleaned].length > CUSTOM_VOCAB_MAX_TERM_CHARS) {
+      tooLong += 1;
+      continue;
+    }
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) {
+      duplicates += 1;
+      continue;
+    }
+    if (next.length >= CUSTOM_VOCAB_MAX_TERMS) {
+      truncated += 1;
+      continue;
+    }
+    seen.add(key);
+    next.push(cleaned);
+    added += 1;
+  }
+
+  return { next, added, duplicates, tooLong, truncated };
+}
+
 export function defaultCloudTranscriptionModel(provider: AiProvider): string {
   switch (provider) {
     case "openrouter": return "microsoft/mai-transcribe-2";

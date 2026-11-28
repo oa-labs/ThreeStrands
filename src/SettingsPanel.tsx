@@ -419,7 +419,12 @@ export function Settings({
           ) : null}
           {section === "notes" ? <NotesSettings /> : null}
           {section === "meetingRecording" && recording.capabilities?.supported ? <MeetingRecordingSettings capabilities={recording.capabilities} /> : null}
-          {section === "meetingTranscription" && recording.capabilities?.supported ? <MeetingTranscriptionSettings capabilities={recording.capabilities} /> : null}
+          {section === "meetingTranscription" && recording.capabilities?.supported ? (
+            <MeetingTranscriptionSettings
+              capabilities={recording.capabilities}
+              onOpenAiSettings={() => onSectionChange("ai")}
+            />
+          ) : null}
           {section === "meetingSummaries" && recording.capabilities?.supported ? (
             <MeetingSummarySettings
               aiConfigured={readAiProvider() !== "none"}

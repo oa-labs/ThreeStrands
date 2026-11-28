@@ -10,7 +10,15 @@ import {
   saveMeetingSummaryInstructions,
   useMeetingSummaryInstructions,
 } from "./meetingSummaryInstructions";
-import { defaultCloudTranscriptionModel, isCloudTranscriptionProvider } from "./recordingPolicy";
+import {
+  CUSTOM_VOCAB_MAX_TERM_CHARS,
+  CUSTOM_VOCAB_MAX_TERMS,
+  defaultCloudTranscriptionModel,
+  isCloudTranscriptionProvider,
+  mergeCustomVocab,
+  parseCustomVocabInput,
+  type CustomVocabMergeResult,
+} from "./recordingPolicy";
 import { announceRecordingSettingsChanged } from "./recordingEvents";
 import { formatAttachmentSize } from "./threadPresentation";
 import { useTranscriptionModels } from "./useTranscriptionModels";
@@ -29,8 +37,8 @@ const TRAY_COUNTDOWN_OPTIONS: { value: TrayNextMeetingTitle; label: string }[] =
 ];
 
 const MODELS: { value: TranscriptionModelName; label: string; note: string }[] = [
-  { value: "fast", label: "Fast", note: "English only" },
-  { value: "accurate", label: "Accurate", note: "many languages" },
+  { value: "fast", label: "Whisper Fast", note: "English only" },
+  { value: "accurate", label: "Whisper Accurate", note: "Many languages" },
 ];
 
 const LANGUAGES: { value: string; label: string }[] = [
@@ -87,45 +95,135 @@ function useRecordingSettingsState() {
   return { settings, error, setError, save, change };
 }
 
-/** One transcription model: its size, its state, and the one thing the user can do next. Nothing downloads until Download is pressed. */
-function TranscriptionModelRow({ model, label, note, onDownload, onCancel, onDelete, busy }: {
-  model: TranscriptionModelStatus | undefined;
-  label: string;
-  note: string;
-  onDownload(): void;
-  onCancel(): void;
-  onDelete(): void;
-  busy: boolean;
-}) {
-  const id = useId();
-  const percent = model ? modelPercent(model) : 0;
-  const partial = model && model.receivedBytes > 0 && model.state !== "ready";
-  let status = "Checking…";
-  if (model) {
-    switch (model.state) {
-      case "absent": status = partial ? `Partly downloaded, ${percent}%` : "Not downloaded"; break;
-      case "downloading": status = `Downloading… ${percent}%`; break;
-      case "verifying": status = "Checking the download…"; break;
-      case "ready": status = "Downloaded"; break;
-      case "failed": status = "Download failed"; break;
-    }
+type ModelStatusTone = "neutral" | "attention" | "ready" | "error";
+
+function whisperModelStatus(model: TranscriptionModelStatus | undefined, selected: boolean): { text: string; tone: ModelStatusTone } {
+  if (!model) return { text: "Checking…", tone: "neutral" };
+  const percent = modelPercent(model);
+  const partial = model.receivedBytes > 0 && model.state !== "ready";
+  switch (model.state) {
+    case "absent":
+      if (partial) return { text: `Partly downloaded, ${percent}%`, tone: selected ? "attention" : "neutral" };
+      return { text: selected ? "Needs download" : "Not downloaded", tone: selected ? "attention" : "neutral" };
+    case "downloading":
+      return { text: `Downloading… ${percent}%`, tone: "neutral" };
+    case "verifying":
+      return { text: "Checking the download…", tone: "neutral" };
+    case "ready":
+      return { text: "Downloaded", tone: "ready" };
+    case "failed":
+      return { text: "Download failed", tone: "error" };
   }
+}
+
+function formatVocabFeedback(result: CustomVocabMergeResult): string | null {
+  if (result.added > 0) {
+    const base = `Added ${result.added} ${result.added === 1 ? "term" : "terms"}`;
+    const skipped: string[] = [];
+    if (result.duplicates > 0) skipped.push(`${result.duplicates} ${result.duplicates === 1 ? "duplicate" : "duplicates"}`);
+    if (result.tooLong > 0) skipped.push(`${result.tooLong} over ${CUSTOM_VOCAB_MAX_TERM_CHARS} characters`);
+    if (result.truncated > 0) skipped.push(`${result.truncated} over the ${CUSTOM_VOCAB_MAX_TERMS}-term limit`);
+    return skipped.length > 0 ? `${base}; skipped ${skipped.join(", ")}.` : `${base}.`;
+  }
+  if (result.truncated > 0) return `Vocabulary limit of ${CUSTOM_VOCAB_MAX_TERMS} terms reached.`;
+  if (result.tooLong > 0) return `Terms must be ${CUSTOM_VOCAB_MAX_TERM_CHARS} characters or fewer.`;
+  if (result.duplicates > 0) {
+    return result.duplicates === 1 ? "Already in your vocabulary." : "Those terms are already in your vocabulary.";
+  }
+  return null;
+}
+
+/** One selectable transcription engine/model row with inline status and download controls. */
+function TranscriptionModelRow({
+  radioGroupName,
+  value,
+  label,
+  meta,
+  status,
+  statusTone,
+  selected,
+  cloudIsDefault,
+  selectDisabled,
+  onSelect,
+  model,
+  onDownload,
+  onCancel,
+  onDelete,
+  busy,
+}: {
+  radioGroupName: string;
+  value: "apple" | TranscriptionModelName;
+  label: string;
+  meta: string;
+  status: string;
+  statusTone: ModelStatusTone;
+  selected: boolean;
+  cloudIsDefault: boolean;
+  selectDisabled: boolean;
+  onSelect(): void;
+  model?: TranscriptionModelStatus;
+  onDownload?(): void;
+  onCancel?(): void;
+  onDelete?(): void;
+  busy?: boolean;
+}) {
+  const nameId = useId();
+  const metaId = useId();
+  const percent = model ? modelPercent(model) : 0;
+
   return (
-    <div className="transcription-model" role="group" aria-label={`${label} model`} aria-describedby={id}>
-      <div className="transcription-model-text" id={id}>
-        <span className="transcription-model-name">{label}</span>
-        <span className="settings-hint">{model ? modelSize(model.bytes) : "…"}, {note}</span>
-        <span className="settings-hint" role="status">{status}</span>
+    <div
+      className={`transcription-model${selected ? " is-selected" : ""}`}
+      role="group"
+      aria-label={`${label} model`}
+      aria-describedby={metaId}
+    >
+      <div className="transcription-model-row">
+        <label className="transcription-model-choice">
+          <input
+            type="radio"
+            name={radioGroupName}
+            value={value}
+            checked={selected}
+            disabled={selectDisabled}
+            aria-labelledby={nameId}
+            aria-describedby={metaId}
+            onChange={onSelect}
+          />
+          <span className="transcription-model-text">
+            <span className="transcription-model-title">
+              <span className="transcription-model-name" id={nameId}>{label}</span>
+              {selected ? (
+                <span className={`transcription-model-badge${cloudIsDefault ? " is-fallback" : ""}`}>
+                  {cloudIsDefault ? "Fallback" : "Active"}
+                </span>
+              ) : null}
+            </span>
+            <span className="transcription-model-meta" id={metaId}>
+              <span className="settings-hint">{meta}</span>
+              <span className="transcription-model-sep" aria-hidden="true">·</span>
+              <span className={`settings-hint transcription-model-status is-${statusTone}`} role="status">{status}</span>
+            </span>
+          </span>
+        </label>
+        <div className="transcription-model-actions">
+          {model?.state === "absent" && onDownload ? (
+            <button type="button" className={selected ? "btn btn-primary btn-sm" : "btn btn-sm"} disabled={busy} onClick={onDownload}>Download</button>
+          ) : null}
+          {model?.state === "failed" && onDownload ? (
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={onDownload}>Try Again</button>
+          ) : null}
+          {model?.state === "downloading" && onCancel ? (
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={onCancel}>Cancel</button>
+          ) : null}
+          {model?.state === "ready" && onDelete ? (
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={onDelete}>Delete Model</button>
+          ) : null}
+        </div>
       </div>
       {model?.state === "downloading" || model?.state === "verifying" ? (
         <progress className="transcription-model-progress" max={100} value={model.state === "downloading" ? percent : undefined} aria-label={`${label} model download`} />
       ) : null}
-      <div className="transcription-model-actions">
-        {model?.state === "absent" ? <button type="button" className="btn" disabled={busy} onClick={onDownload}>Download</button> : null}
-        {model?.state === "failed" ? <button type="button" className="btn" disabled={busy} onClick={onDownload}>Try Again</button> : null}
-        {model?.state === "downloading" ? <button type="button" className="btn" disabled={busy} onClick={onCancel}>Cancel</button> : null}
-        {model?.state === "ready" ? <button type="button" className="btn" disabled={busy} onClick={onDelete}>Delete Model</button> : null}
-      </div>
       {model?.state === "failed" && model.error ? <p className="form-error" role="alert">{model.error}</p> : null}
     </div>
   );
@@ -322,50 +420,100 @@ export function MeetingRecordingSettings({ capabilities }: { capabilities: Recor
 }
 
 /** Settings → Meeting Recording → Transcription & Vocabulary. */
-export function MeetingTranscriptionSettings({ capabilities }: { capabilities: RecordingCapabilities }) {
+export function MeetingTranscriptionSettings({ capabilities, onOpenAiSettings }: {
+  capabilities: RecordingCapabilities;
+  onOpenAiSettings?(): void;
+}) {
   const { settings, error, setError, change } = useRecordingSettingsState();
-  const [busy, setBusy] = useState(false);
+  const [pendingModel, setPendingModel] = useState<TranscriptionModelName | null>(null);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [savingVocab, setSavingVocab] = useState(false);
+  const [savingCloud, setSavingCloud] = useState(false);
   const [deletingModel, setDeletingModel] = useState<TranscriptionModelName | null>(null);
   const [newVocabTerm, setNewVocabTerm] = useState("");
+  const [vocabFeedback, setVocabFeedback] = useState<string | null>(null);
+  const [confirmingClearVocab, setConfirmingClearVocab] = useState(false);
   const [suggestions, setSuggestions] = useState<VocabularySuggestion[] | null>(null);
   const [selectedSuggestions, setSelectedSuggestions] = useState<string[]>([]);
   const [confirmingCloud, setConfirmingCloud] = useState(false);
+  const [cloudModelDraft, setCloudModelDraft] = useState("");
+  const cloudModelPendingRef = useRef<string | null>(null);
+  const changeRef = useRef(change);
+  changeRef.current = change;
   const models = useTranscriptionModels();
+  const radioGroupName = useId();
   const ids = {
-    model: useId(), language: useId(), during: useId(), vocab: useId(),
-    cloud: useId(), cloudModel: useId(), cloudDiarize: useId(), cloudDefault: useId(),
+    model: useId(), language: useId(), languageControl: useId(), during: useId(), vocab: useId(),
+    cloud: useId(), cloudModel: useId(), cloudModelControl: useId(), cloudDiarize: useId(), cloudDefault: useId(),
   };
 
-  const modelCommand = async (run: () => Promise<void>) => {
-    setBusy(true);
+  const storedCloudModel = settings?.cloudTranscriptionModel ?? "";
+  useEffect(() => {
+    if (cloudModelPendingRef.current === null) setCloudModelDraft(storedCloudModel);
+  }, [storedCloudModel]);
+
+  const commitCloudModel = useCallback(() => {
+    const edit = cloudModelPendingRef.current;
+    if (edit === null) return;
+    cloudModelPendingRef.current = null;
+    void changeRef.current({ cloudTranscriptionModel: edit });
+  }, []);
+
+  useEffect(() => commitCloudModel, [commitCloudModel]);
+
+  const modelCommand = async (model: TranscriptionModelName, run: () => Promise<void>) => {
+    setPendingModel(model);
     setError(null);
-    try { await run(); } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+    try { await run(); } catch (reason) { setError(errorMessage(reason)); } finally { setPendingModel(null); }
   };
 
-  const addCustomVocab = async (termsToAdd: string[]) => {
-    if (!settings) return;
-    const seen = new Set(settings.customVocabulary.map((term) => term.toLowerCase()));
-    const next = [...settings.customVocabulary];
-    for (const raw of termsToAdd) {
-      const cleaned = raw.trim();
-      if (!cleaned) continue;
-      const key = cleaned.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        next.push(cleaned);
-      }
+  const addCustomVocab = async (termsToAdd: string[]): Promise<CustomVocabMergeResult | null> => {
+    if (!settings) return null;
+    const result = mergeCustomVocab(settings.customVocabulary, termsToAdd);
+    setVocabFeedback(formatVocabFeedback(result));
+    if (result.added === 0) return result;
+    setSavingVocab(true);
+    try {
+      await change({ customVocabulary: result.next });
+    } finally {
+      setSavingVocab(false);
     }
-    await change({ customVocabulary: next });
+    return result;
+  };
+
+  const submitNewVocab = async () => {
+    if (!newVocabTerm.trim()) return;
+    const result = await addCustomVocab(parseCustomVocabInput(newVocabTerm));
+    if (result && result.added > 0) setNewVocabTerm("");
   };
 
   const removeCustomVocab = async (term: string) => {
     if (!settings) return;
-    await change({ customVocabulary: settings.customVocabulary.filter((item) => item !== term) });
+    setVocabFeedback(null);
+    setSavingVocab(true);
+    try {
+      await change({ customVocabulary: settings.customVocabulary.filter((item) => item !== term) });
+    } finally {
+      setSavingVocab(false);
+    }
+  };
+
+  const clearCustomVocab = async () => {
+    if (!settings) return;
+    setVocabFeedback(null);
+    setConfirmingClearVocab(false);
+    setSavingVocab(true);
+    try {
+      await change({ customVocabulary: [] });
+    } finally {
+      setSavingVocab(false);
+    }
   };
 
   const loadVocabSuggestions = async () => {
-    setBusy(true);
+    setLoadingSuggestions(true);
     setError(null);
+    setVocabFeedback(null);
     try {
       const found = await mailClient.suggestRecordingVocabulary();
       setSuggestions(found);
@@ -373,7 +521,16 @@ export function MeetingTranscriptionSettings({ capabilities }: { capabilities: R
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
-      setBusy(false);
+      setLoadingSuggestions(false);
+    }
+  };
+
+  const runCloudSave = async (run: () => Promise<void>) => {
+    setSavingCloud(true);
+    try {
+      await run();
+    } finally {
+      setSavingCloud(false);
     }
   };
 
@@ -382,7 +539,8 @@ export function MeetingTranscriptionSettings({ capabilities }: { capabilities: R
     setError(null);
     if (!on) {
       setConfirmingCloud(false);
-      await change({ cloudTranscriptionEnabled: false, cloudTranscriptionDefault: false });
+      cloudModelPendingRef.current = null;
+      await runCloudSave(() => change({ cloudTranscriptionEnabled: false, cloudTranscriptionDefault: false }));
       return;
     }
     setConfirmingCloud(true);
@@ -395,65 +553,97 @@ export function MeetingTranscriptionSettings({ capabilities }: { capabilities: R
     const model = settings.cloudTranscriptionModel.trim() || defaultCloudTranscriptionModel(provider ?? "openrouter") || "microsoft/mai-transcribe-2";
     const endpoint = settings.cloudTranscriptionEndpoint ?? (activeProvider === "custom" ? readAiEndpoint().trim() || null : null);
     setConfirmingCloud(false);
-    await change({
+    cloudModelPendingRef.current = null;
+    await runCloudSave(() => change({
       cloudTranscriptionEnabled: true,
       cloudTranscriptionDisclosureAcknowledged: true,
       cloudTranscriptionProvider: provider,
       cloudTranscriptionModel: model,
       cloudTranscriptionEndpoint: endpoint,
-    });
+    }));
   };
 
   const speechAnalyzerAvailable = capabilities.speechAnalyzer;
-  const selectedEngineValue = speechAnalyzerAvailable && settings?.transcriptionEngine !== "whisper"
+  const selectedEngineValue: "apple" | TranscriptionModelName = speechAnalyzerAvailable && settings?.transcriptionEngine !== "whisper"
     ? "apple"
     : (settings?.transcriptionModel ?? "fast");
+  const cloudEnabled = Boolean(settings?.cloudTranscriptionEnabled);
+  const cloudIsDefault = Boolean(cloudEnabled && settings?.cloudTranscriptionDefault);
+  const isWhisperFastSelected = selectedEngineValue === "fast";
+  const languageLocked = isWhisperFastSelected && !cloudEnabled;
+  const displayedLanguage = languageLocked ? "en" : (settings?.transcriptionLanguage ?? "");
+  const vocabCount = settings?.customVocabulary.length ?? 0;
+  const atVocabLimit = vocabCount >= CUSTOM_VOCAB_MAX_TERMS;
+  const providerConfigured = isCloudTranscriptionProvider(readAiProvider())
+    || Boolean(settings?.cloudTranscriptionProvider && isCloudTranscriptionProvider(settings.cloudTranscriptionProvider));
+
+  const switchPromptTarget = speechAnalyzerAvailable
+    ? "Whisper Accurate or Apple On-Device"
+    : "Whisper Accurate";
 
   return (
-    <section className="settings-section wide-label-settings" aria-label="Transcription & Vocabulary">
+    <section className="settings-section transcription-settings" aria-label="Transcription & Vocabulary">
       <h3>On-Device Transcription</h3>
-      <label className="settings-field settings-field-row">
-        <span>Transcription Model</span>
-        <select value={selectedEngineValue} disabled={!settings} aria-describedby={ids.model}
-          onChange={(event) => {
-            const value = event.target.value;
-            if (value === "apple") void change({ transcriptionEngine: "speechAnalyzer" });
-            else if (speechAnalyzerAvailable) void change({ transcriptionEngine: "whisper", transcriptionModel: value as TranscriptionModelName });
-            else void change({ transcriptionModel: value as TranscriptionModelName });
-          }}>
-          {speechAnalyzerAvailable ? <option value="apple">Apple On-Device</option> : null}
-          {MODELS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-      </label>
-      <p className="settings-hint settings-field-detail" id={ids.model}>
-        {speechAnalyzerAvailable
-          ? "Recordings are transcribed on this Mac, never uploaded. Apple On-Device needs no download; Whisper Fast and Accurate are optional downloadable models."
-          : "Recordings are transcribed on this Mac, never uploaded, once the chosen model is downloaded. Fast suits English meetings; Accurate is larger and slower but handles many languages."}
-      </p>
-      <label className="settings-field settings-field-row">
-        <span>Transcription Language</span>
-        <select value={settings?.transcriptionLanguage ?? ""} disabled={!settings} aria-describedby={ids.language}
-          onChange={(event) => void change({ transcriptionLanguage: event.target.value || null })}>
-          {LANGUAGES.map((option) => <option key={option.value || "auto"} value={option.value}>{option.label}</option>)}
-        </select>
-      </label>
-      <p className="settings-hint settings-field-detail" id={ids.language}>
-        Auto detects the spoken language once near the start of each recording. Whisper Fast supports English only.
-      </p>
-
-      <div className="settings-field-detail transcription-models">
-        {MODELS.map((option) => (
-          <TranscriptionModelRow
-            key={option.value}
-            model={models?.find((model) => model.model === option.value)}
-            label={option.label}
-            note={option.note}
-            busy={busy}
-            onDownload={() => void modelCommand(() => mailClient.downloadTranscriptionModel(option.value))}
-            onCancel={() => void modelCommand(() => mailClient.cancelTranscriptionModelDownload(option.value))}
-            onDelete={() => setDeletingModel(option.value)}
-          />
-        ))}
+      {cloudIsDefault ? (
+        <p className="settings-inline-note" role="note">
+          Cloud Transcription is set as default. These on-device settings apply when transcribing locally or if Cloud Transcription is unavailable.
+        </p>
+      ) : null}
+      <div className="settings-item">
+        <div
+          className="transcription-models"
+          role="radiogroup"
+          aria-label="Transcription Model"
+          aria-describedby={ids.model}
+        >
+          {speechAnalyzerAvailable ? (
+            <TranscriptionModelRow
+              radioGroupName={radioGroupName}
+              value="apple"
+              label="Apple On-Device"
+              meta="Built into macOS · No download needed"
+              status="Ready"
+              statusTone="ready"
+              selected={selectedEngineValue === "apple"}
+              cloudIsDefault={cloudIsDefault}
+              selectDisabled={!settings}
+              onSelect={() => void change({ transcriptionEngine: "speechAnalyzer" })}
+            />
+          ) : null}
+          {MODELS.map((option) => {
+            const selected = selectedEngineValue === option.value;
+            const modelStatus = models?.find((item) => item.model === option.value);
+            const { text, tone } = whisperModelStatus(modelStatus, selected);
+            return (
+              <TranscriptionModelRow
+                key={option.value}
+                radioGroupName={radioGroupName}
+                value={option.value}
+                label={option.label}
+                meta={`${modelStatus ? modelSize(modelStatus.bytes) : "…"} · ${option.note}`}
+                status={text}
+                statusTone={tone}
+                selected={selected}
+                cloudIsDefault={cloudIsDefault}
+                selectDisabled={!settings}
+                onSelect={() => {
+                  if (speechAnalyzerAvailable) void change({ transcriptionEngine: "whisper", transcriptionModel: option.value });
+                  else void change({ transcriptionModel: option.value });
+                }}
+                model={modelStatus}
+                busy={pendingModel === option.value}
+                onDownload={() => void modelCommand(option.value, () => mailClient.downloadTranscriptionModel(option.value))}
+                onCancel={() => void modelCommand(option.value, () => mailClient.cancelTranscriptionModelDownload(option.value))}
+                onDelete={() => setDeletingModel(option.value)}
+              />
+            );
+          })}
+        </div>
+        <p className="settings-hint" id={ids.model}>
+          {speechAnalyzerAvailable
+            ? "Recordings are transcribed on this Mac, never uploaded. Apple On-Device needs no download; Whisper Fast and Accurate are optional downloadable models."
+            : "Recordings are transcribed on this Mac, never uploaded, once the chosen model is downloaded. Whisper Fast suits English meetings; Whisper Accurate is larger and slower but handles many languages."}
+        </p>
       </div>
       {deletingModel ? (
         <InlineConfirm
@@ -461,67 +651,128 @@ export function MeetingTranscriptionSettings({ capabilities }: { capabilities: R
           title={`Delete the ${MODELS.find((option) => option.value === deletingModel)?.label} model?`}
           cancelLabel="Cancel"
           onCancel={() => setDeletingModel(null)}
-          disabled={busy}
+          disabled={pendingModel === deletingModel}
           focusCancel
-          actions={[{ label: "Delete Model", className: "btn-danger", onClick: () => void modelCommand(async () => { await mailClient.deleteTranscriptionModel(deletingModel); setDeletingModel(null); }) }]}
+          actions={[{ label: "Delete Model", className: "btn-danger", onClick: () => void modelCommand(deletingModel, async () => { await mailClient.deleteTranscriptionModel(deletingModel); setDeletingModel(null); }) }]}
         >
           The model file is removed from this Mac. Recordings wait to be transcribed until a model is downloaded again.
         </InlineConfirm>
       ) : null}
 
-      <label className="settings-switch">
-        <span>Transcribe During Meetings</span>
-        <input type="checkbox" checked={settings?.transcribeDuringMeetings ?? true} disabled={!settings} aria-describedby={ids.during}
-          onChange={(event) => void change({ transcribeDuringMeetings: event.target.checked })} />
-      </label>
-      <p className="settings-hint" id={ids.during}>
-        Transcribes in the background while a meeting is recorded, so the transcript is ready soon after you stop. Turn off to keep your Mac's memory and processor free during meetings.
-      </p>
+      <div className="settings-item">
+        <div className="settings-item-control">
+          <label htmlFor={ids.languageControl}>Transcription Language</label>
+          <select
+            id={ids.languageControl}
+            value={displayedLanguage}
+            disabled={!settings || languageLocked}
+            aria-describedby={ids.language}
+            onChange={(event) => void change({ transcriptionLanguage: event.target.value || null })}
+          >
+            {LANGUAGES.map((option) => <option key={option.value || "auto"} value={option.value}>{option.label}</option>)}
+          </select>
+        </div>
+        <p className="settings-hint" id={ids.language}>
+          Auto detects the spoken language once near the start of each recording.
+        </p>
+        {languageLocked ? (
+          <p className="settings-inline-note" role="note">
+            {settings?.transcriptionLanguage && settings.transcriptionLanguage !== "en"
+              ? `Whisper Fast supports English only. Your saved language will apply again if you switch to ${switchPromptTarget}.`
+              : `Whisper Fast supports English only. Switch to ${switchPromptTarget} to choose another language.`}
+          </p>
+        ) : isWhisperFastSelected && cloudEnabled && (settings?.transcriptionLanguage ?? "") !== "en" ? (
+          <p className="settings-inline-note" role="note">
+            Whisper Fast supports English only; your selected language applies to Cloud Transcription.
+          </p>
+        ) : null}
+      </div>
 
-      <h3>Custom Vocabulary</h3>
-      <div className="settings-field settings-field-row">
-        <span>Custom Vocabulary</span>
+      <div className="settings-item">
+        <label className="settings-switch">
+          <span>Transcribe During Meetings</span>
+          <input type="checkbox" checked={settings?.transcribeDuringMeetings ?? true} disabled={!settings} aria-describedby={ids.during}
+            onChange={(event) => void change({ transcribeDuringMeetings: event.target.checked })} />
+        </label>
+        <p className="settings-hint" id={ids.during}>
+          Transcribes in the background while a meeting is recorded, so the transcript is ready soon after you stop. Turn off to keep your Mac's memory and processor free during meetings.
+        </p>
+      </div>
+
+      <div className="settings-section-heading-row">
+        <h3>Custom Vocabulary</h3>
+        {vocabCount > 0 ? (
+          <div className="settings-section-heading-actions">
+            <span className="settings-hint recording-vocab-count">{`${vocabCount} / ${CUSTOM_VOCAB_MAX_TERMS}`}</span>
+            {vocabCount >= 2 ? (
+              <button
+                type="button"
+                className="btn-link"
+                disabled={savingVocab}
+                onClick={() => setConfirmingClearVocab(true)}
+              >Clear All</button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      <div className="settings-item">
         <div className="recording-vocab-add">
           <input
             type="text"
             aria-label="Custom Vocabulary term"
-            placeholder="Add product, acronym, or name"
+            placeholder="Add product, acronym, or name (comma-separated)"
             value={newVocabTerm}
-            disabled={!settings || busy}
+            maxLength={CUSTOM_VOCAB_MAX_TERM_CHARS * 4}
+            disabled={!settings || savingVocab || atVocabLimit}
             aria-describedby={ids.vocab}
-            onChange={(event) => setNewVocabTerm(event.target.value)}
+            onChange={(event) => {
+              setNewVocabTerm(event.target.value);
+              if (vocabFeedback) setVocabFeedback(null);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && newVocabTerm.trim()) {
                 event.preventDefault();
-                const term = newVocabTerm.trim();
-                setNewVocabTerm("");
-                void addCustomVocab([term]);
+                void submitNewVocab();
               }
             }}
           />
           <button
             type="button"
             className="btn"
-            disabled={!settings || busy || !newVocabTerm.trim()}
-            onClick={() => {
-              const term = newVocabTerm.trim();
-              setNewVocabTerm("");
-              void addCustomVocab([term]);
-            }}
+            disabled={!settings || savingVocab || atVocabLimit || !newVocabTerm.trim()}
+            onClick={() => void submitNewVocab()}
           >Add</button>
+        </div>
+        <div className="recording-vocab-toolbar">
           <button
             type="button"
-            className="btn"
-            disabled={!settings || busy}
+            className="btn btn-sm"
+            disabled={!settings || loadingSuggestions || atVocabLimit}
             onClick={() => void loadVocabSuggestions()}
-          >Suggest from Sent Mail</button>
+          >{loadingSuggestions ? "Scanning Sent Mail…" : "Suggest from Sent Mail"}</button>
+          {vocabFeedback ? <span className="settings-hint" role="status">{vocabFeedback}</span> : null}
         </div>
+        <p className="settings-hint" id={ids.vocab}>
+          {speechAnalyzerAvailable
+            ? "Terms you approve here help Apple On-Device, Whisper, and Cloud Transcription spell names, acronyms, and project vocabulary accurately."
+            : "Terms you approve here help Whisper and Cloud Transcription spell names, acronyms, and project vocabulary accurately."}
+        </p>
       </div>
-      <p className="settings-hint settings-field-detail" id={ids.vocab}>
-        Terms you approve here help Whisper and Cloud Transcription spell names, acronyms, and project vocabulary accurately.
-      </p>
+      {confirmingClearVocab ? (
+        <InlineConfirm
+          ariaLabel="Confirm Clear Custom Vocabulary"
+          title="Clear all custom vocabulary?"
+          cancelLabel="Cancel"
+          onCancel={() => setConfirmingClearVocab(false)}
+          disabled={savingVocab}
+          focusCancel
+          actions={[{ label: "Clear All", className: "btn-danger", onClick: () => void clearCustomVocab() }]}
+        >
+          {`All ${vocabCount} saved vocabulary terms will be removed.`}
+        </InlineConfirm>
+      ) : null}
       {settings && settings.customVocabulary.length > 0 ? (
-        <ul className="settings-field-detail recording-vocab-list" aria-label="Custom Vocabulary list">
+        <ul className="recording-vocab-list" aria-label="Custom Vocabulary list">
           {settings.customVocabulary.map((term) => (
             <li key={term} className="recording-vocab-chip">
               <span>{term}</span>
@@ -529,7 +780,7 @@ export function MeetingTranscriptionSettings({ capabilities }: { capabilities: R
                 type="button"
                 className="btn-link"
                 aria-label={`Remove ${term}`}
-                disabled={busy}
+                disabled={savingVocab}
                 onClick={() => void removeCustomVocab(term)}
               >×</button>
             </li>
@@ -537,91 +788,91 @@ export function MeetingTranscriptionSettings({ capabilities }: { capabilities: R
         </ul>
       ) : null}
       {suggestions ? (
-        <div className="settings-field-detail">
-          <div className="recording-vocab-suggestions" role="region" aria-label="Sent Mail Vocabulary Suggestions">
-            {suggestions.length === 0 ? (
-              <>
-                <p className="settings-hint">No recurring vocabulary terms were found in recent Sent mail.</p>
-                <div className="transcription-model-actions">
-                  <button type="button" className="btn" onClick={() => setSuggestions(null)}>Close</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="settings-hint">Select recurring terms from your Sent mail to add:</p>
-                <div className="recording-vocab-suggestion-list">
-                  {suggestions.map((item) => {
-                    const checked = selectedSuggestions.includes(item.term);
-                    return (
-                      <label key={item.term} className="recording-vocab-suggestion">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(event) => {
-                            if (event.target.checked) setSelectedSuggestions((cur) => [...cur, item.term]);
-                            else setSelectedSuggestions((cur) => cur.filter((value) => value !== item.term));
-                          }}
-                        />
-                        <span>{item.term}</span>
-                        <span className="settings-hint">{item.threadCount} threads</span>
-                      </label>
-                    );
-                  })}
-                </div>
-                <div className="transcription-model-actions">
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={busy || selectedSuggestions.length === 0}
-                    onClick={() => {
-                      const chosen = [...selectedSuggestions];
-                      setSuggestions(null);
-                      setSelectedSuggestions([]);
-                      void addCustomVocab(chosen);
-                    }}
-                  >{selectedSuggestions.length > 0 ? `Add Selected (${selectedSuggestions.length})` : "Add Selected"}</button>
-                  {selectedSuggestions.length < suggestions.length ? (
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() => setSelectedSuggestions(suggestions.map((item) => item.term))}
-                    >Select All</button>
-                  ) : null}
-                  {selectedSuggestions.length > 0 ? (
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() => setSelectedSuggestions([])}
-                    >Clear</button>
-                  ) : null}
+        <div className="recording-vocab-suggestions" role="region" aria-label="Sent Mail Vocabulary Suggestions">
+          {suggestions.length === 0 ? (
+            <>
+              <p className="settings-hint">No recurring vocabulary terms were found in recent Sent mail.</p>
+              <div className="transcription-model-actions">
+                <button type="button" className="btn" onClick={() => setSuggestions(null)}>Close</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="settings-hint">Select recurring terms from your Sent mail to add:</p>
+              <div className="recording-vocab-suggestion-list">
+                {suggestions.map((item) => {
+                  const checked = selectedSuggestions.includes(item.term);
+                  return (
+                    <label key={item.term} className="recording-vocab-suggestion">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => {
+                          if (event.target.checked) setSelectedSuggestions((cur) => [...cur, item.term]);
+                          else setSelectedSuggestions((cur) => cur.filter((value) => value !== item.term));
+                        }}
+                      />
+                      <span>{item.term}</span>
+                      <span className="settings-hint">{item.threadCount} threads</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="transcription-model-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={savingVocab || selectedSuggestions.length === 0}
+                  onClick={() => {
+                    const chosen = [...selectedSuggestions];
+                    setSuggestions(null);
+                    setSelectedSuggestions([]);
+                    void addCustomVocab(chosen);
+                  }}
+                >{selectedSuggestions.length > 0 ? `Add Selected (${selectedSuggestions.length})` : "Add Selected"}</button>
+                {selectedSuggestions.length < suggestions.length ? (
                   <button
                     type="button"
                     className="btn"
-                    onClick={() => { setSuggestions(null); setSelectedSuggestions([]); }}
-                  >Cancel</button>
-                </div>
-              </>
-            )}
-          </div>
+                    onClick={() => setSelectedSuggestions(suggestions.map((item) => item.term))}
+                  >Select All</button>
+                ) : null}
+                {selectedSuggestions.length > 0 ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setSelectedSuggestions([])}
+                  >Clear</button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => { setSuggestions(null); setSelectedSuggestions([]); }}
+                >Cancel</button>
+              </div>
+            </>
+          )}
         </div>
       ) : null}
 
       <h3>Cloud Transcription</h3>
-      <label className="settings-switch">
-        <span>Cloud Transcription</span>
-        <input type="checkbox" checked={settings?.cloudTranscriptionEnabled ?? false} disabled={!settings || busy} aria-describedby={ids.cloud}
-          onChange={(event) => void toggleCloudTranscription(event.target.checked)} />
-      </label>
-      <p className="settings-hint" id={ids.cloud}>
-        Lets you transcribe or re-transcribe recordings using OpenRouter (Microsoft MAI-Transcribe-2) or an OpenAI-compatible audio provider, sending separate audio tracks and your reviewed Custom Vocabulary within your daily AI budget.
-      </p>
+      <div className="settings-item">
+        <label className="settings-switch">
+          <span>Enable Cloud Transcription</span>
+          <input type="checkbox" checked={cloudEnabled} disabled={!settings || savingCloud} aria-describedby={ids.cloud}
+            onChange={(event) => void toggleCloudTranscription(event.target.checked)} />
+        </label>
+        <p className="settings-hint" id={ids.cloud}>
+          Lets you transcribe or re-transcribe recordings using OpenRouter (Microsoft MAI-Transcribe-2) or an OpenAI-compatible audio provider, sending separate audio tracks and your reviewed Custom Vocabulary within your daily AI budget.
+        </p>
+      </div>
       {confirmingCloud ? (
         <InlineConfirm
           ariaLabel="Confirm Cloud Transcription"
           title="Enable cloud transcription?"
           cancelLabel="Cancel"
           onCancel={() => setConfirmingCloud(false)}
-          disabled={busy}
+          disabled={savingCloud}
           focusCancel
           actions={[{ label: "Enable Cloud Transcription", className: "btn-primary", onClick: () => void confirmEnableCloud() }]}
         >
@@ -630,45 +881,65 @@ export function MeetingTranscriptionSettings({ capabilities }: { capabilities: R
       ) : null}
       {settings?.cloudTranscriptionEnabled ? (
         <>
-          {!isCloudTranscriptionProvider(readAiProvider()) && !(settings.cloudTranscriptionProvider && isCloudTranscriptionProvider(settings.cloudTranscriptionProvider)) ? (
-            <p className="settings-hint settings-field-detail" role="note">
+          {!providerConfigured ? (
+            <p className="settings-inline-note" role="note">
               Configure OpenRouter, OpenAI, Fireworks, or Custom Endpoint in AI settings to use Cloud Transcription.
+              {onOpenAiSettings ? <> <button type="button" className="btn-link" onClick={onOpenAiSettings}>AI Provider</button></> : null}
             </p>
           ) : null}
-          <label className="settings-field settings-field-row">
-            <span>Cloud Transcription Model</span>
-            <input
-              type="text"
-              value={settings.cloudTranscriptionModel}
-              placeholder="microsoft/mai-transcribe-2"
-              aria-describedby={ids.cloudModel}
-              onChange={(event) => void change({ cloudTranscriptionModel: event.target.value })}
-            />
-          </label>
-          <p className="settings-hint settings-field-detail" id={ids.cloudModel}>
-            Recommended on OpenRouter: microsoft/mai-transcribe-2 (low cost, custom vocabulary biasing, and remote speaker diarization).
-          </p>
-          <label className="settings-switch">
-            <span>Diarize Remote Speakers</span>
-            <input type="checkbox" checked={settings.cloudTranscriptionDiarize} disabled={busy} aria-describedby={ids.cloudDiarize}
-              onChange={(event) => void change({ cloudTranscriptionDiarize: event.target.checked })} />
-          </label>
-          <p className="settings-hint" id={ids.cloudDiarize}>
-            Separates remote voices on the computer-audio track (Others (Speaker 1), Others (Speaker 2)) while keeping your microphone track as You.
-          </p>
-          <label className="settings-switch">
-            <span>Use Cloud by Default</span>
-            <input type="checkbox" checked={settings.cloudTranscriptionDefault} disabled={busy} aria-describedby={ids.cloudDefault}
-              onChange={(event) => {
-                const activeProvider = readAiProvider();
-                const provider = settings.cloudTranscriptionProvider ?? (isCloudTranscriptionProvider(activeProvider) ? activeProvider : null);
-                const endpoint = settings.cloudTranscriptionEndpoint ?? (activeProvider === "custom" ? readAiEndpoint().trim() || null : null);
-                void change({ cloudTranscriptionDefault: event.target.checked, cloudTranscriptionProvider: provider, cloudTranscriptionEndpoint: endpoint });
-              }} />
-          </label>
-          <p className="settings-hint" id={ids.cloudDefault}>
-            Automatically uploads finished recordings after you stop recording. Leave off to keep transcription on this Mac and only re-transcribe selected calls from Show Transcript.
-          </p>
+          <div className="settings-item">
+            <div className="settings-item-control">
+              <label htmlFor={ids.cloudModelControl}>Cloud Transcription Model</label>
+              <input
+                id={ids.cloudModelControl}
+                className="transcription-cloud-model-input"
+                type="text"
+                value={cloudModelDraft}
+                placeholder="microsoft/mai-transcribe-2"
+                aria-describedby={ids.cloudModel}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setCloudModelDraft(value);
+                  cloudModelPendingRef.current = value;
+                }}
+                onBlur={commitCloudModel}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitCloudModel();
+                  }
+                }}
+              />
+            </div>
+            <p className="settings-hint" id={ids.cloudModel}>
+              Recommended on OpenRouter: microsoft/mai-transcribe-2 (low cost, custom vocabulary biasing, and remote speaker diarization).
+            </p>
+          </div>
+          <div className="settings-item">
+            <label className="settings-switch">
+              <span>Diarize Remote Speakers</span>
+              <input type="checkbox" checked={settings.cloudTranscriptionDiarize} disabled={savingCloud} aria-describedby={ids.cloudDiarize}
+                onChange={(event) => void runCloudSave(() => change({ cloudTranscriptionDiarize: event.target.checked }))} />
+            </label>
+            <p className="settings-hint" id={ids.cloudDiarize}>
+              Separates remote voices on the computer-audio track (Others (Speaker 1), Others (Speaker 2)) while keeping your microphone track as You.
+            </p>
+          </div>
+          <div className="settings-item">
+            <label className="settings-switch">
+              <span>Use Cloud by Default</span>
+              <input type="checkbox" checked={settings.cloudTranscriptionDefault} disabled={savingCloud} aria-describedby={ids.cloudDefault}
+                onChange={(event) => {
+                  const activeProvider = readAiProvider();
+                  const provider = settings.cloudTranscriptionProvider ?? (isCloudTranscriptionProvider(activeProvider) ? activeProvider : null);
+                  const endpoint = settings.cloudTranscriptionEndpoint ?? (activeProvider === "custom" ? readAiEndpoint().trim() || null : null);
+                  void runCloudSave(() => change({ cloudTranscriptionDefault: event.target.checked, cloudTranscriptionProvider: provider, cloudTranscriptionEndpoint: endpoint }));
+                }} />
+            </label>
+            <p className="settings-hint" id={ids.cloudDefault}>
+              Automatically uploads finished recordings after you stop recording. Leave off to keep transcription on this Mac and only re-transcribe selected calls from Show Transcript.
+            </p>
+          </div>
         </>
       ) : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
